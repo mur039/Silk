@@ -1,0 +1,2 @@
+//Well this fella puts us in protected mode at 1M UwU
+ qemu-system-x86_64 -m 64M -kernel kernel.elf -s -S &
