@@ -60,9 +60,14 @@ gdt_flush:
 flush2:
     ret               ; Returns back to the C code!
 
-
-; In just a few pages in this tutorial, we will add our Interrupt
-; Service Routines (ISRs) right here!
+global idt_load
+extern idtp
+idt_load:
+    lidt [idtp]
+    ret
+		
+%include "isr.asm"
+%include "irq.asm"
 
 
 
