@@ -8,13 +8,15 @@
 #include <idt.h>
 #include <isrs.h>
 #include <irq.h>
-
+#include <timer.h>
+#include <kb.h>
 
 int main(){
     gdt_install();
     idt_install();
     isrs_install();
     irq_install();
+    irq_install_handler(1, keyboard_handler);
     initVGATerm();
     sti();
     //__asm__  ("div %0" :: "r"(0)); division by zero exceptoin
