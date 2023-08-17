@@ -1,5 +1,7 @@
 #ifndef _VGA_H_
 #define _VGA_H_
+#include <stdarg.h>
+
 enum VGA_COLOURS{
     VGA_COLOR_BLACK = 0,
 	VGA_COLOR_BLUE = 1,
@@ -19,16 +21,30 @@ enum VGA_COLOURS{
 	VGA_COLOR_WHITE = 15
 };
 
-struct charAttr{
-    char character;
-    char background:4;
-    char foreground:4;
-};
+
+typedef union charAttr{
+    struct {
+		char character;
+		union {
+			struct{
+				char background:4;
+    			char foreground:4;	
+			};
+			char attribute;
+		};
+	};
+	short raw;
+
+} charAttr;
+
+extern charAttr (* videoMemory)[80];
 #define textScreen (short *)0xb8000
 
 void initVGATerm();
 void update_csr(void);
 void scroll(void);
-void putch(unsigned char c);
-void puts(unsigned char  * str);
+void putch (char c);
+void puts(char  * str);
+int printf(const char * str, ...);
+
 #endif

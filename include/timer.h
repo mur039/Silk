@@ -6,6 +6,6 @@
 #include <vga.h>
 void timer_phase(int hz);
 void timer_install();
-void timer_wait(int ticks);
+void timer_wait(unsigned int ticks);
 
 #endif

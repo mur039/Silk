@@ -22,4 +22,5 @@ SECTIONS
     . = ALIGN(4096);
   }
   end = .;
+  kernel_end = end;
 }

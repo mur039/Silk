@@ -48,13 +48,14 @@ unsigned char kbdus[128] =
 
 void keyboard_handler(struct regs *r)
 {
+  if(r->err_code == 0){;}
     unsigned char scancode;
-
+    
     /* Read from the keyboard's data buffer */
     scancode = inportb(0x60);
-
     /* If the top bit of the byte we read from the keyboard is
     *  set, that means that a key has just been released */
+    printf("%b\n", scancode);
     if (scancode & 0x80)
     {
         /* You can use this one to see if the user released the
@@ -74,6 +75,7 @@ void keyboard_handler(struct regs *r)
         *  to the above layout to correspond to 'shift' being
         *  held. If shift is held using the larger lookup table,
         *  you would add 128 to the scancode when you look for it */
+       
         putch(kbdus[scancode]);
     }
 }

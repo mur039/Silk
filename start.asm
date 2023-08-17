@@ -75,7 +75,10 @@ idt_load:
 ; it just to store the stack. Remember that a stack actually grows
 ; downwards, so we declare the size of the data before declaring
 ; the identifier '_sys_stack'
+
 SECTION .bss
+global stack_bottom:
+stack_bottom:
     resb 8192               ; This reserves 8KBytes of memory here
 _sys_stack:
 

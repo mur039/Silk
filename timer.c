@@ -2,7 +2,7 @@
 #include <timer.h>
 /* This will keep track of how many ticks that the system
 *  has been running for */
-int timer_ticks = 0;
+unsigned timer_ticks = 0;
 
 /* Handles the timer. In this case, it's very simple: We
 *  increment the 'timer_ticks' variable every time the
@@ -11,6 +11,7 @@ int timer_ticks = 0;
 *  been smoking something funky */
 void timer_handler(struct regs *r)
 {
+    if(r->int_no != 32 + 0){return;}
     /* Increment our 'tick count' */
     timer_ticks++;
 
@@ -38,7 +39,7 @@ void timer_phase(int hz)
     outportb(0x40, divisor >> 8);     /* Set high byte of divisor */
 };
 
-void timer_wait(int ticks)
+void timer_wait(unsigned int ticks)
 {
     unsigned long eticks;
 
