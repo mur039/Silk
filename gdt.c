@@ -2,12 +2,12 @@
 #include <gdt.h>
 
 /* Our GDT, with 3 entries, and finally our special GDT pointer */
-struct gdt_entry gdt[3]; //NULL COde DATA
-struct gdt_ptr gp;
+//struct gdt_entry gdt[5]; //NULL COde DATA usrCode usrData
+//struct gdt_ptr gp;
 
 /* This will be a function in start.asm. We use this to properly
 *  reload the new segment registers */
-extern void gdt_flush();
+//extern void gdt_flush();
 
 /* Setup a descriptor in the Global Descriptor Table */
 void gdt_set_gate(int num, unsigned long base, unsigned long limit, unsigned char access, unsigned char gran)
@@ -51,6 +51,8 @@ void gdt_install(){
     *  this entry's access byte says it's a Data Segment */
     gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);
 
+    gdt_set_gate(3, 0x0, 0xFFFFFFFF, 0xFA ,0xCF); //user mode code
+    gdt_set_gate(4, 0x0, 0xFFFFFFFF, 0xF2 ,0xCF); //user mode data
     /* Flush out the old GDT and install the new changes! */
     gdt_flush();
 }

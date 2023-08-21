@@ -3,7 +3,9 @@
         "stddef.h": "c",
         "system.h": "c",
         "stdbool.h": "c",
-        "vga.h": "c"
+        "vga.h": "c",
+        "paging.h": "c",
+        "gdt.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

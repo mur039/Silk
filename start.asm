@@ -38,6 +38,7 @@ mboot:
 ; will insert an 'extern _main', followed by 'call _main', right
 ; before the 'jmp $'.
 stublet:
+    cli
     call main
     jmp $
 
@@ -68,8 +69,6 @@ idt_load:
 		
 %include "isr.asm"
 %include "irq.asm"
-
-
 
 ; Here is the definition of our BSS section. Right now, we'll use
 ; it just to store the stack. Remember that a stack actually grows

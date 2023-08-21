@@ -116,8 +116,25 @@ int printf(const char * str, ...){
                 }
 
                 break;
-            
+            case 'u':; //for now only unsigned will bussin' around
+                unsigned int uArg = va_arg(args, unsigned int);
+                char number_buffer[12] = {};//null terminated,
+                char * head = &number_buffer[10];
+                if(!uArg){
+                    puts("0");
+                    };
+                    
+                while(uArg != 0){
+                    int digit = (((unsigned int)uArg/10) * 10);
+                    digit = uArg - digit;
+                    *(--head) = '0' + digit;
+                    uArg /= 10;
+                };
+                puts(head);           
+                break;
+                
             default:
+                puts("Not implemented");
                 break;
             }
         }

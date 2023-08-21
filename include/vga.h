@@ -26,11 +26,12 @@ typedef union charAttr{
     struct {
 		char character;
 		union {
+			char attribute;
 			struct{
 				char background:4;
     			char foreground:4;	
 			};
-			char attribute;
+			
 		};
 	};
 	short raw;

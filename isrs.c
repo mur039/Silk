@@ -88,6 +88,17 @@ void isrs_install()
 *  corresponds to each and every exception. We get the correct
 *  message by accessing like:
 *  exception_message[interrupt_number] */
+void dump_registers(struct regs *r){
+    printf(
+      "\neax : %x | ebx : %x | ecx : %x\n"
+        "edx : %x | edi : %x | esi : %x\n"
+        "eip : %x | rsp : %x |"
+        ,r->eax, r->ebx, r->ecx
+        ,r->edx, r->edi, r->esi
+        ,r->eip, r->esp
+        );
+}
+
 char *exception_messages[] =
 {
     "Division By Zero",
@@ -139,8 +150,42 @@ void fault_handler(struct regs *r)
         /* Display the description for the  that occurred.
         *  In this tutorial, we will simply halt the system using an
         *  infinite loop */
+       switch (r->int_no)
+       {
+       case 13: //general fault
+            puts("\nGeneral Protection Exception: ");
+            printf("%x", r->err_code);
+            break;
+       case 14: //Page Fault
+            puts("\nPage Fault: ");
+            switch (r->err_code & 7){
+                case 0b000:puts("Supervisor tried to access a non-present page entry.");break;
+                case 0b001:puts("Supervisory process tried to read a page and caused a protection fault.");break;
+                case 0b010:puts("Supervisory process tried to write to a non-present page entry.");break;  
+                case 0b011:puts("Supervisory process tried to write a page and caused a protection fault.");break;
+                case 0b100:puts("User process tried to read a non-present page entry.");break;
+                case 0b101:puts("User process tried to read a page and caused a protection fault.");break;
+                case 0b110:puts("User process tried to write to a non-present page entry.");break;
+                case 0b111:puts("User process tried to write a page and caused a protection fault.");break;
+            }
+            uint32_t cr2_reg;
+            asm volatile ( "mov %%cr0, %0" : "=r"(cr2_reg) );
+            printf("\nCR2 : [PDE] %x : [PTE] %x\n", cr2_reg >> 22, (cr2_reg >> 12) & 0x3FF);
+        break;
+
+       default:
+            printf("%u", r->int_no);
+            puts(exception_messages[r->int_no]);
+            puts(" Exception. System Halted!\n");
+            break;
+       }
+        /*
+        printf("%u", r->int_no);
         puts(exception_messages[r->int_no]);
         puts(" Exception. System Halted!\n");
+        */
+        
+        dump_registers(r);
         for (;;);
     }
 }

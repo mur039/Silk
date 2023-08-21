@@ -13,4 +13,5 @@ struct regs
 
 void isrs_install();
 void fault_handler(struct regs *r);
+void dump_registers(struct regs *r);
 #endif
