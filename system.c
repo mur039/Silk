@@ -1,4 +1,10 @@
 #include <system.h>
+#include <vga.h>
+void panic(char  * str){
+    puts(str);
+    cli();
+    for(;;);
+}
 unsigned char *memcpy(void *dest, const void *src, int count){
     while(count--){
         ((unsigned char*)dest)[count] = ((unsigned char*)src)[count];
@@ -27,7 +33,15 @@ int strlen(const char *str){
     return _length;
 
 }
-
+int memcmp(void *s1, void * s2, uint32_t length){
+    uint8_t * _s1 = s1, *_s2 = s2;
+    while(length--){ // == 0, daha hızlı
+        if(_s1[length] != _s2[length]){
+            return 0;
+            }
+    }
+    return 1;
+}
 void outportb (unsigned short _port, unsigned char _data){ asm volatile ( "outb %0, %1" : : "a"(_data), "Nd"(_port) );}
 void outportw (unsigned short _port, unsigned short _data){asm volatile ("outw %0, %1" : : "a"(_data), "Nd"(_port));}
 

@@ -43,10 +43,13 @@ unsigned char kbdus[128] =
     0,	/* F11 Key */
     0,	/* F12 Key */
     0,	/* All other keys are undefined */
+    [43] = ',',
+    [40] = 'i',
+    [53] = '.'
 };		
 
 
-void keyboard_handler(struct regs *r)
+void keyboard_handler(struct regs *r) //come on honey, it's time for another fUCKinG state machine |>_<|. AAAAAAAA
 {
   if(r->err_code == 0){;}
     unsigned char scancode;
@@ -76,6 +79,6 @@ void keyboard_handler(struct regs *r)
         *  held. If shift is held using the larger lookup table,
         *  you would add 128 to the scancode when you look for it */
         putch(kbdus[scancode]);
-        printf("%u\n", scancode);
+        //printf("%u\n", scancode);
     }
 }

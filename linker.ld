@@ -2,7 +2,7 @@
 
 SECTIONS{
     . = 0x00100000;          /* the code should be relocated to 3G + 1 MB */
-
+    kernel_start = .;
     .text ALIGN (0x1000) :  /* align at 4 KB */
     {
       code = .;

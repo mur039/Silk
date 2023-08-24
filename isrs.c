@@ -92,10 +92,16 @@ void dump_registers(struct regs *r){
     printf(
       "\neax : %x | ebx : %x | ecx : %x\n"
         "edx : %x | edi : %x | esi : %x\n"
-        "eip : %x | rsp : %x |"
+        "eip : %x | esp : %x | ebp : %x\n"
+        " cs : %x |  ds : %x |  es : %x\n"
+        " fs : %x |  gs : %x |  ss : %x\n"
+        "usr esp : %x\n "
         ,r->eax, r->ebx, r->ecx
         ,r->edx, r->edi, r->esi
-        ,r->eip, r->esp
+        ,r->eip, r->esp, r->ebp
+        ,r->cs,  r->ds,  r->es
+        ,r->fs,  r->gs,  r->ss,
+        r->useresp
         );
 }
 

@@ -39,6 +39,8 @@ mboot:
 ; before the 'jmp $'.
 stublet:
     cli
+    push eax
+    push ebx
     call main
     jmp $
 
@@ -66,14 +68,15 @@ extern idtp
 idt_load:
     lidt [idtp]
     ret
-		
+
+global flush_tss:
+flush_tss:
+    mov ax, (5 * 8) | 0 ; fifth 8-byte selector, symbolically OR-ed with 0 to set the RPL (requested privilege level).
+	ltr ax
+	ret
+
 %include "isr.asm"
 %include "irq.asm"
-
-; Here is the definition of our BSS section. Right now, we'll use
-; it just to store the stack. Remember that a stack actually grows
-; downwards, so we declare the size of the data before declaring
-; the identifier '_sys_stack'
 
 SECTION .bss
 global stack_bottom:

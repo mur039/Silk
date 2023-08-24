@@ -5,7 +5,8 @@
 
 static inline void sti(void){ asm volatile ("sti");}
 static inline void cli(void){ asm volatile ("cli");}
-
+void panic(char *);
+int memcmp(void *s1, void * s2, uint32_t length);
 unsigned char *memcpy(void *dest, const  void *src, int count);
 unsigned char *memset(void *dest, unsigned char val, int count);
 unsigned short *memsetw(void *dest, unsigned short val, int count);

@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <multiboot.h>
+#include <acpi.h>
 #include <system.h>
 #include <vga.h>
 #include <gdt.h>
@@ -13,57 +15,62 @@
 #include <uart.h>
 #include <k_heap.h>
 #include <paging.h>
-
-extern uint32_t _binary_usr_program_end[];
-extern uint32_t _binary_usr_program_size;
-extern uint32_t _binary_usr_program_start[];
-
-int test(uint32_t thing){
-    return thing;
+extern uint32_t kernel_end;
+void syscall(){
+    printf("Well i'm the motherfuckin syscall. B*tch\n");
+    return;
 }
 
-int main(){
+int main(multiboot_info_t* mbd, unsigned int magic){
     initVGATerm();
-    serialInit(COM1, 384000);//max possible 
 
-    printf("Meraba\n");
+	//multiboot shenanigans
+     if(magic != MULTIBOOT_BOOTLOADER_MAGIC) {
+        panic("invalid magic number!");
+    }
+
+     if(!(mbd->flags >> 6 & 0x1)) {
+        panic("invalid memory map given by GRUB bootloader");
+    }
+    
+    unsigned int i;
+    multiboot_memory_map_t* mmmt; //i will pass this around
+    for(i = 0; i < mbd->mmap_length;i += sizeof(multiboot_memory_map_t)) 
+    {
+        mmmt = (multiboot_memory_map_t*) (mbd->mmap_addr + i);
+ 
+        printf("Start Addr: %x | Length: %x | Size: %x | Type: %u\n",
+            mmmt->addr_low , mmmt->len_low, mmmt->size, mmmt->type);
+        if(mmmt->type == 1){
+
+        }
+    }
+
+        
+
+
+    
+    serialInit(COM1, 2 *384000);//max possible /does not work tho
+    
     gdt_install();
     idt_install();
     isrs_install();
+    idt_set_gate(0x80, (unsigned)syscall,0x8, 0x8E); //syscalll
     irq_install();
-    init_paging();
-
+    init_paging(); //??
+    
     irq_install_handler(1, keyboard_handler);
     irq_install_handler(4, uart_handler);
     sti();
-    //map_page((void *)0xb8000, (void *)0x200000, 3);
-    memcpy((void *)0x200000, _binary_usr_program_start,  _binary_usr_program_end - _binary_usr_program_start);
-
+    
+    printf("%x", acpiGetRSDPtr());
+    //asm volatile("int $0x80");
+    //printf("%u : %p", map_page((void *)0xb8000, (void *)0x400000, 3), get_physaddr((void *)0x400000));
+    //outportw( 0x604, 0x0 | 0x2000 ); //qemu shutdown
     
     
     
-
-    /*
-    [esp + 16]  ss      ; the stack segment selector we want for user mode
-    [esp + 12]  esp     ; the user mode stack pointer
-    [esp +  8]  eflags  ; the control flags we want to use in user mode
-    [esp +  4]  cs      ; the code segment selector
-    [esp +  0]  eip     ; the instruction pointer of user mode code to execute
-    */
-
-    //lets try user mode
-    asm volatile("mov $0x13, %eax"); 
-    asm volatile("mov %eax, %ds"); 
-    asm volatile("mov %eax, %es");
-    asm volatile("mov %eax, %gs"); 
-    asm volatile("mov %eax, %fs"); 
     
-    asm volatile("push $0x13"); //ss 
-    asm volatile("push $201000"); //sp
-    asm volatile("push $512"); //eflags
-    asm volatile("push $0xB"); //cs 
-    asm volatile("push $200000"); //eip
-    asm volatile("sysret");
    //__asm__  ("div %0" :: "r"(0)); //division by zero exceptoin
     for(;;);
 

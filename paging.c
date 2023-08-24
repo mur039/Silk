@@ -1,5 +1,7 @@
 #include <paging.h>
+#include <k_heap.h>
 #include <vga.h>
+
 extern void enablePaging(unsigned int*);
 
 // paging mode : 
@@ -23,21 +25,21 @@ union virtAddr_f{
 
 void init_paging() {
 	int i;
+    
 	// Create page directory, supervisor mode, read/write, not present : 0 1 0 = 2   
 	for (i = 0; i < NUM_PAGES; i++) {
-		page_directory[i] = 0x00000002; //every page is present aaa
+		page_directory[i] = 0x00000002; 
         //page_directory[i] = (unsigned int)directory;    
      	}     
 
 	// Create page table, supervisor mode, read/write, present : 0 1 1 = 3   
 	// As the address is page aligned, it will always leave 12 bits zeroed.  
-	for (i = 0; i < NUM_PAGES; i++) { 
-	        page_table[i] = ((i) * 0x1000) | 3;
+	for (i = 0; i < (kmalloc_page() >> 12); i++) { //to allocate only kernel end
+	        page_table[i] = ((i) * 0x1000) |  3; 
 	}	
 
 	// put page_table into page_directory supervisor level, read/write, present
 	page_directory[0] = ((unsigned int)page_table) | 0x3; //first 4M? //identity maping kernel 
-    //page_directory[768] = ((unsigned int)page_table) | 0x3; //
    	enablePaging(page_directory);
 
    	//register_interrupt_handler(14, handle_page_fault);
@@ -57,12 +59,19 @@ void *get_physaddr(void * virtualAddr){
     return NULL;
 }
 
-int map_page(void *physaddr, void *virtualaddr, unsigned int flags){
+int map_page(void *physaddr, void *virtualaddr, unsigned int flags){ //mapping existing ones tho
     union virtAddr_f vf ={.virtAddr = (uint32_t)virtualaddr};
     if( (page_directory[vf.directory] & 1) && (page_table[vf.table] & 1)){
         page_table[vf.table] = ((uint32_t)physaddr & 0xFFFFF000) | flags;
         asm volatile("mov %cr3, %eax\n\tmov %eax, %cr3");
         return 0;
     }
-    return -1;
+    return 1;
+}
+
+void * alloc_page(multiboot_memory_map_t *  memmap){
+    
+
+
+    return NULL;
 }

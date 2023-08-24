@@ -13,6 +13,7 @@
 #define PAGE_SIZE_4MB   1
 
 #include <k_heap.h>
+#include <multiboot.h>
 
 typedef struct page
 {
@@ -58,6 +59,9 @@ typedef struct page_directory
 void init_paging();
 void page_fault();
 void *get_physaddr(void *virtualaddr);
+void * alloc_page(multiboot_memory_map_t *  memmap);
 int map_page(void *physaddr, void *virtualaddr, unsigned int flags);
 void * identityPage(void * virtualAddr, void * phyAddr, uint8_t flags);
+
+
 #endif
