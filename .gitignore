@@ -1,0 +1,6 @@
+*.sym
+*.bin
+*.elf
+*.iso
+iso/
+iso/*

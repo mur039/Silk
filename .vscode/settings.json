@@ -7,7 +7,8 @@
         "paging.h": "c",
         "gdt.h": "c",
         "multiboot.h": "c",
-        "k_heap.h": "c"
+        "k_heap.h": "c",
+        "16tty.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

@@ -9,6 +9,11 @@ SECTIONS {
         boot.o( .text .rodata .data COMMON .bss)
 		lkmain.o (.text .rodata .data COMMON .bss)
 		
+		rmode_start = .;
+		boot.o(.realmode)
+		rmode_end = . ;
+		
+				
     }
 
 

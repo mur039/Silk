@@ -3,44 +3,84 @@ mboot:
     ; Multiboot macros to make a few lines later more readable
     MULTIBOOT_PAGE_ALIGN	equ 1<<0
     MULTIBOOT_MEMORY_INFO	equ 1<<1
-    
-    MULTIBOOT_GRAPH_MODE    equ 1 << 2
     MULTIBOOT_HEADER_MAGIC	equ 0x1BADB002
 
     
 
 
 
-    MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULTIBOOT_GRAPH_MODE
+    MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO 
     MULTIBOOT_CHECKSUM	equ -(MULTIBOOT_HEADER_MAGIC + MULTIBOOT_HEADER_FLAGS)
 
     dd MULTIBOOT_HEADER_MAGIC
     dd MULTIBOOT_HEADER_FLAGS
     dd MULTIBOOT_CHECKSUM
-    times 4 dd 0
-    dd 0
-    dd 640
-    dd 480
-    dd 32
-    
-    
 
+extern _16start
 
+extern rmode_start
+extern rmode_size
+
+extern setup_realmode
 extern lkmain
 global _start
 _start:
+    
     mov esp, bootstrap_stack - 0xC0000000
+    call setup_realmode
+
+    cli
+
+    lgdt [GDT_descriptor]
+
+    ;--------------------------------;
+    CODE_SEG equ GDT_code - GDT_start;
+    DATA_SEG equ GDT_data - GDT_start;
+    ;--------------------------------;
+    
+
+    jmp CODE_SEG:_16start
+
+getBack:
     push eax
     push ebx
     call lkmain    
 
+;-----------------------------------
+GDT_start:
+    GDT_null:
+        dd 0x0
+        dd 0x0
+
+    GDT_code:
+        dw 0xffff
+        dw 0x0
+        db 0x0
+        db 0b10011011 
+        db 0xF
+        db 0x0
+
+    GDT_data:
+        dw 0xffff
+        dw 0x0
+        db 0x0
+        db 0b10010011
+        db 0x0F
+        db 0x0
+GDT_end:
+
+GDT_descriptor:
+    dw GDT_end - GDT_start - 1
+    dd GDT_start
+
+;-----------------------------------
+
+
+
 global enablePaging:
 enablePaging: ;enablePaging(unsigned int*);
-
-; load page directory (eax has the address of the page directory) 
    mov eax, [esp+4]
    mov cr3, eax        
-
 ; enable paging 
    mov ebx, cr0        ; read current cr0
    or  ebx, 0x80000000 ; set PG .  set pages as read-only for both userspace and supervisor, replace 0x80000000 above with 0x80010000, which also sets the WP bit.
@@ -60,4 +100,8 @@ global bootstrap_pte1
 ALIGN 4096
 bootstrap_pte1:
 times 4096 dd 0
+
+SECTION .realmode
+incbin "./rmode.bin"
+
 
