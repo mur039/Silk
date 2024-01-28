@@ -3,50 +3,43 @@ mboot:
     ; Multiboot macros to make a few lines later more readable
     MULTIBOOT_PAGE_ALIGN	equ 1<<0
     MULTIBOOT_MEMORY_INFO	equ 1<<1
+    MULTIBOOT_VIDEO_MODE    equ 1<<2
     MULTIBOOT_HEADER_MAGIC	equ 0x1BADB002
 
-    
 
 
-
-    MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO 
+    MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULTIBOOT_VIDEO_MODE
     MULTIBOOT_CHECKSUM	equ -(MULTIBOOT_HEADER_MAGIC + MULTIBOOT_HEADER_FLAGS)
 
     dd MULTIBOOT_HEADER_MAGIC
     dd MULTIBOOT_HEADER_FLAGS
     dd MULTIBOOT_CHECKSUM
+    ;why bother
+    dd 0 ;HeaderAddr
+    dd 0 ;LoadAddr
+    dd 0 ;Load_endAddr
+    dd 0 ;bssEndAddr
+    dd 0 ;entryAddr
+    ;graphics
+    dd 0;mode type, linear mode
+    dd 800;width
+    dd 600;height
+    dd 4;depth  
 
-extern _16start
 
-extern rmode_start
-extern rmode_size
-
-extern setup_realmode
 extern lkmain
 global _start
 _start:
-    
-    mov esp, bootstrap_stack - 0xC0000000
-    call setup_realmode
-
-    cli
-
-    lgdt [GDT_descriptor]
-
-    ;--------------------------------;
-    CODE_SEG equ GDT_code - GDT_start;
-    DATA_SEG equ GDT_data - GDT_start;
-    ;--------------------------------;
-    
-
-    jmp CODE_SEG:_16start
-
-getBack:
+    mov esp, bootstrap_stack - 0xC0000000 ;new stack
+    lgdt [GDT_descriptor] ;loading new gdt
     push eax
     push ebx
     call lkmain    
 
 ;-----------------------------------
+CODE_SEG equ GDT_code - GDT_start;
+DATA_SEG equ GDT_data - GDT_start;
+
 GDT_start:
     GDT_null:
         dd 0x0
@@ -101,7 +94,10 @@ ALIGN 4096
 bootstrap_pte1:
 times 4096 dd 0
 
-SECTION .realmode
-incbin "./rmode.bin"
+global bootstrap_pte2
+ALIGN 4096
+bootstrap_pte2:
+times 4096 dd 0
+
 
 
