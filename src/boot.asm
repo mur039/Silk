@@ -5,22 +5,18 @@ mboot:
     MULTIBOOT_MEMORY_INFO	equ 1<<1
     MULTIBOOT_VIDEO_MODE    equ 1<<2
     MULTIBOOT_HEADER_MAGIC	equ 0x1BADB002
-
-
-
     MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULTIBOOT_VIDEO_MODE
     MULTIBOOT_CHECKSUM	equ -(MULTIBOOT_HEADER_MAGIC + MULTIBOOT_HEADER_FLAGS)
-
+    
+    ;Multiboot Header
     dd MULTIBOOT_HEADER_MAGIC
     dd MULTIBOOT_HEADER_FLAGS
     dd MULTIBOOT_CHECKSUM
-    ;why bother
     dd 0 ;HeaderAddr
     dd 0 ;LoadAddr
     dd 0 ;Load_endAddr
     dd 0 ;bssEndAddr
     dd 0 ;entryAddr
-    ;graphics
     dd 0;mode type, linear mode
     dd 800;width
     dd 600;height
@@ -34,7 +30,8 @@ _start:
     lgdt [GDT_descriptor] ;loading new gdt
     push eax
     push ebx
-    call lkmain    
+    call lkmain
+    hlt
 
 ;-----------------------------------
 CODE_SEG equ GDT_code - GDT_start;
@@ -79,6 +76,18 @@ enablePaging: ;enablePaging(unsigned int*);
    or  ebx, 0x80000000 ; set PG .  set pages as read-only for both userspace and supervisor, replace 0x80000000 above with 0x80010000, which also sets the WP bit.
    mov cr0, ebx        ; update cr0
    ret                 ; now paging is enabled
+
+;extern void _changeSP(uint32_t nsp);
+global _changeSP
+_changeSP:
+
+    mov eax, [esp + 0] ;ret addr
+    mov ebx, [esp + 4] ;argument
+    mov esp, ebx
+    push ebx
+    push eax
+    ret
+
 
 SECTION .bootstrap
 times 8192 dd 0 ; 8kB stack

@@ -8,11 +8,6 @@ SECTIONS {
     .multiboot : {
         boot.o( .text .rodata .data COMMON .bss)
 		lkmain.o (.text .rodata .data COMMON .bss)
-		
-		rmode_start = .;
-		boot.o(.realmode)
-		rmode_end = . ;
-		
 				
     }
 
@@ -36,12 +31,12 @@ SECTIONS {
 		*(EXCLUDE_FILE(boot.o lkmain.o) .data)                                /* all data sections from all files */
 	}
 
-	.bss ALIGN (0x1000) : AT (ADDR (.bss) - 0xC0000000)                 
+	.bss ALIGN (0x1000) : AT (ADDR (.bss) - 0xC0000000)
 	{
 		*(COMMON)                               /* all COMMON sections from all files */
 		*(.bss)                                 /* all bss sections from all files */
-        *(.bootstrap)
 	}
+	
 	kernel_end = .;
 	kernel_phy_end = . - 0xC0000000;
 }

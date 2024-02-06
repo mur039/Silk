@@ -1,8 +1,9 @@
 #include <lkmain.h>
-
-
+extern uint32_t kernel_stack[2048];
+extern void _changeSP(uint32_t * nsp);
 void lkmain(multiboot_info_t* mbd, unsigned int magic){
-
+    if(magic != 0x2BADB002){return;}
+    //initial paging
     uint32_t * PDE =  (uint32_t *)((uint32_t)bootstrap_pde - 0xC0000000);
     uint32_t * PTE1 = (uint32_t *)((uint32_t)bootstrap_pte1 - 0xC0000000);
     uint32_t * PTE2 = (uint32_t *)((uint32_t)bootstrap_pte2 - 0xC0000000);
@@ -10,15 +11,17 @@ void lkmain(multiboot_info_t* mbd, unsigned int magic){
     PDE[768] = (uint32_t)PTE1 | 0b00000011;
     PDE[1012] = (uint32_t)PTE2 | 0b00000011;
 
-    for(unsigned int i = 0; i < ((uint32_t)kernel_phy_end >> 12); ++i){
-        PTE1[i] = (i * 0x1000) | 3;
+    for(unsigned int i = 0; i < ((uint32_t)kernel_phy_end >> 12) + 1; ++i){ 
+        PTE1[i] = (i * 0x1000) | 3; 
     }
 
-    for(unsigned int i = 0; i < 1024; ++i){
+    for(unsigned int i = 0; i < 469; ++i){ // 800*600*4 / 4096 //mapping for vbe
         PTE2[i] = (0xFD000000 + (i * 0x1000)) | 3;
     }
+
     enablePaging(PDE);
-    kmain(mbd, magic);
+    //_changeSP(kernel_stack);
+    kmain(mbd);
     return;
 }
 
