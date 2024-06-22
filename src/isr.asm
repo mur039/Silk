@@ -192,7 +192,7 @@ isr22:
 
 ;Reserved Exceptions
 isr23:
-    clicli
+    cli
     push byte 0
     push byte 23
     jmp isr_common_stub

@@ -9,7 +9,13 @@
         "multiboot.h": "c",
         "k_heap.h": "c",
         "16tty.h": "c",
-        "lkmain.h": "c"
+        "lkmain.h": "c",
+        "idt.h": "c",
+        "sys.h": "c",
+        "uart.h": "c",
+        "irq.h": "c",
+        "str.h": "c",
+        "pmm.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

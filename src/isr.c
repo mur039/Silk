@@ -3,7 +3,7 @@
 #include <idt.h>
 
 #include <uart.h>
-#include <string.h>
+#include <str.h>
  
 /* These are function prototypes for all of the exception
 *  handlers: The first 32 entries in the IDT are reserved
@@ -52,16 +52,16 @@ extern void isr31();
 *  hex. */
 void isrs_install()
 {
-    idt_set_gate(0, (unsigned)isr0, 0x08, 0x8E);
-    idt_set_gate(1, (unsigned)isr1, 0x08, 0x8E);
-    idt_set_gate(2, (unsigned)isr2, 0x08, 0x8E);
-    idt_set_gate(3, (unsigned)isr3, 0x08, 0x8E);
-    idt_set_gate(4, (unsigned)isr4, 0x08, 0x8E);
-    idt_set_gate(5, (unsigned)isr5, 0x08, 0x8E);
-    idt_set_gate(6, (unsigned)isr6, 0x08, 0x8E);
-    idt_set_gate(7, (unsigned)isr7, 0x08, 0x8E);
-    idt_set_gate(8, (unsigned)isr8, 0x08, 0x8E);
-    idt_set_gate(9, (unsigned)isr9, 0x08, 0x8E);
+    idt_set_gate( 0, ( unsigned)isr0, 0x08, 0x8E);
+    idt_set_gate( 1, ( unsigned)isr1, 0x08, 0x8E);
+    idt_set_gate( 2, ( unsigned)isr2, 0x08, 0x8E);
+    idt_set_gate( 3, ( unsigned)isr3, 0x08, 0x8E);
+    idt_set_gate( 4, ( unsigned)isr4, 0x08, 0x8E);
+    idt_set_gate( 5, ( unsigned)isr5, 0x08, 0x8E);
+    idt_set_gate( 6, ( unsigned)isr6, 0x08, 0x8E);
+    idt_set_gate( 7, ( unsigned)isr7, 0x08, 0x8E);
+    idt_set_gate( 8, ( unsigned)isr8, 0x08, 0x8E);
+    idt_set_gate( 9, ( unsigned)isr9, 0x08, 0x8E);
     idt_set_gate(10, (unsigned)isr10, 0x08, 0x8E);
     idt_set_gate(11, (unsigned)isr11, 0x08, 0x8E);
     idt_set_gate(12, (unsigned)isr12, 0x08, 0x8E);
@@ -91,18 +91,20 @@ void isrs_install()
 *  corresponds to each and every exception. We get the correct
 *  message by accessing like:
 *  exception_message[interrupt_number] */
-// void dump_registers(struct regs *r){
-//     printf(
-//       "\neax : %x | ebx : %x | ecx : %x\n"
-//         "edx : %x | edi : %x | esi : %x\n"
-//         "eip : %x | rsp : %x |"
-//         ,r->eax, r->ebx, r->ecx
-//         ,r->edx, r->edi, r->esi
-//         ,r->eip, r->esp
-//         );
-// }
+void dump_registers(struct regs *r){
+    uart_print(
+	    0x3f8,
+         "\r\n"
+         "eax : %x | ebx : %x | ecx : %x\r\n"
+         "edx : %x | edi : %x | esi : %x\r\n"
+         "eip : %x | esp : %x | ebp : %x\r\n"
+         ,r->eax, r->ebx, r->ecx
+         ,r->edx, r->edi, r->esi
+         ,r->eip, r->esp, r->ebp
+         );
+ }
 
-char *exception_messages[] =
+static const char *exception_messages[] =
 {
     "Division By Zero",
     "Debug",
@@ -139,6 +141,19 @@ char *exception_messages[] =
 
 };
 
+static const char *pagefault_messages[] =
+{
+"Supervisor tried to access a non-present page entry.\r\n",
+"Supervisory process tried to read a page and caused a protection fault.\r\n",
+"Supervisory process tried to write to a non-present page entry.\r\n",
+"Supervisory process tried to write a page and caused a protection fault.\r\n",
+"User process tried to read a non-present page entry.\r\n",
+"User process tried to read a page and caused a protection fault.\r\n",
+"User process tried to write to a non-present page entry.\r\n",
+"User process tried to write a page and caused a protection fault\r\n."
+};
+
+
 /* All of our  handling Interrupt Service Routines will
 *  point to this function. This will tell us what exception has
 *  happened! Right now, we simply halt the system by hitting an
@@ -147,46 +162,38 @@ char *exception_messages[] =
 *  happening and messing up kernel data structures */
 void fault_handler(struct regs *r)
 {
+    char buffer[72];
+    uint32_t message_length = 0;
     /* Is this a fault whose number is from 0 to 31? */
     if (r->int_no < 32)
     {
-        /* Display the description for the  that occurred.
-        *  In this tutorial, we will simply halt the system using an
-        *  infinite loop */
+	dump_registers(r);
+        
        switch (r->int_no)
        {
        case 13: //general fault
+            message_length = sprintf(buffer, "%x %s\r\n", r->int_no, exception_messages[r->int_no]);
+            uart_write(0x3f8, buffer, 1, message_length);
             // puts("\nGeneral Protection Exception: ");
             // printf("%x", r->err_code);
             break;
        case 14: //Page Fault
-            // puts("\nPage Fault: ");
-            // switch (r->err_code & 7){
-            //     case 0b000:puts("Supervisor tried to access a non-present page entry.");break;
-            //     case 0b001:puts("Supervisory process tried to read a page and caused a protection fault.");break;
-            //     case 0b010:puts("Supervisory process tried to write to a non-present page entry.");break;  
-            //     case 0b011:puts("Supervisory process tried to write a page and caused a protection fault.");break;
-            //     case 0b100:puts("User process tried to read a non-present page entry.");break;
-            //     case 0b101:puts("User process tried to read a page and caused a protection fault.");break;
-            //     case 0b110:puts("User process tried to write to a non-present page entry.");break;
-            //     case 0b111:puts("User process tried to write a page and caused a protection fault.");break;
-            // }
-            // uint32_t cr2_reg;
-            // asm volatile ( "mov %%cr0, %0" : "=r"(cr2_reg) );
-            // printf("\nCR2 : [PDE] %x : [PTE] %x\n", cr2_reg >> 22, (cr2_reg >> 12) & 0x3FF);
+            uart_print(0x3f8, pagefault_messages[r->err_code & 7]);
+            uint32_t cr2_reg;
+            asm volatile ( "mov %%cr0, %0" : "=r"(cr2_reg) );
+            uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x\r\n", cr2_reg >> 22, (cr2_reg >> 12) & 0x3FF);
         break;
 
        default:
             ;
-            char buffer[32];
-            sprintf(buffer, "%x", r->int_no);
-            uart_write(0x3f8, buffer, 1, 9);
+            message_length =  sprintf(buffer, "%s\r\n", exception_messages[r->int_no]);
+            uart_write(0x3f8, buffer, 1, message_length);
             // puts(exception_messages[r->int_no]);
             // puts(" Exception. System Halted!\n");
             break;
        }
         
-        for (;;);
+        // for (;;);
     }
 }
 		

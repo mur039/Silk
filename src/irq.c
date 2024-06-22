@@ -50,6 +50,50 @@ void irq_uninstall_handler(int irq)
 *  Interrupt Controller (PICs - also called the 8259's) in
 *  order to make IRQ0 to 15 be remapped to IDT entries 32 to
 *  47 */
+
+#define PIC1		0x20		/* IO base address for master PIC */
+#define PIC2		0xA0		/* IO base address for slave PIC */
+#define PIC1_COMMAND	PIC1
+#define PIC1_DATA	(PIC1+1)
+#define PIC2_COMMAND	PIC2
+#define PIC2_DATA	(PIC2+1)
+
+/* reinitialize the PIC controllers, giving them specified vector offsets
+   rather than 8h and 70h, as configured by default */
+ 
+#define ICW1_ICW4	0x01		/* Indicates that ICW4 will be present */
+#define ICW1_SINGLE	0x02		/* Single (cascade) mode */
+#define ICW1_INTERVAL4	0x04		/* Call address interval 4 (8) */
+#define ICW1_LEVEL	0x08		/* Level triggered (edge) mode */
+#define ICW1_INIT	0x10		/* Initialization - required! */
+ 
+#define ICW4_8086	0x01		/* 8086/88 (MCS-80/85) mode */
+#define ICW4_AUTO	0x02		/* Auto (normal) EOI */
+#define ICW4_BUF_SLAVE	0x08		/* Buffered mode/slave */
+#define ICW4_BUF_MASTER	0x0C		/* Buffered mode/master */
+#define ICW4_SFNM	0x10		/* Special fully nested (not) */
+ 
+/*
+arguments:
+	offset1 - vector offset for master PIC
+		vectors on the master become offset1..offset1+7
+	offset2 - same for slave PIC: offset2..offset2+7
+*/
+
+void io_wait(){
+    asm volatile(
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        "nop\n\t"
+        );
+    return;
+}
 void irq_remap(void)
 {
     outb(0x20, 0x11);
@@ -62,6 +106,7 @@ void irq_remap(void)
     outb(0xA1, 0x01);
     outb(0x21, 0x0);
     outb(0xA1, 0x0);
+
 }
 
 /* We first remap the interrupt controllers, and then we install
@@ -101,11 +146,17 @@ void irq_install()
 *  an EOI, you won't raise any more IRQs */
 void irq_handler(struct regs *r)
 {
+    // char buffer[32];
+    // uint32_t message_length = 0;
+
+    // message_length =  sprintf(buffer, "IRQ fired : %x\r\n", r->int_no);
+    // uart_write(0x3f8, buffer, 1, message_length);
     /* This is a blank function pointer */
     void (*handler)(struct regs *r);
 
     /* Find out if we have a custom handler to run for this
     *  IRQ, and then finally, run it */
+   
     handler = irq_routines[r->int_no - 32];
     if (handler)
     {

@@ -12,7 +12,7 @@ SECTIONS {
     }
 
 
-    . += 0xC0000000;                                 /* the code should be loaded at 1 MB */
+    . += 0xC0000000;                                 /* the code should be not loaded at 1 MB */
 	kernel_start = .;
 	kernel_phy_start = . - 0xC0000000;
 

@@ -25,17 +25,9 @@ void idt_install()
     /* Sets the special IDT pointer up, just like in 'gdt.c' */
     idtp.limit = (sizeof (struct idt_entry) * 256) - 1;
     idtp.base = (unsigned int)&idt;
-
-    /* Clear out the entire IDT, initializing it to zeros */
-
-    // for(int i = 0; i < (256 * sizeof(struct idt_entry)) ; ++i){
-    //     ((char *)idt)[i] = 0x00;
-    // }
     memset(&idt, 0, sizeof(struct idt_entry) * 256); //?? ** 
 
     /* Add any new ISRs to the IDT here using idt_set_gate */
-
-    /* Points the processor's internal register to the new IDT */
     idt_load();
 }
 	

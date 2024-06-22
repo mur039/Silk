@@ -1,7 +1,7 @@
 #ifndef __IDT_H_
 #define __IDT_H_
 #include <stdint.h>
-#include <string.h>
+#include <str.h>
 
 typedef enum{  
 	IDT_FLAG_GATE_TASK   = 0b0101, //0x05

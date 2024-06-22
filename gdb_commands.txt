@@ -1,0 +1,19 @@
+file ./kernel.elf
+target remote :1234
+b irq0
+b irq1
+b irq2
+b irq3
+b irq4
+b irq5
+b irq6
+b irq7
+b irq8
+b irq9
+b irq10
+b irq11
+b irq12
+b irq13
+b irq14
+b irq15
+b kmain

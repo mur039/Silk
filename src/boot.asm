@@ -77,16 +77,23 @@ enablePaging: ;enablePaging(unsigned int*);
    mov cr0, ebx        ; update cr0
    ret                 ; now paging is enabled
 
-;extern void _changeSP(uint32_t nsp);
+;extern void _changeSP(uint32_t * nsp, int (* foo)(multiboot_info_t * mbd), multiboot_info_t mbd);
 global _changeSP
 _changeSP:
 
     mov eax, [esp + 0] ;ret addr
-    mov ebx, [esp + 4] ;argument
-    mov esp, ebx
-    push ebx
-    push eax
-    ret
+    mov ebx, [esp + 4] ;new stack
+    mov ecx, [esp + 8] ;next func
+    mov edx, [esp + 12];argument to the next func
+
+;    mov esp, ebx
+;   mov ebp, esp
+;    push ebx
+;    push eax
+
+    push edx
+    call ecx
+    
 
 
 SECTION .bootstrap

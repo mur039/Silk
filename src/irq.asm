@@ -1,3 +1,5 @@
+SECTION .text
+
 global irq0
 global irq1
 global irq2
@@ -14,7 +16,7 @@ global irq12
 global irq13
 global irq14
 global irq15
-
+global irq_common_stub
 
 ; 32: IRQ0
 irq0:
