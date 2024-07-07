@@ -253,6 +253,37 @@ isr31:
     push byte 31
     jmp isr_common_stub
 
+global syscall_stub
+extern syscall_handler
+syscall_stub:
+    cli
+    push byte 0
+    push byte 0x80
+    
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+    mov ax, 0x10   ; Load the Kernel Data Segment descriptor!
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov eax, esp   ; Push us the stack
+    push eax
+    mov eax, syscall_handler
+    call eax       ; A special call, preserves the 'eip' register
+    pop eax
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    add esp, 8     ; Cleans up the pushed error code and pushed ISR number
+    iret           ; pops 5 things at once: CS, EIP, EFLAGS, SS, and ESP!
+    
+
 ; We call a C function in here. We need to let the assembler know
 ; that '_fault_handler' exists in another file
 extern fault_handler

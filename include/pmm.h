@@ -7,24 +7,50 @@
 /*only works after high-kernel initialized*/
 #define BLOCK_SIZE 4096
 extern uint32_t kernel_end;
-void pmm_init(uint32_t memsize);
 void *get_physaddr(void * virtualAddr);
 
-union virtAddr_f{
+typedef union {
     struct{
         uint32_t offset    :12;
         uint32_t table     :10;
         uint32_t directory :10;
     };
-    uint32_t virtAddr;
-};
+    uint32_t address;
+} virt_address_t;
+
+
+#define PAGE_PRESENT         0b00000001    
+#define PAGE_READ_WRITE      0b00000010    
+#define PAGE_USER_SUPERVISOR 0b00000100            
+#define PAGE_WRITE_THROUGH   0b00001000        
+#define PAGE_CACHE_DISABLED  0b00010000        
+#define PAGE_ACCESED         0b00100000    
+#define PAGE_DIRTY           0b01000000
+
+#define PAGE_PAGE_SIZE       0b10000000    
+#define PAGE_GLOBAL          0b10000000    
+
+
+
 
 
 typedef union{
+    struct{
+        uint32_t present: 1 ;
+        uint32_t read_write:1;
+        uint32_t user_supervisor:1;
+        uint32_t write_through:1;
+        uint32_t cache_disabled:1;
+        uint32_t accesed:1;
+        uint32_t dirty:1;
+        uint32_t page_size:1;
+        uint32_t available:3;
 
+        uint32_t:21;
+
+    } __attribute__((packed));
+    uint32_t raw;
 } page_directory_entry_t;
-
-
 
 typedef union{
     struct{
@@ -44,6 +70,6 @@ typedef union{
     uint32_t raw;
 } page_table_entry_t;
 
-
+void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags);
 
 #endif

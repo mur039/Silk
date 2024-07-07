@@ -2,6 +2,9 @@
 #define __UART_H_
 #include <stdint.h>
 #include <isr.h>
+
+#define COM1 0x3f8
+
 //i have only COM1 tho
 int init_uart_port(int port);
 int is_transmit_empty(int port);

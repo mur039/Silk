@@ -15,7 +15,18 @@
         "uart.h": "c",
         "irq.h": "c",
         "str.h": "c",
-        "pmm.h": "c"
+        "pmm.h": "c",
+        "stdint.h": "c",
+        "tar.h": "c",
+        "acpi.h": "c",
+        "isr.h": "c",
+        "array": "c",
+        "string_view": "c",
+        "initializer_list": "c",
+        "ranges": "c",
+        "utility": "c",
+        "random": "c",
+        "kb.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

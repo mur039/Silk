@@ -77,6 +77,7 @@ enablePaging: ;enablePaging(unsigned int*);
    mov cr0, ebx        ; update cr0
    ret                 ; now paging is enabled
 
+
 ;extern void _changeSP(uint32_t * nsp, int (* foo)(multiboot_info_t * mbd), multiboot_info_t mbd);
 global _changeSP
 _changeSP:
