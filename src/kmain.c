@@ -12,37 +12,23 @@
 #include <gdt.h>
 #include <kb.h>
 #include <timer.h>
+#include <pci.h>
 
 #include <glyph.h>
 #include <fb.h>
 #include <filesystems/tar.h>
+#include <filesystems/vfs.h>
+#include <syscalls.h>
+#include <elf.h>
+#include <process.h>
 
 extern uint32_t bootstrap_pde[1024];
 extern uint32_t bootstrap_pte1[1024];
 extern uint32_t kernel_phy_end;
+extern uint32_t kernel_phy_start;
 
 __attribute__((fastcall)) void jump_usermode(uint8_t *function, uint8_t *stack);
 
-
-/* convention
-retvalue = 	eax
-syscall number = eax	    
-arg0 = ebx	
-arg1 = ecx	
-arg2 = edx	
-arg3= esi	
-arg4 = edi	
-arg5 = ebp
-*/
-
-uint32_t * framebuffer;
-
-typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
 
 typedef enum{
     SEEK_SET = 0,
@@ -51,15 +37,15 @@ typedef enum{
 
 } whence_t;
 
-enum syscall_numbers{
-    SYSCALL_READ = 0,
-    SYSCALL_WRITE = 1,
-    SYSCALL_OPEN = 2,
-    SYSCALL_CLOSE = 3,
-    SYSCALL_LSEEK = 4,
-    SYSCALL_EXIT = 60
-};
+typedef struct  {
+        //    unsigned int   st_dev;      /* ID of device containing file */
+        //    unsigned int   st_ino;      /* Inode number */
+           unsigned int  st_mode;     /* File type and mode */
+        //    unsigned int st_nlink;    /* Number of hard links */
+           unsigned int   st_uid;      /* User ID of owner */
+           unsigned int   st_gid;      /* Group ID of owner */
 
+} stat_t;
 
 volatile int  is_received_char = 0;
 char ch;
@@ -68,194 +54,238 @@ volatile int  is_kbd_pressed = 0;
 char kb_ch;
 
 
-typedef long off_t;
-typedef struct  {
-	unsigned short f_mode;
-	unsigned short f_flags;
-	tar_header_t *f_inode;
-	off_t f_pos;
-} file_t;
 
-#define MAX_OPEN_FILES  8
+#define MAX_OPEN_FILES  16
 int opened_file_index = 0;
 file_t opened_files[MAX_OPEN_FILES] = {{.f_inode = 0}};
 
-void syscall_handler(struct regs *r){
-    int result = -1;
-    file_t * file;
 
-    switch((uint8_t)r->eax){
+/*O_RDONLY, O_WRONLY, O_RDWR*/
+void syscall_open(struct regs *r){
 
-        case SYSCALL_READ:
+  for(int i = 0; i < MAX_OPEN_FILES; i++){
 
-            file = &opened_files[r->ebx];
-            if(file->f_inode == NULL){   //check if its opened
-                r->eax = -1;
-                break;
-            }
-
-
-            if((file->f_mode & (O_RDONLY| O_RDWR)) == 0) { //check if its readable
-                r->eax = -1;
-                break;
-            }
-
-
-            switch (file->f_inode->devmajor[6] - '0')
-            {
-                case 1: //dev/zerp 
-                    r->eax = 0;
-                    break;
-
-                case 2: // /dev/fb
-                    r->eax = ((uint8_t *)framebuffer)[file->f_pos];
-                    file->f_pos += 1;
-                    break;
-
-                case 3: //dev/kbd
-                    if(is_kbd_pressed == 1){
-                        result = kb_ch;
-                        is_kbd_pressed = 0;
-                    }
-                    r->eax = result;
-                    break;
-
-                case 4: //tty character device
-                    if(is_received_char == 1){
-                        result = ch;
-                        is_received_char = 0;
-                    }
-                    r->eax = result;
-                    break;
-
-                default:
-                    break;
-            }
-
-            break;
-
-        case SYSCALL_WRITE:
+    r->eax = -1;
+    if(opened_files[i].f_inode == NULL){ //find empty entry
+        opened_files[i].f_inode = tar_get_file((char *)r->ebx, (int) r->ecx); //open file
         
-            file = &opened_files[r->ebx];
-            if(file->f_inode == NULL){   //check if its opened
-                r->eax = -1;
-                break;
-            }
+        if(opened_files[i].f_inode != NULL)
+        {
+            uart_print(COM1, "Succesfully opened file %s : %x\r\n", r->ebx, i);
+            opened_files[i].f_mode = r->ecx;
+            opened_files[i].f_pos = 0;  
+            r->eax = i;
+            return;
+        }
+        break;
+        }
+    }
 
-            if((file->f_mode & (O_WRONLY | O_RDWR)) == 0) { //check if its writable
-                r->eax = -1;
-                break;
-            }
+    // unmap_virtaddr(user_mapped);
 
-            switch (file->f_inode->devmajor[6] - '0'){
-                case 1: //dev zero non writable
-                    r->eax = -1;
-                    break;
-                
-                case 2: //dev/fb
-                    memcpy( &((uint8_t*)framebuffer)[file->f_pos], (void *)r->ecx, r->edx);
-                    file->f_pos += r->edx;
-                    r->eax = r->edx;
-                    
-                    break;
+}
 
-                case 4: //tty character device
-                    switch (file->f_inode->devminor[6] - '0'){
-                        case 0: //fb
-                            fb_console_write((void *)r->ecx, 1, r->edx);
-                            break;
-                        case 1: //com1
-                            uart_write(COM1, (void*)r->ecx, 1, r->edx);
-                            r->eax = r->edx;
-                            break;
-                    }
-                    break;
+void syscall_read(struct regs *r){ //only one byte at a time
+    file_t * file = &opened_files[r->ebx];
+    if(file->f_inode == NULL){   //check if its opened
+        r->eax = -1;
+        return;
+    }
 
-                default:
-                    break;
-            }
+    if((file->f_mode & (O_RDONLY| O_RDWR)) == 0) { //check if its readable
+        r->eax = -1;
+        return;
+    }
 
-            break;
-
-        /*O_RDONLY, O_WRONLY, O_RDWR*/
-        case SYSCALL_OPEN:
-
-            for(int i = 0; i < MAX_OPEN_FILES; i++){
-
-                if(opened_files[i].f_inode == NULL){ //find empty entry
-                    r->eax = -1;
-                    opened_files[i].f_inode = tar_get_file((char *)r->ebx, (int) r->ecx);
-
-                    if(opened_files[i].f_inode != NULL)
-                    {
-                        uart_print(COM1, "Succesfully opened file %s : %x\r\n", r->ebx, i);
-                        opened_files[i].f_mode = r->ecx;
-                        r->eax = i;
-                    }
-
-                    break;
-                }
-
-            }
-            break;
-
-        case SYSCALL_CLOSE: // close(int fd)
-            if(opened_files[r->ebx].f_inode == NULL){ //trying to closed files that is not opened
-                r->eax = -1;
-                break;
-            }
-            else{
-                opened_files[r->ebx].f_flags = 0;
-                opened_files[r->ebx].f_inode = NULL;
-                opened_files[r->ebx].f_mode = 0;
-                opened_files[r->ebx].f_pos = 0;
-                r->eax = 0;
-
-            }
-            break;
-
-        case SYSCALL_LSEEK: // lseek(int fd, off_T offset, int whence)
-
-            file = &opened_files[r->ebx];
-            if(file->f_inode == NULL){   //check if its opened
-                r->eax = -1;
-                break;
-            }
-            if( !(
-                tar_get_filetype(file->f_inode) == BLOCK_SPECIAL_FILE
-                ||
-                tar_get_filetype(file->f_inode) == REGULAR_FILE
-                    )
-                ){ //not a block device nor a normal file so non seekable 
-                r->eax = -1;
-                break;
-            }
-
-            long new_pos = 0;
-            if(r->edx == SEEK_SET){
-                new_pos = r->ecx;
-                }
-            else if(r->edx == SEEK_CUR){
-                new_pos = r->ecx + file->f_pos; 
-            }
-            else if(r->edx == SEEK_END){}
-
-            file->f_pos = new_pos;
-            r->eax = new_pos;
-            //uart_print(COM1, "lseek fd:%x offset:%x whence:%x\r\n", r->ebx, r->ecx, r->edx);
-            break;
-
-        case SYSCALL_EXIT:
-            uart_print(COM1, "Program exited with code %x...\r\n", r->ebx);
-            halt();
+        
+    switch (tar_get_filetype(file->f_inode))
+    {
+    case REGULAR_FILE: //regular read negro
+        if(file->f_pos >= o2d(file->f_inode->size)){ //EOF
+            r->eax = -1;
+        }
+        else{
+            uint8_t  * result;
+            result = (uint8_t*)(&(file->f_inode[1]));
+            r->eax = result[file->f_pos];
+            file->f_pos += 1;
+        }
+        break;
             
-        default:
-            uart_print(COM1, "Unkown system call %x\r\n", r->eax);
-            halt();
+    case BLOCK_SPECIAL_FILE:
+    case CHARACTER_SPECIAL_FILE:
+        switch (tar_get_major_number(file->f_inode))
+        {
+            case 1: //dev/zero
+                r->eax = 0;
+                break;
+            case 2: // /dev/fb
+                //it should be read only though
+                // r->eax = ((uint8_t *)framebuffer)[file->f_pos];
+                // file->f_pos += 1;
+                break;
+            case 3: //dev/kbd
+                if(is_kbd_pressed == 1){
+                    is_kbd_pressed = 0;
+                    r->eax = kb_ch;
+                }
+                else{
+                    r->eax = -1;    
+                }
+                break;
+
+            case 4: //tty character device
+                if(is_received_char == 1){
+                    is_received_char = 0;
+                    r->eax = ch;
+                }
+                else{
+                    r->eax = -1;
+                }
+                break;
+
+            default:break;
+            }
             break;
+    default:
+        r->eax = -1;
+        break;
+            
+}
+
+    return;
+}
+
+void syscall_write(struct regs * r){
+    file_t * file;
+    file = &opened_files[r->ebx];
+    if(file->f_inode == NULL){   //check if its opened
+        r->eax = -1;
+        return;
+    }
+
+    if((file->f_mode & (O_WRONLY | O_RDWR)) == 0) { //check if its writable
+        r->eax = -1;
+        return;
+    }
+
+
+    switch (tar_get_major_number(file->f_inode)){
+        case 1: //dev zero non writable
+            r->eax = -1;
+            break;
+                
+        case 2: //dev/fb
+            if(file->f_pos + r->edx >= 800*600*4){
+                file->f_pos = 0; //rewind
+            }
+            framebuffer_raw_write(file->f_pos, (void *)r->ecx, r->edx);
+            file->f_pos += r->edx;
+            r->eax = r->edx;
+            
+            
+            break;
+
+        
+        case 4: //tty character device
+            switch (tar_get_minor_number(file->f_inode)){
+                case 0: //fb
+                    fb_console_write((void *)r->ecx, 1, r->edx);
+                    break;
+                case 1: //com1
+                    uart_write(COM1, (void*)r->ecx, 1, r->edx);
+                    r->eax = r->edx;
+                    break;
+        
+            }
+            break;
+
+        default:
+            break;
+
+    }
+
+    return;
+}
+
+void syscall_close(struct regs * r){
+
+    if(opened_files[r->ebx].f_inode == NULL){ //trying to closed files that is not opened
+        r->eax = -1;
+        return;
+    }
+    else{
+        opened_files[r->ebx].f_flags = 0;
+        opened_files[r->ebx].f_inode = NULL;
+        opened_files[r->ebx].f_mode = 0;
+        opened_files[r->ebx].f_pos = 0;
+        r->eax = 0;
     }
     return;
 }
+
+void syscall_fstat(struct regs * r){
+    //ebx = fd, ecx = &stat
+    file_t * file;
+    file = &opened_files[r->ebx];
+    if(file->f_inode == NULL){   //check if its opened
+        r->eax = -1;
+        return;
+    }
+
+    stat_t * stat = (void *)r->ecx;
+    stat->st_mode = tar_get_filetype(file->f_inode) << 16 | file->f_flags;
+    stat->st_uid = o2d(file->f_inode->uid);
+    stat->st_gid = o2d(file->f_inode->gid);
+    return;
+}
+
+
+void syscall_lseek(struct regs * r){
+    file_t * file;
+    file = &opened_files[r->ebx];
+    if (file->f_inode == NULL)
+    { // check if its opened
+        r->eax = -1;
+        return;
+    }
+
+    if (!(
+            tar_get_filetype(file->f_inode) == BLOCK_SPECIAL_FILE ||
+            tar_get_filetype(file->f_inode) == REGULAR_FILE))
+    { // not a block device nor a normal file so non seekable
+        r->eax = -1;
+        return;
+    }
+
+    long new_pos = 0;
+    if (r->edx == SEEK_SET)
+    {
+        new_pos = r->ecx;
+    }
+    else if (r->edx == SEEK_CUR)
+    {
+        new_pos = r->ecx + file->f_pos;
+    }
+    else if (r->edx == SEEK_END)
+    {
+        new_pos = o2d(file->f_inode->size) - r->ecx;
+    }
+
+    file->f_pos = new_pos;
+    r->eax = new_pos;
+    // uart_print(COM1, "lseek fd:%x offset:%x whence:%x\r\n", r->ebx, r->ecx, r->edx);
+
+    return;
+}
+
+void syscall_exit(struct regs *r){
+    current_process->state = TASK_ZOMBIE;
+    fb_console_printf("Program exited with code %u...\n", r->ebx & 0xff);
+    halt();
+    schedule(r);
+}
+
 
 
 void uart_handler(struct regs *r){
@@ -263,6 +293,7 @@ void uart_handler(struct regs *r){
     char c = serial_read(0x3f8);
     is_received_char = 1;
     ch = c;
+    // fb_console_printf("%c:%x\n",ch, ch);
     return;
 }
 
@@ -275,23 +306,71 @@ void keyboard_handler(struct regs *r)
     scancode = inb(0x60);
     /* If the top bit of the byte we read from the keyboard is
     *  set, that means that a key has just been released */
-    
-    if (scancode & 0x80)
+    /*
+    ctrl 0x1d
+    alt 0x38
+    left shift 0x2a
+    right shift 0x36
+
+    */
+    if (scancode & 0x80) //released
     {
+        if((scancode &  0x7f) == 0x1d){ //if ctrl is released
+            ctrl_flag = 0;
+        }else if((scancode &  0x7f) == 0x2a || (scancode &  0x7f) == 0x36 ){ //shift modifier
+            shift_flag = 0;
+        }
         /* You can use this one to see if the user released the
         *  shift, alt, or control keys... */
     }
-    else
+    else //pressed
     {
-        kb_ch = kbdus[scancode];
-        // fb_console_putchar(kb_ch);
-        is_kbd_pressed = 1;
+        if((scancode &  0x7f) == 0x1d){ //ctrl modifier
+            ctrl_flag = 1;
+        }else if( (scancode &  0x7f) == 0x2a || (scancode &  0x7f) == 0x36 ){ //shift modifier
+            shift_flag = 1;
+        }
+        else{
+
+            kb_ch = kbdus[scancode] & (ctrl_flag ? 0x1f : 0x7f);
+            if(shift_flag){
+                if(kb_ch >= 'a' && kb_ch <= 'z'){  //to upper case
+                    kb_ch -= 32;
+                    }
+                else if(kb_ch >= 'A' && kb_ch <= 'Z'){ //to lower case
+                    kb_ch += 32;
+                    } //to lower case
+            }
+            // fb_console_putchar(kb_ch);
+            is_kbd_pressed = 1;
+
+        }
+        // fb_console_printf( "Key : %c scancode:%u\r\n", kbdus[scancode], scancode);
         return;
-        // uart_print(COM1, "Key : %c scancode:%x\r\n", kbdus[scancode], scancode);
         // printf("%u\n", scancode);
     }
 }
 
+
+
+
+void stack_push(unsigned int ** stack, unsigned int value){
+    unsigned int val = value;
+    stack[0] -= 1;
+    stack[0][0] = val;
+    return;
+}
+
+void syscall_execve(struct regs * r){ //more like spawn 
+    r->eax = -1;
+    if(tar_get_file(r->ebx, O_RDONLY) == NULL) return;
+    
+    //leap of faith
+    create_process(r->ebx); //pathname
+    // terminate_process(current_process);
+    r->eax = 1;
+    return;
+    }
 
 
 uint32_t kernel_stack[2048];
@@ -301,7 +380,7 @@ uint32_t kernel_syscallstack[128];
  __attribute__((noreturn)) void kmain(multiboot_info_t* mbd){ //high kernel
 
     init_uart_port(COM1); //COM1
-    
+
 
     uart_print(COM1, "Initializing Pyhsical Memory Manager\r\n");
     for(unsigned int i = 0; i < mbd->mmap_length; i += sizeof(struct multiboot_mmap_entry)){
@@ -319,12 +398,11 @@ uint32_t kernel_syscallstack[128];
         "Reserved"
         );
 
-        if(mmt->type == 1){ //if available push to anc create bitmap
-
+        if(mmt->type == 1 && mmt->addr_low == 0x100000){ //if available push to anc create bitmap
+            pmm_init(mmt->addr_low, mmt->len_low);
+            uart_print(COM1, "Initialized pmm_init\r\n");
         }
     }
-
-
 
     uart_print(COM1, "Modules found : %x, At : %x\r\n", mbd->mods_count, mbd->mods_addr);
     multiboot_module_t * modules  = (multiboot_module_t *)mbd->mods_addr;
@@ -341,26 +419,7 @@ uint32_t kernel_syscallstack[128];
         modules[i].mod_end,
         modules[i].mod_end - modules[i].mod_start
         );
-
     }
-
-    tar_add_source((void *)modules[1].mod_start);
-	// tar_parse();
-
-    file_t font;    
-    font.f_inode = tar_get_file("/share/screenfonts/consolefont_14.psf", O_RDONLY);
-    if(font.f_inode == NULL){
-        uart_print(COM1, "Failed to open font\r\n");
-    }
-    font.f_mode = O_RDONLY; 
-    parse_psf(&(font.f_inode[1]));
-   
-
-    init_framebuffer((void*)mbd->framebuffer_addr_lower, mbd->framebuffer_width, mbd->framebuffer_height);
-    init_fb_console(-1, -1); //maximum size
-
-
-
 
 
     uart_print(COM1, "Installing Global Descriptor Tables\r\n");
@@ -379,40 +438,97 @@ uint32_t kernel_syscallstack[128];
     irq_install();
     irq_install_handler(1, keyboard_handler);
     irq_install_handler(4, uart_handler);
+
+
+      virt_address_t addr;
+    addr.address = (uint32_t)kernel_heap;
+    addr.table += 1;
+    for( ; addr.table < 1023; addr.table++){
+    //   uart_print(COM1, "incremented table %u:%x , physical :%x\r\n",addr.table,  addr.address, get_physaddr((void *)addr.address));
+      unmap_virtaddr((void *)addr.address);
+    } 
+
+    
+    addr.address = (uint32_t)get_physaddr(kernel_heap);
+
+
+    for(int i = 0; i < 1 + (addr.address - 0x100000)/4096 ; ++i){
+        pmm_mark_allocated((void *)0x100000 + 0x1000*i);
+    }
+
+
+    for(int i = 0; i < (modules[0].mod_end - modules[0].mod_start)/4096 ; ++i){
+        map_virtaddr(
+            (void *)modules[0].mod_start + i*0x1000,
+            (void *)modules[0].mod_start + i*0x1000,
+            PAGE_PRESENT | PAGE_READ_WRITE
+        );
+        
+        pmm_mark_allocated((void *)modules[0].mod_start + i*0x1000);
+
+    }
+    flush_tlb();
+
+    kmalloc_init();
+    
+    vfs_init();
+
+    //ugly as fuck
+    tar_add_source((void *)kernel_heap);
+    for(int i = 0; i < (modules->mod_end - modules->mod_start)/4096; ++i){
+        map_virtaddr(kernel_heap, modules->mod_start + i*0x1000, PAGE_PRESENT | PAGE_READ_WRITE);
+        kernel_heap += 0x1000;
+    }
+
+    file_t font;    
+    font.f_inode = tar_get_file("/share/screenfonts/consolefont_14.psf", O_RDONLY);
+    if(font.f_inode == NULL){
+        uart_print(COM1, "Failed to open font\r\n");
+    }
+    font.f_mode = O_RDONLY; 
+    parse_psf(&(font.f_inode[1]));
+   
+
+    init_framebuffer((void*)mbd->framebuffer_addr_lower, mbd->framebuffer_width, mbd->framebuffer_height);
+    init_fb_console(-1, -1); //maximum size
+    fb_set_console_color((pixel_t){.green = 0xff}, (pixel_t){.blue = 0});
+    
+    initialize_syscalls();
+    install_syscall_handler(SYSCALL_OPEN, syscall_open);
+    install_syscall_handler(SYSCALL_EXIT, syscall_exit);
+    install_syscall_handler(SYSCALL_READ, syscall_read);
+    install_syscall_handler(SYSCALL_WRITE, syscall_write);
+    install_syscall_handler(SYSCALL_CLOSE, syscall_close);
+    install_syscall_handler(SYSCALL_LSEEK, syscall_lseek);
+    install_syscall_handler(SYSCALL_EXECVE, syscall_execve);
+    install_syscall_handler(SYSCALL_FSTAT, syscall_fstat);
     
     
     timer_install();
-    timer_phase(1);
-    //ACPI initialization
-    // struct RSDP_t rdsp;
-    // rdsp = find_rsdt();//this fella is well above the first 1M so we have to do something about it
-
+    register_timer_callback(fb_console_blink_cursor);
+    timer_phase(100);
+    
+    // enumerate_pci_devices();
     enable_interrupts();
     
+    //we can unmap the first MB and afterwards
+
+    process_init();
     
-    //loading userprogram.bin to memory and possibly execute
-    uint8_t * bumpy  = (void*)&kernel_phy_end, * bumpy_stack;
+    pcb_t * p = create_process("/bin/init");
+    //page dir is allocated already
 
+    register_timer_callback(schedule);
 
-    bumpy = (void*)0x11e000;
-    bumpy = align2_4kB(bumpy);
-    bumpy_stack = bumpy + 4095;
-
-
-    map_virtaddr(bumpy, modules->mod_start, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+    extern int ie_func[];
+    map_virtaddr(ie_func, ie_func, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+    jump_usermode(ie_func, ie_func);
     
-    bumpy_stack = bumpy + 4095;
     
-    flush_tlb();
-
-    jump_usermode(bumpy, bumpy_stack);
-
-    
-
-
+    //we shouldn't get there
     for(;;)
     {
-
+    
     }
 
 }

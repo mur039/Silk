@@ -78,6 +78,27 @@ int va_gprintf(char (* write)(char c), const char *format, va_list args){
             ++format;
             switch (*format)
             {
+            case 'u': //32 bit integer has maximum 9,38 = 10 digits
+                ;
+                char line_buffer[11];
+                unsigned int number = va_arg(args, unsigned int);
+                int t1, t2;
+                t1 = number;
+                for(int i = 0; i < 10; ++i){
+                    t2 = t1 / 10;
+                    t2 *= 10;
+                    line_buffer[i] = (t1 - t2);
+                    t1 /= 10;
+                }
+
+                int found_non_zero = 0;
+                for(int i = 9; i >= 0; --i){
+                    if( found_non_zero == 0 && line_buffer[i] != 0) found_non_zero = 1;
+
+                    if(found_non_zero || (i == 0 && !found_non_zero)) write('0' + line_buffer[i]);
+                }
+
+                break;
             case 'c': //character
                 ;
                 int ch = va_arg(args, int); //char gets promoted to int 

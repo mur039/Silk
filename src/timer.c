@@ -1,8 +1,11 @@
 #include <sys.h>
 #include <timer.h>
+#include <fb.h>
 /* This will keep track of how many ticks that the system
 *  has been running for */
 unsigned timer_ticks = 0;
+
+void (* timer_callback)(struct regs *r) = NULL;
 
 void timer_handler(struct regs *r)
 {
@@ -10,14 +13,20 @@ void timer_handler(struct regs *r)
     /* Increment our 'tick count' */
     timer_ticks++;
 
-    /* Every 18 clocks (approximately 1 second), we will
-    *  display a message on the screen */
-    if (timer_ticks % 18 == 0){
-        uart_write(0x3f8, "[*]One second has passes\r\n", 1, 27);
-        // puts("One second has passed\n");
+    if (timer_ticks % 10 == 0){
+        // uart_write(0x3f8, "[*]One second has passes\r\n", 1, 27);
+        if(timer_callback != NULL) timer_callback(r);
+        
+    }
+    else if(timer_ticks % 40 == 0){
+        // fb_console_blink_cursor();
     }
 }
 
+void register_timer_callback( void (* func)(struct regs *r) ){
+    timer_callback = func;
+    return;
+}
 /* Sets up the system clock by installing the timer handler
 *  into IRQ0 */
 void timer_install()

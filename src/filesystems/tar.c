@@ -37,7 +37,7 @@ void tar_add_source(void * src){
 tar_header_t *tar_get_file(const char * path, int mode){
     (void)mode;
     /*
-    parse filepath to directories 
+    parse filepatto directories 
     -> /dev/share/consolefonts/screenfonts.psf
     ->/ dev share consolefonts screenfonts.psf
     or just add "./" at the beginning and just search it through?
@@ -87,4 +87,14 @@ void tar_parse(){
 
 file_types_t tar_get_filetype(tar_header_t * tar){
     return tar->typeflag[0] -'0';
+}
+
+int tar_get_major_number(tar_header_t * t){
+    if(tar_get_filetype(t) == REGULAR_FILE) return -1;
+    return t->devmajor[6] - '0';
+}
+
+int tar_get_minor_number(tar_header_t * t){
+    if(tar_get_filetype(t) == REGULAR_FILE) return -1;
+    return t->devminor[6] - '0';
 }

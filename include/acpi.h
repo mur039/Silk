@@ -1,14 +1,16 @@
 #ifndef __ACPI_H_
 #define __ACPI_H_
+
+#include <sys.h>
 #include <stdint.h>
 
-struct RSDP_t {
+typedef struct RSDP_t {
  char Signature[8];
  uint8_t Checksum;
  char OEMID[6];
  uint8_t Revision;
  uint32_t RsdtAddress;
-} __attribute__ ((packed));
+} __attribute__ ((packed)) rsdp_t;
 
 struct XSDP_t {
  char Signature[8];
@@ -35,6 +37,8 @@ struct ACPISDTHeader {
   uint32_t CreatorRevision;
 };
 
-struct RSDP_t find_rsdt();
+
+rsdp_t find_rsdt();
+int rsdp_is_valid(rsdp_t rdsp);
 
 #endif

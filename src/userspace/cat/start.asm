@@ -2,7 +2,11 @@ global _start
 extern main ; takes argument in ecx
 
 _start:
-    ;mov ecx, ebx
+    push ebp
+    mov ebp, esp
+    push ebx ;char **
+    push eax ;int 
+
     call main
     push eax ;return
     call exit
@@ -79,6 +83,34 @@ exit:
 
     mov eax, 60
     mov ebx, [ebp + 8] ;fd
+    int 0x80
+    pop ebp
+    ret
+    
+global execve
+execve:
+    push ebp
+    mov ebp, esp
+
+    mov eax, 59
+    mov ebx, [ebp + 8] ;pathname
+    mov ecx, [ebp + 12] ;args
+
+    int 0x80
+    pop ebp
+    ret
+
+
+
+global fstat
+fstat:
+    push ebp
+    mov ebp, esp
+
+    mov eax, 5
+    mov ebx, [ebp + 8] ;fd
+    mov ecx, [ebp + 12] ;stat_t *
+
     int 0x80
     pop ebp
     ret

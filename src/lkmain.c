@@ -1,6 +1,7 @@
 #include <lkmain.h>
 extern uint32_t kernel_stack[2048];
 extern void _changeSP(uint32_t * nsp, int (* foo)(multiboot_info_t * mbd), multiboot_info_t * mbd);
+
 void lkmain(multiboot_info_t* mbd, unsigned int magic){
     if(magic != 0x2BADB002) return; //to where nigga
     asm volatile("cli");
@@ -12,7 +13,7 @@ void lkmain(multiboot_info_t* mbd, unsigned int magic){
     PDE[768]  = (uint32_t)PTE1 | 0b00000011;
     PDE[1012] = (uint32_t)PTE2 | 0b00000011;
 
-    for(unsigned int i = 0; i < 1024; i++){  //whole 4MB
+    for(unsigned int i = 0; i <  1024; i++){  //whole 1MB
         PTE1[i] = (i * 0x1000) | 3; 
     }
 

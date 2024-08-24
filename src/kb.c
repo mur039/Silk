@@ -26,15 +26,15 @@ unsigned char kbdus[128] =
     0,	/* 69 - Num lock*/
     0,	/* Scroll Lock */
     0,	/* Home key */
-    0,	/* Up Arrow */
+    224/*0*/,	/* Up Arrow */
     0,	/* Page Up */
   '-',
-    0,	/* Left Arrow */
+    225/*0*/,	/* Left Arrow */
     0,
-    0,	/* Right Arrow */
+    226/*0*/,	/* Right Arrow */
   '+',
     0,	/* 79 - End key*/
-    0,	/* Down Arrow */
+    227/*0*/,	/* Down Arrow */
     0,	/* Page Down */
     0,	/* Insert Key */
     0,	/* Delete Key */
@@ -80,3 +80,5 @@ unsigned char kbdus[128] =
 //         // printf("%u\n", scancode);
 //     }
 // }
+int ctrl_flag = 0;
+int shift_flag = 0;

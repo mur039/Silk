@@ -28,6 +28,7 @@ global _start
 _start:
     mov esp, bootstrap_stack - 0xC0000000 ;new stack
     lgdt [GDT_descriptor] ;loading new gdt
+    mov ebp, 0 ;for stack trace purposes
     push eax
     push ebx
     call lkmain
@@ -96,6 +97,10 @@ _changeSP:
     call ecx
     
 
+global ie_func:
+ie_func:
+	jmp $
+	
 
 SECTION .bootstrap
 times 8192 dd 0 ; 8kB stack

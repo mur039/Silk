@@ -5,3 +5,9 @@
 *.o
 iso/
 iso/*
+initrd/
+initrd/
+initrd/
+initrd/*
+build/
+build/*

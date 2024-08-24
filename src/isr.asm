@@ -291,7 +291,9 @@ extern fault_handler
 ; This is our common ISR stub. It saves the processor state, sets
 ; up for kernel mode segments, calls the C-level fault handler,
 ; and finally restores the stack frame.
+extern kdir_entry
 isr_common_stub:
+ 
     pusha
     push ds
     push es
@@ -313,4 +315,6 @@ isr_common_stub:
     pop ds
     popa
     add esp, 8     ; Cleans up the pushed error code and pushed ISR number
+
+
     iret           ; pops 5 things at once: CS, EIP, EFLAGS, SS, and ESP!

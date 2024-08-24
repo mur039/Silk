@@ -7,5 +7,6 @@
 void timer_phase(int hz);
 void timer_install();
 void timer_wait(unsigned int ticks);
+void register_timer_callback( void (* func)(struct regs *r) );
 
 #endif

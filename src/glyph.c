@@ -21,13 +21,14 @@ void parse_psf(void * address){
         uart_print(COM1, "Invalid magic number.\r\n");
     }
 
+    uart_print(COM1, "Font mode-> %x\r\n", ((PSF1_Header*)address)->fontMode);
 }
 
 uint32_t get_glyph_size(){
     return glyph_height;
 }
 
-uint8_t * get_glyph_bitmap(char c){
+uint8_t * get_glyph_bitmap(const short c){
     uint8_t * glyph = screen_font_addr;
     return &glyph[c * glyph_height];
 }

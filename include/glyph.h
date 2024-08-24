@@ -33,6 +33,6 @@ typedef struct {
 } PSF_font;
 
 void parse_psf(void * address);
-uint8_t * get_glyph_bitmap(char c);
+uint8_t * get_glyph_bitmap(const short c);
 uint32_t get_glyph_size();
 #endif

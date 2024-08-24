@@ -4,6 +4,7 @@
 
 #include <uart.h>
 #include <str.h>
+#include <process.h>
  
 /* These are function prototypes for all of the exception
 *  handlers: The first 32 entries in the IDT are reserved
@@ -101,12 +102,29 @@ void dump_registers(struct regs *r){
          "\r\n"
          "eax : %x | ebx : %x | ecx : %x\r\n"
          "edx : %x | edi : %x | esi : %x\r\n"
-         "eip : %x | esp : %x | ebp : %x\r\n"
+         "eip : %x |uesp : %x | ebp : %x\r\n"
          ,r->eax, r->ebx, r->ecx
          ,r->edx, r->edi, r->esi
-         ,r->eip, r->esp, r->ebp
+         ,r->eip, r->useresp, r->ebp
          );
  }
+
+struct stackframe {
+  struct stackframe* ebp;
+  u32 eip;
+};      
+void print_stack_trace(int max_frame){
+    struct stackframe *stk;
+    asm ("movl %%ebp,%0" : "=r"(stk) ::);
+    uart_print(COM1, "Stack Trace:\r\n");
+
+    for(unsigned int frame = 0; stk && (frame < max_frame); ++frame)
+    {
+        // Unwind to previous stack frame
+        uart_print(COM1, "%u ->%x\r\n",frame, stk->eip );
+        stk = stk->ebp;
+    }
+}
 
 static const char *exception_messages[] =
 {
@@ -182,15 +200,17 @@ void fault_handler(struct regs *r)
             halt(); 
             break;
        case 14: //Page Fault
+            print_current_process();
             uart_print(0x3f8, pagefault_messages[r->err_code & 7]);
 
             if(0 == (r->err_code & 1)){ //page not present, cr2 gives linear address
                 uint32_t cr2_reg;
                 asm volatile ( "mov %%cr0, %0" : "=r"(cr2_reg) );
                 uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", cr2_reg >> 22, (cr2_reg >> 12) & 0x3FF , cr2_reg);
-
+                print_stack_trace(10);
             }
 
+            //maybe i should let kernel map this page to end of the memory_space?
             halt();
         break;
 

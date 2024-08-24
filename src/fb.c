@@ -28,8 +28,13 @@ void framebuffer_put_block(int width, int height){
     return;
 }
 
+int framebuffer_raw_write(size_t start, void * src, size_t count){
+    memcpy(&framebuffer_addr[start], src, count);
+    return 0;
+}
 
-void framebuffer_put_glyph(const char symbol, int x, int y, pixel_t bg, pixel_t fg){
+
+void framebuffer_put_glyph(const unsigned short symbol, int x, int y, pixel_t bg, pixel_t fg){
     if(framebuffer_addr == 0 || framebuffer_width == 0 || framebuffer_heigth == 0) return; //framebuffer is not initiliazed
 
     // uart_print(COM1, "framebuffer_put_glyph -> %c %x\r\n", symbol, symbol);
@@ -72,17 +77,67 @@ void init_fb_console(int cols, int rows){
     fb_fg.blue  = 0xff;
 }
 
+void fb_set_console_color(pixel_t fg, pixel_t bg){
+    fb_fg = fg;
+    fb_bg = bg;
+    return;
+}
+
 static int escape_sequence = 0;
+static int number = 0;
 void fb_console_putchar(char c){
 
-    if(escape_sequence){
-        if(c !='['){ //checking if its really escape sequence
-            escape_sequence = 0; 
+    if(escape_sequence == 1){
+        if(c =='['){ //checking if its really escape sequence
+            escape_sequence = 2;
             return;
             }
  
     }
+    if(escape_sequence == 2){ //we are in escape sequence but which one?
+        switch (c)
+        {
+        case '0'...'1': //fuck it we go ESC[XY, x number, Y command
+            number = c - '0';
+            break;
 
+        case 'A': 
+            fb_cursor_y -= 1;
+            if(fb_cursor_y <= 0) fb_cursor_y = 0;
+            
+            break;
+
+        case 'B':
+            fb_cursor_y++;
+            escape_sequence = 0;
+            return;
+            break;
+
+        case 'C':
+            fb_cursor_x -= number;
+            escape_sequence = 0;
+            return;
+            break;
+            
+        case 'D':
+            fb_cursor_x -= number;
+            escape_sequence = 0;
+            return;
+            break;
+        case 'H': //move cursor to (0, 0)
+            fb_cursor_x = 0;
+            fb_cursor_y = 0;
+            escape_sequence = 0;
+            return;
+        
+        default:
+            break;
+        }
+    }
+
+
+    
+if(escape_sequence == 0){
     switch (c)
     {
         case 27: //for escape sequences
@@ -90,7 +145,7 @@ void fb_console_putchar(char c){
             escape_sequence = 1;
             break;
         
-        case '\r':
+        case '\r':break;;
         case '\n': 
             fb_cursor_x = 0;
             fb_cursor_y += 1;
@@ -103,7 +158,12 @@ void fb_console_putchar(char c){
 
             }
             break;
+        case '\t':
+            fb_cursor_x += 4;
+            break;
         case ' ':
+            framebuffer_put_glyph(' ', fb_cursor_x * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg );
+
             fb_cursor_x += 1;
             break;
 
@@ -113,6 +173,7 @@ void fb_console_putchar(char c){
             break;
     }
     
+}
 
     if(fb_cursor_x >= fb_console_cols){ 
         fb_cursor_x = 0;
@@ -123,12 +184,13 @@ void fb_console_putchar(char c){
     if(fb_cursor_y >= fb_console_rows){ 
 
         fb_cursor_x = 0; //already zero
-        //some sort of memcpy here
         memcpy(framebuffer_addr, &framebuffer_addr[4*get_glyph_size()*framebuffer_width], 4*framebuffer_width*(framebuffer_heigth));
         fb_cursor_y -= 1;
     }
 
 }
+
+
 
 void fb_console_write(void * src, uint32_t size, uint32_t nmemb){
     uint8_t * source = src;
@@ -144,4 +206,47 @@ void fb_console_put(char *s){
         fb_console_putchar(*s);
         s++;
     }
+}
+
+void fb_console_blink_cursor(){
+    //block blinking
+
+     for (size_t j = 0; j < get_glyph_size(); j++)
+    {
+        pixel_t * row = (pixel_t *)&framebuffer_addr[(fb_cursor_y*get_glyph_size() + j) * 4 * framebuffer_width];
+        for(int i = 0; i < 8; ++i){ //bits
+            if(
+                row[fb_cursor_x*8 + i].alpha == fb_fg.alpha &&
+                row[fb_cursor_x*8 + i].red == fb_fg.red     &&
+                row[fb_cursor_x*8 + i].green == fb_fg.green &&
+                row[fb_cursor_x*8 + i].blue == fb_fg.blue
+                
+            ){
+                memcpy( &row[fb_cursor_x*8 + i], &fb_bg, sizeof(pixel_t));
+            }
+            else{
+                memcpy( &row[fb_cursor_x*8 + i], &fb_fg, sizeof(pixel_t));
+            }
+            
+        }
+    }
+    
+
+}
+
+
+static char fb_console_gprintf_wrapper(char c){
+    fb_console_putchar(c);
+    return c;
+}
+
+void fb_console_printf(const char * fmt, ...){
+    va_list arg;
+    va_start(arg, fmt);
+    va_gprintf(
+        fb_console_gprintf_wrapper,
+        fmt,
+        arg
+    );
+    return;
 }

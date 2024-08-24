@@ -33,6 +33,8 @@ disable_interrupts:
 	ret
 
 
+extern ie_func
+
 ;first arg in ecx, second is in edx"
 global jump_usermode
 jump_usermode:
@@ -50,3 +52,5 @@ jump_usermode:
 	push (3 * 8) | 3 ; code selector (ring 3 code with bottom 2 bits set for ring 3)
 	push ecx  ; instruction address to return to
 	iret
+user_func:
+	ret
