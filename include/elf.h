@@ -43,6 +43,7 @@ typedef struct {
 
 void * elf_get_entry_address(file_t *file);
 int elf_list_program_headers(file_t * file);
+int elf_get_filesz(file_t * file);
 void * elf_load(pcb_t * process);
 
 

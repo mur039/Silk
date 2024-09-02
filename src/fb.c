@@ -28,6 +28,13 @@ void framebuffer_put_block(int width, int height){
     return;
 }
 
+uint8_t framebuffer_write_wrapper(uint8_t * buffer, uint32_t offset, uint32_t len, void * dev){
+    dev;
+    framebuffer_raw_write(offset, buffer, len);
+    return 0;
+}
+
+
 int framebuffer_raw_write(size_t start, void * src, size_t count){
     memcpy(&framebuffer_addr[start], src, count);
     return 0;
@@ -128,6 +135,22 @@ void fb_console_putchar(char c){
             fb_cursor_x = 0;
             fb_cursor_y = 0;
             escape_sequence = 0;
+            return;
+        
+        case 'J': //erase from cursor to the end of screen;
+            escape_sequence = 0;
+            int x,y;
+            x = fb_cursor_x;
+            y = fb_cursor_y;
+
+            int total_characters2write = (fb_console_rows - y - 1) * fb_console_cols;
+            total_characters2write += fb_console_cols - x;
+            for(int i = 0; i < total_characters2write; ++i){
+                fb_console_putchar(' ');
+            }
+
+            fb_cursor_x = x;
+            fb_cursor_y = y;
             return;
         
         default:

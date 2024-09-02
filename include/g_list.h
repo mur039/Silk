@@ -21,5 +21,5 @@ typedef struct list{
 listnode_t * list_insert_front(list_t * list, void * val);
 listnode_t * list_insert_end(list_t * list, void * val);
 listnode_t * list_insert_start(list_t * list, void * val);
-
+listnode_t * list_remove(list_t * list, listnode_t * node);
 #endif

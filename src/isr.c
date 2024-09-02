@@ -5,7 +5,7 @@
 #include <uart.h>
 #include <str.h>
 #include <process.h>
- 
+#include <v86.h>
 /* These are function prototypes for all of the exception
 *  handlers: The first 32 entries in the IDT are reserved
 *  by Intel, and are designed to service exceptions! */
@@ -194,11 +194,17 @@ void fault_handler(struct regs *r)
        switch (r->int_no)
        {
        case 13: //general fault
+            if(r->eflags & ( 1 << V86_VM_BIT) ){ //if v86 task
+                v86_monitor(r, current_process);
+                break;
+            }
+
             message_length = sprintf(buffer, "%x %s\r\n", r->int_no, exception_messages[r->int_no]);
             uart_write(0x3f8, buffer, 1, message_length);
             uart_print(0x3f8, "\r\nSystem Halted.");
             halt(); 
             break;
+
        case 14: //Page Fault
             print_current_process();
             uart_print(0x3f8, pagefault_messages[r->err_code & 7]);

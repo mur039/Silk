@@ -1,5 +1,6 @@
 #include <process.h>
 #include <elf.h>
+#include <v86.h>
 
 list_t * process_list;
 pcb_t * current_process;
@@ -35,26 +36,38 @@ void schedule(struct regs * r){
     switch(current_process->state){
         case TASK_CREATED: //create the process then bitch
             ;
+            if(current_process->regs.eflags & (1u << V86_VM_BIT)){ //v86 task which its initialization is done uglt but anyway
+                current_process->state = TASK_RUNNING;
+                break;
+            }
             pcb_t * p = current_process;
             u8 * code = elf_load(current_process);
 
+            if(code == NULL){
+                p->state = TASK_ZOMBIE;
+                break;
+            }
             file_t init;    
             init.f_inode = tar_get_file(p->filename, O_RDONLY);
             if(init.f_inode == NULL){
                 uart_print(COM1, "Failed to open %s\r\n", p->filename);
                 return NULL;
             }
-            init.f_mode = O_RDONLY; 
 
             p->regs.eip = elf_get_entry_address(&init);
             fb_console_printf("Code allocated page:%x\n", code);
+
+            int size = 1 + elf_get_filesz(&init);
 
             map_virtaddr_d(p->page_dir, p->regs.eip, get_physaddr(code), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
 
             void * stack_page = kpalloc(1);//allocate_physical_page();
             map_virtaddr_d(p->page_dir, p->regs.esp, get_physaddr(stack_page), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
 
+            // while there lets push the arguments in to the stack
+            // total length
 
+            //p->regs.esp -= total_length;
 
             current_process->state = TASK_RUNNING;
             break;
@@ -95,9 +108,19 @@ pid_t allocate_pid(){
     return curr_pid++;
 }
 
- pcb_t * create_process(char * filename) {
+ pcb_t * create_process(char * filename, char **_argv) {
     // Create and insert a process, the pcb struct is in kernel space
     pcb_t * p1 = kcalloc(sizeof(pcb_t), 1);
+
+    // //passing the arguments obv
+    for(p1->argc = 0 ; _argv[p1->argc] != NULL; p1->argc++);
+    p1->argv = kcalloc( p1->argc, sizeof(char *));
+
+    for(int i = 0; i < p1->argc; ++i){
+        p1->argv[i] = kmalloc(strlen(_argv[i]) + 1);
+        memcpy(p1->argv[i], _argv[i], strlen(_argv[i]) + 1);
+    }
+
 
     p1->pid = allocate_pid();
     p1->regs.eip = NULL; //schedular will do that shi
@@ -111,6 +134,13 @@ pid_t allocate_pid(){
     p1->regs.esp = (0xC0000000 - 1);
     p1->regs.ebp = 0; //for stack trace
 
+    p1->regs.cs = (3 * 8) | 3;
+    p1->regs.ds = (4 * 8) | 3;
+    p1->regs.es = (4 * 8) | 3;
+    p1->regs.fs = (4 * 8) | 3;
+    p1->regs.gs = (4 * 8) | 3;
+    // p1->regs.ss = 0;
+
     // Create an address space for the process, how ?
     // kmalloc a page directory for the process, then copy the entire kernel page dirs and tables(the frames don't have to be copied though)
     p1->page_dir = kpalloc(1);//allocate_physical_page();
@@ -119,24 +149,23 @@ pid_t allocate_pid(){
 
     p1->page_dir[768] = kdir_entry[768]; //mapping the kernel
     p1->page_dir[1012] = kdir_entry[1012]; //and framebuffer?
-    
+
+
+
     p1->state = TASK_CREATED;
     return p1;
 
 }
 
 pcb_t * terminate_process(pcb_t * p){
-    //i didn't allocated page directory and pagetable with malloc so i can't just deallocate them
-    //u32 * directory_entry = p->page_dir;
-    // will just lose the link and free p
-    pcb_t * ret;
-    listnode_t * head = p->self;
-    head->prev->next = head->next;
-    head->next->prev = head->prev;
-    ret = head->next;
-    kfree(p);
-    process_list->size -= 1;
-    return ret;
+    
+
+    list_remove(process_list, p->self);
+    //all the llocated pages still persits tho
+    kfree(p);    
+    print_processes();
+
+    return NULL;
 }
 
 int context_switch_into_process(struct regs  *r, pcb_t * process)
@@ -154,7 +183,15 @@ int context_switch_into_process(struct regs  *r, pcb_t * process)
 
     r->eflags = process->regs.eflags;
     r->eip = process->regs.eip;
-    
+
+    r->cs = process->regs.cs;
+    r->ds = process->regs.ds;
+    r->es = process->regs.es;
+    r->ss = process->regs.ss;
+    r->fs = process->regs.fs;
+    r->gs = process->regs.gs;
+
+
     //change pde
     
     asm volatile ( "movl %0, %%cr3"
@@ -229,4 +266,11 @@ void save_context(struct regs * r, pcb_t * process){
     process->regs.esp = r->useresp;
 
     process->regs.eip = r->eip;
+
+    process->regs.cs = r->cs;
+    process->regs.ds = r->ds;
+    process->regs.es = r->es;
+    process->regs.ss = r->ss;
+    process->regs.fs = r->fs;
+    process->regs.gs = r->gs;
 }

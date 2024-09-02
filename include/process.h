@@ -24,17 +24,25 @@
 
 typedef unsigned int pid_t;
 typedef struct context {
-    u32 eax; // 0
-    u32 ecx; // 4
-    u32 edx; // 8
-    u32 ebx; // 12
-    u32 esp; // 16
-    u32 ebp; // 20
-    u32 esi; // 24
-    u32 edi; // 28
-    u32 eflags; //32
-    u32 cr3; // 36
-    u32 eip; //40
+    uint32_t eax; // 0
+    uint32_t ecx; // 4
+    uint32_t edx; // 8
+    uint32_t ebx; // 12
+    uint32_t esp; // 16
+    uint32_t ebp; // 20
+    uint32_t esi; // 24
+    uint32_t edi; // 28
+    uint32_t eflags; //32
+    uint32_t cr3; // 36
+    uint32_t eip; //40
+
+    //segment registers
+    uint32_t cs;
+    uint32_t ds;
+    uint32_t es;
+    uint32_t ss;
+    uint32_t fs;
+    uint32_t gs;
 }context_t;
 
 typedef struct {
@@ -46,6 +54,9 @@ typedef struct {
     uint32_t state;
     uint32_t time_slice;
     uint32_t * page_dir;
+    int argc;
+    char **argv;
+    file_t open_descriptors[8]; //max opened files
 }pcb_t;
 
 
@@ -55,7 +66,7 @@ extern pcb_t * current_process;
 
 void process_init();
 void schedule(struct regs * r);
-pcb_t * create_process(char * filename);
+pcb_t * create_process(char * filename, char **_argv);
 int context_switch_into_process(struct regs  *r, pcb_t * process);
 void print_processes();
 void print_current_process();

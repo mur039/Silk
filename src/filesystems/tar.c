@@ -1,5 +1,5 @@
 #include <filesystems/tar.h>
-
+#include <pmm.h>    
 
 static const char * type_table[23] = {
     "Regular File",
@@ -19,11 +19,13 @@ int o2d(const char *in)
     if(in[0] == '\0'){
         return -1;
     }
-    unsigned int size = 0;
+
     unsigned int j;
+    for(j = 0; in[j] != '\0'; ++j);
+    unsigned int size = 0;
     unsigned int count = 1;
  
-    for (j = 11; j > 0; j--, count *= 8)
+    for (/*j = 11*/; j > 0; j--, count *= 8)
         size += ((in[j - 1] - '0') * count);
  
     return size;
@@ -91,10 +93,13 @@ file_types_t tar_get_filetype(tar_header_t * tar){
 
 int tar_get_major_number(tar_header_t * t){
     if(tar_get_filetype(t) == REGULAR_FILE) return -1;
-    return t->devmajor[6] - '0';
+    
+    return o2d(t->devmajor);
+    // return t->devmajor[6] - '0';
 }
 
 int tar_get_minor_number(tar_header_t * t){
     if(tar_get_filetype(t) == REGULAR_FILE) return -1;
-    return t->devminor[6] - '0';
+    return o2d(t->devminor);
+    // return t->devminor[6] - '0';
 }

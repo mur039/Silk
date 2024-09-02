@@ -35,29 +35,38 @@ void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 block_t * mem_list = NULL;	  // All the memory blocks that are
 
 
-void kmalloc_init(){
+void kmalloc_init(int npages){
 
+    if(npages < 0){
+        //punish him
+        halt();
+    }
+    
     mem_list = (void *)(kernel_heap);
-    unmap_virtaddr(kernel_heap);
-    map_virtaddr(
-        kernel_heap, 
-        allocate_physical_page(), 
-        PAGE_PRESENT | PAGE_READ_WRITE
-    );
 
-    kernel_heap += 0x1000;
+    for(int i = 0; i < npages ; ++i){
+        
+        unmap_virtaddr(kernel_heap);
+        map_virtaddr(
+            kernel_heap, 
+            allocate_physical_page(), 
+            PAGE_PRESENT | PAGE_READ_WRITE
+        );
 
-    unmap_virtaddr(kernel_heap);
-    map_virtaddr(
-        kernel_heap, 
-        allocate_physical_page(), 
-        PAGE_PRESENT | PAGE_READ_WRITE
-    );
-    kernel_heap += 0x1000;
+        kernel_heap += 0x1000;
+    }
+
+    // unmap_virtaddr(kernel_heap);
+    // map_virtaddr(
+    //     kernel_heap, 
+    //     allocate_physical_page(), 
+    //     PAGE_PRESENT | PAGE_READ_WRITE
+    // );
+    // kernel_heap += 0x1000;
 
     //lets say 2 pages
     mem_list->is_free = 1;
-    mem_list->size = 4096 * 2;
+    mem_list->size = 4096 * npages;
     mem_list->size -= sizeof(block_t);
     mem_list->prev = NULL;
     mem_list->next = NULL;
@@ -67,22 +76,33 @@ void kmalloc_init(){
 
 void * kmalloc(unsigned int size){
 
+    #if DEBUG
+    alloc_print_list();
+    #endif
+
     for(block_t * head = mem_list; head != NULL; head = head->next){
         if(head->is_free && size < head->size ){
+
+
            block_t  temp;
-           block_t * next;
+           block_t  * next;
            
            temp = *head;
-           next = head;
-           
+
+            next = head;
             next->size = size;
             next->is_free = 0;
             next->next = (block_t *)((uint8_t *)(next) + sizeof(block_t) + size);
 
+            
             next->next->prev = next;
             next = next->next;
-            next->size -= size + sizeof(block_t);
+            next->size = temp.size - (size + sizeof(block_t));
+            next->next = NULL;
+            next->is_free = 1;
             
+
+
             return &next->prev[1];
 
         }
@@ -116,31 +136,42 @@ void * kpalloc(unsigned int npages){ //allocate page aligned pages.
     
 };
 
+void kpfree(void * address){
+    void * phy = get_physaddr(address);
+    unmap_virtaddr(address);
+    deallocate_physical_page(phy);
+}
+
 
 void alloc_print_list(){
+    uart_print(COM1, "*alloc list\r\n");
     int i = 0;
-    for(block_t * head = mem_list; head->next != NULL && head != NULL; head = head->next){
+    for(block_t * head = mem_list; /*head->next != NULL &&*/ head != NULL; head = head->next){
         
-        uart_print(COM1, "%u : size->%x\r\n", i, head->size);
+        uart_print(COM1, "\t%u : size->%x, isFree->%x\r\n", i, head->size, head->is_free);
+        i++;
     }
 
 }
 
 void kfree(void * ptr){
-    block_t * head = &((block_t *)ptr)[-1];
+    // uart_print(COM1, "KFREE TODO\r\n");
+    block_t * head = (block_t *)ptr;
+    head -= 1;
     head->is_free = 1;
-    //merge to other free blocks
-    if( head->prev->is_free){
+
+    // //merge to other free blocks
+    if( head->prev->size > 0){
         head->prev->next = head->next;
         head->next->prev = head->prev;
         
         head->prev->size += head->size + sizeof(block_t);
     }
-    else if(head->next->is_free){
+    else if(head->next->size > 0){
         
     }
-    // head->prev->next = head->next;
-    // head->next->prev = head->prev;
+    head->prev->next = head->next;
+    head->next->prev = head->prev;
 
     //merge free consequent free block to prevent fragmentation
 }
@@ -357,12 +388,13 @@ void map_virtaddr_d(void * _directory, void * virtual_addr, void * physical_addr
     if(!directory[v.directory].present){ //yok yeni sayfa al
         page_table_entry_t * t = kpalloc(1);
         memset(t, 0, 4096);
-        t[v.table].raw = (uint32_t)p.address;
-        t[v.table].raw &= ~0xFFF;
-        t[v.table].raw |=  0b111;
 
         directory[v.directory].raw = (uint32_t)get_physaddr(t);
         directory[v.directory].raw |= flags;
+
+        t[v.table].raw = (uint32_t)p.address;
+        t[v.table].raw &= ~0xFFF;
+        t[v.table].raw |=  flags;
 
     }
     else{

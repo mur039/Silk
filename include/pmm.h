@@ -93,16 +93,19 @@ struct Block
 {
     unsigned int is_free;
     unsigned int size;
+    
     struct Block * prev;
     struct Block * next;
 };
 
 typedef struct Block block_t;
-void kmalloc_init();
+void kmalloc_init(int npages);
 void * kmalloc(unsigned int size);
 void * kcalloc(u32 nmemb, u32 size);
 void kfree(void * ptr);
+
 void * kpalloc(unsigned int npages);
+void kpfree(void * address);
 
 void alloc_print_list();
 

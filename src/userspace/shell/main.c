@@ -133,6 +133,13 @@ int memcmp( void *s1,  void *s2, size_t size){ //simple true false
     return 1;
 }
 
+void memset(void * addr, int c, size_t n){
+    c &= 0xff;
+    char * phead = addr;
+    for(size_t i = 0; i < n ; ++i){
+        phead[i] = c;
+    }
+}
 int strlen(char * s){
     int i;
     for(i = 0; s[i] != '\0'; ++i);
@@ -195,6 +202,7 @@ const char *commands[] = {
     "exec",
     "help",
     "ls",
+    "clear",
     NULL
 };
 
@@ -203,17 +211,7 @@ typedef struct{
     size_t size;
 } string_t;
 
-int cat(string_t * s){
-    char path[48];
-    for(unsigned int i = 0; i < s[1].size; ++i) path[i] = s[1].src[i];
 
-    int file = open(path, O_RDONLY);
-    if( file == -1) return -1;
-    for(int ch; ch != -1 ; ch = read(file)) putchar(ch);
-    close(file);
-    return 0;
-    
-}
 
 int is_delimeter(const char c){
     return (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\0');
@@ -267,23 +265,31 @@ int execute_command(){
     int result;
     switch (index)
     {
-    case -1:
+    case -1: //maybe i should execute a program here
         write(fileno_stdout, words[0].src, words[0].size);
         puts(" : command not found"); 
         break;
-    case 0: //exit
-        if(words[1].src == NULL){
-            puts("Expected exit code\n");
-            return -1;
-        }
-        int exit_code = 0;
-        for(size_t i = 0; i < words[1].size; ++i){
-            exit_code *= 10;
-            exit_code += words[1].src[i] - '0';
-        }
-        exit(exit_code);
+    case 0: //exit well fuck it
+
+        // if(words[1].src == NULL){
+        //     puts("Expected exit code\n");
+        //     return -1;
+        // }
+
+        // //turn str to int
+        // int exit_code = 0;
+        // for(size_t i = 0; i < words[1].size; ++i){
+        //     exit_code *= 10;
+        //     exit_code += words[1].src[i] - '0';
+        // }
+        exit(0);
         break;
+
     case 1: //echo
+         if(words[1].src == NULL){
+            putchar('\n');
+            break;
+        }
         puts(words[1].src);
         break;
     case 2: //exec
@@ -323,30 +329,32 @@ int execute_command(){
         break;
 
     case 3: //help
+        puts(               
+                "                   _                    \n"
+                " _____            | |       _       _ _ \n"
+                "|     |_ _ ___ ___|_|   ___| |_ ___| | |\n"
+                "| | | | | |  _| . |    |_ -|   | -_| | |\n"
+                "|_|_|_|___|_| |___|    |___|_|_|___|_|_|\n"
+                "\n"
+            );
         puts("Muro's shell V1.0\n");
+        puts("Built-in commands:\n");
+        for(int i = 0; commands[i] != NULL; ++i){
+            putchar('\t');puts(commands[i]);putchar('\n');
+        }
         
         break;
 
-    case 4: //ls
-        if(words[1].src == NULL){
-            puts("Expected a path\n");
-            return -1;
-        }
-        char path_2[64];
-        memcpy(path_2, words[1].src, 1, words[1].size);
-
-        int file_fd = open(path_2, O_RDONLY);
-        stat_t st;
-        fstat(file_fd, &st);
-        
-        put_hex(st.st_mode >> 16); 
-
-        close(file_fd);
+   
+    case 5: //clear
+        puts("\x1b[H"); //set cursor to (0,0)
+        puts("\x1b[J"); //clear from cursor to end of the screen
         break;
     default:
         break;
     }
    
+
    return 0;
 }
 
@@ -367,7 +375,7 @@ int main(int argc, char **argv){
     if(fd_console == -1){
         return 1;
     }
-    fileno_stderr = fd_com1;
+
 
     fileno_stdout = fd_console;
     fileno_stdin  = fd_kbd;
@@ -378,8 +386,9 @@ int main(int argc, char **argv){
     
     
     while(shouldRun){
+        
        c = getchar();
-
+        
         if(c != -1){             //i succesfully read something
             switch (c)
             {
@@ -400,9 +409,10 @@ int main(int argc, char **argv){
             case 13: //process the inout buffer
                 command_buffer[command_buffer_index++] = '\n';
                 command_buffer[command_buffer_index] = '\0';
-                command_buffer_index = 0;
                 puts("\n");
                 execute_command();
+                memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
+                command_buffer_index = 0;
                 puts("\n");
                 puts("> ");
                 break;

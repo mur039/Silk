@@ -9,11 +9,12 @@ void lkmain(multiboot_info_t* mbd, unsigned int magic){
     uint32_t * PDE =  (uint32_t *)((uint32_t)bootstrap_pde - 0xC0000000);
     uint32_t * PTE1 = (uint32_t *)((uint32_t)bootstrap_pte1 - 0xC0000000);
     uint32_t * PTE2 = (uint32_t *)((uint32_t)bootstrap_pte2 - 0xC0000000);
+
     PDE[0]    = (uint32_t)PTE1 | 0b00000011;
     PDE[768]  = (uint32_t)PTE1 | 0b00000011;
     PDE[1012] = (uint32_t)PTE2 | 0b00000011;
 
-    for(unsigned int i = 0; i <  1024; i++){  //whole 1MB
+    for(unsigned int i = 0; i <  1024; i++){  //whole 4MB
         PTE1[i] = (i * 0x1000) | 3; 
     }
 

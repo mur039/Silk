@@ -6,6 +6,7 @@
 #include <isr.h>
 #include <irq.h>
 
+#define PS2_KEYBOARD_IRQ 1
 
 extern int ctrl_flag;
 extern int shift_flag;

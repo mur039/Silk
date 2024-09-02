@@ -93,7 +93,7 @@ void put_hex(unsigned int hex){
 int command_buffer_index = 0;
 char command_buffer[COMMAND_BUFFER_MAXSIZE];
 
-int main(char ** argv){
+int main(int argc, char ** argv){
 
 
 
@@ -108,8 +108,6 @@ int main(char ** argv){
     }
     fileno_stdout = fd_console;
     fileno_stderr = fd_com1;
-
-
 
     puts("Hello from init process\n");
     puts("Let's try to execute another process...\n");
@@ -127,21 +125,28 @@ int main(char ** argv){
                         
     if(result == -1){
         puts("Failed to execute another process :(\n");
-        // exit(1);
+        return 1;
     }
     
 
-    int fd_fb = open("/dev/fb", O_WRONLY);
-    if(fd_fb == -1){
-        return 1;
-    }
+    // int fd_fb = open("/dev/fb", O_WRONLY);
+    // if(fd_fb == -1){
+    //     return 1;
+    // }
 
-    pixel_t pixel = {.alpha = 0xff, .blue = 0, .green = 0, .red = 0};
+    // pixel_t pixel = {.alpha = 0xff, .blue = 0xff, .green = 0xff, .red = 0xff};
     while(1){
-        write(fd_fb, &pixel, 1);
-        pixel.red -= 1;
-        pixel.green -= 1;
-        pixel.blue -= 1;
+
+        // write(fd_fb, &pixel, sizeof(pixel_t));
+        // if(lseek(fd_fb, 0, SEEK_CUR) >= 800*4 *100){ 
+        //     lseek(fd_fb, 0, SEEK_SET);
+        //     pixel.red =  0xff;
+        //     pixel.green = 0xff;
+        //     pixel.blue = 0xff;
+        //     }
+        // pixel.red -= 1;
+        // pixel.green -= 1;
+        // pixel.blue -= 1;
 
     }
     

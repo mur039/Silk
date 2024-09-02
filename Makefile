@@ -7,6 +7,7 @@ default: src/boot.asm
 	nasm -f elf32 -g src/isr.asm -o  $(BUILD_DIR)isr_asm.o
 	nasm -f elf32 -g src/misc.asm -o $(BUILD_DIR)misc_asm.o
 
+	nasm -f bin src/v86.asm -o $(BUILD_DIR)v86.bin
 	
 	make userspace
 	i686-elf-gcc $(CFLAGS)lkmain.c -o $(BUILD_DIR)lkmain.o
@@ -20,7 +21,13 @@ default: src/boot.asm
 	i686-elf-gcc $(CFLAGS)irq.c -o $(BUILD_DIR)irq.o
 	i686-elf-gcc $(CFLAGS)pmm.c -o $(BUILD_DIR)pmm.o
 	i686-elf-gcc $(CFLAGS)pit.c -o $(BUILD_DIR)pit.o
+
+	i686-elf-gcc $(CFLAGS)v86.c -o $(BUILD_DIR)v86.o
+
+	i686-elf-gcc $(CFLAGS)dev.c -o  $(BUILD_DIR)dev.o
 	i686-elf-gcc $(CFLAGS)kb.c -o  $(BUILD_DIR)kb.o
+	i686-elf-gcc $(CFLAGS)ps2.c -o  $(BUILD_DIR)ps2.o
+	i686-elf-gcc $(CFLAGS)ps2_mouse.c -o  $(BUILD_DIR)ps2_mouse.o
 	i686-elf-gcc $(CFLAGS)timer.c -o $(BUILD_DIR)timer.o
 	
 	i686-elf-gcc $(CFLAGS)filesystems/tar.c -o $(BUILD_DIR)tar.o
@@ -33,11 +40,13 @@ default: src/boot.asm
 	i686-elf-gcc $(CFLAGS)process.c -o $(BUILD_DIR)process.o
 	i686-elf-gcc $(CFLAGS)elf.c -o $(BUILD_DIR)elf.o
 	i686-elf-gcc $(CFLAGS)g_list.c -o $(BUILD_DIR)g_list.o
+	i686-elf-gcc $(CFLAGS)circular_buffer.c -o $(BUILD_DIR)circular_buffer.o
+
 	cd $(BUILD_DIR) && i686-elf-ld -o ../kernel.elf -T ../linker.ld \
 		boot.o lkmain.o \
 		kmain.o str.o uart.o acpi.o idt.o isr.o isr_asm.o irq.o irq_asm.o \
-		pmm.o pit.o gdt.o misc_asm.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
-		pci.o elf.o process.o vfs.o g_list.o
+		pmm.o pit.o gdt.o misc_asm.o ps2.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
+		v86.o pci.o elf.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o
 
 SUBDIRS := $(wildcard src/userspace/*/) 
 COMMAND := make default
@@ -47,6 +56,7 @@ userspace:
 		done
 init: ./initrd
 	cp build/init_bin/* ./initrd/tar_files/bin/
+	cp $(BUILD_DIR)v86.bin ./initrd/tar_files/bin/v86.bin
 	cd initrd && make
 	
 iso:
@@ -61,12 +71,12 @@ run: bootable.iso
 	qemu-system-i386 -m 512M -hda bootable.iso
 
 kernel: kernel.elf
-	qemu-system-i386 -m 512M -kernel kernel.elf -initrd iso/modules/userspaceprogram.bin -initrd iso/modules/init.tar
+	qemu-system-i386 -m 3G -kernel kernel.elf -initrd iso/modules/userspaceprogram.bin -initrd iso/modules/init.tar
 debug_kernel:kernel.elf
-	qemu-system-i386 -m 512M -kernel kernel.elf -s -S &
+	qemu-system-i386 -m 3G -kernel kernel.elf -s -S &
 		gdb ./kernel.elf  \
 		-ex "set architecture i386:x86-64"\
 		-ex "target remote localhost:1234" 
 		
 debug: kernel.elf
-	qemu-system-i386 -m 512M -hda bootable.iso -s -S 
+	qemu-system-i386 -m 3G -hda bootable.iso -s -S 

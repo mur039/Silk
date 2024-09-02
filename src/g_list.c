@@ -29,13 +29,13 @@ listnode_t * list_insert_end(list_t * list, void * val){
     if(head == NULL){
         list->head = t;
         t->next = NULL;
-        //t->prev = list->head;    
+        t->prev = list->head;    
     }
     else{
-    for( ; head->next != NULL && head != NULL ;head = head->next); //get last node
+        for( ; head->next != NULL && head != NULL ;head = head->next); //get last node
         head->next = t;
         t->next = NULL;
-        //t->prev = head;
+        t->prev = head;
     }
     list->size += 1;
     return t;
@@ -62,3 +62,19 @@ listnode_t * list_insert_start(list_t * list, void * val){
     return t;
 }
 
+listnode_t * list_remove(list_t * list, listnode_t * node){
+
+    //check  if node is the head
+    if(node == list->head){
+        list->head = node->next;
+    }
+
+
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+
+    list->size -= 1;
+    kfree(node);
+
+    return NULL; //could've been void tho
+}

@@ -1,5 +1,6 @@
 #ifndef __SYS_H_
 #define __SYS_H_
+
 #include <stdint.h>
 #include <str.h>
 #include <uart.h>
@@ -32,6 +33,12 @@ static inline void outb(uint16_t port, uint8_t val)
 
 }
 
+static inline void outw(uint16_t port, uint16_t val)
+{
+    asm volatile ( "outw %0, %1" : : "a"(val), "Nd"(port) );
+
+}
+
 
 static inline void outl(uint16_t port, uint32_t val)
 {
@@ -45,6 +52,15 @@ static inline uint8_t inb(uint16_t port)
 {
     uint8_t ret;
     asm volatile ( "inb %1, %0"
+                   : "=a"(ret)
+                   : "Nd"(port) );
+    return ret;
+}
+
+static inline uint16_t inw(uint16_t port)
+{
+    uint16_t ret;
+    asm volatile ( "inw %1, %0"
                    : "=a"(ret)
                    : "Nd"(port) );
     return ret;
@@ -84,5 +100,15 @@ static inline const char * find_next(const char * src, char c){
     while(*(phead++) != c  && (int)(phead - src) <= 512); //lets impose some arbitrary limit
     return phead;
 }
+
+static inline void stack_push(unsigned int ** stack, unsigned int value){
+    unsigned int val = value;
+    stack[0] -= 1;
+    stack[0][0] = val;
+    return;
+}
+
+
+
 
  #endif

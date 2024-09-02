@@ -38,6 +38,19 @@ void * elf_get_entry_address(file_t * file){
     return (void *)header->e_entry;
 }
 
+
+int elf_get_filesz(file_t * file){
+     if(elf_is_valid(file) == 0) { return NULL;} 
+    Elf32_Ehdr * header = (void *)&file->f_inode[1];
+
+
+    unsigned char * phead = (void *)header;
+    phead += header->e_phoff;
+    Elf32_Phdr * p_head = (void *)phead; 
+
+    return p_head->filesz;
+}
+
 int elf_list_program_headers(file_t * file){
     //see if its valid
     if(elf_is_valid(file) == 0){
@@ -100,7 +113,8 @@ void * elf_load(pcb_t * process){
 
     // pmm_print_usage();
     void * program_data;
-    program_data = kpalloc(1);// allocate_physical_page();
+    uart_print(COM1, "program filesz %x\r\n", p_head->filesz);
+    program_data = kpalloc(1 + p_head->filesz/4096);// allocate_physical_page();
     //map_virtaddr(program_data, program_data, PAGE_PRESENT | PAGE_READ_WRITE);
 
     memset(program_data, 0, 4096);
