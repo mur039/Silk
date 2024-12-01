@@ -40,7 +40,7 @@ void * elf_get_entry_address(file_t * file){
 
 
 int elf_get_filesz(file_t * file){
-     if(elf_is_valid(file) == 0) { return NULL;} 
+    if(elf_is_valid(file) == 0) { return 0;} 
     Elf32_Ehdr * header = (void *)&file->f_inode[1];
 
 
@@ -114,7 +114,10 @@ void * elf_load(pcb_t * process){
     // pmm_print_usage();
     void * program_data;
     uart_print(COM1, "program filesz %x\r\n", p_head->filesz);
-    program_data = kpalloc(1 + p_head->filesz/4096);// allocate_physical_page();
+
+    int _page_count = 1 + p_head->filesz/4096 + (p_head->filesz % 4096 != 0);
+    fb_console_printf("elf_load page_count:%u\n", _page_count);
+    program_data = kpalloc(_page_count);// allocate_physical_page();
     //map_virtaddr(program_data, program_data, PAGE_PRESENT | PAGE_READ_WRITE);
 
     memset(program_data, 0, 4096);

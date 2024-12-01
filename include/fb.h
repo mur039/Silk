@@ -30,6 +30,6 @@ void fb_console_put(char * s);
 void fb_console_printf(const char * fmt, ...);
 
 void fb_console_blink_cursor();
-
+uint8_t * get_framebuffer_address(void);
 
 #endif

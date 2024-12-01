@@ -78,13 +78,13 @@ int va_gprintf(char (* write)(char c), const char *format, va_list args){
             ++format;
             switch (*format)
             {
-            case 'u': //32 bit integer has maximum 9,38 = 10 digits
+            case 'u': //32 bit unsigned integer has maximum 9,38 + 1 = 11 digits
                 ;
                 char line_buffer[11];
                 unsigned int number = va_arg(args, unsigned int);
                 int t1, t2;
                 t1 = number;
-                for(int i = 0; i < 10; ++i){
+                for(int i = 0; i < 11; ++i){
                     t2 = t1 / 10;
                     t2 *= 10;
                     line_buffer[i] = (t1 - t2);
@@ -160,35 +160,106 @@ size_t strlen(const char * s){
 
 
 void * memset(void* s, int c, uint32_t n){
-    char * head = (char*)s;
+    uint8_t * head = (char*)s;
+    uint8_t value = c & 0xff;
+
     for(unsigned int  i = 0; i < n; ++i){
-        head[i] = c & 0xFF;
+        head[i] = value;
     }
     return s;
 }
 
-void * memcpy(void * dest, const void * src, uint32_t n){
-    char *p1;
-    const char *p2;
-    p1 = (char*)dest;
-    p2 = (const char*)src;
 
-    for (size_t i = 0; i < n; i++){
-        p1[i] = p2[i];
+void * memcpy ( void * destination, const void * source, size_t num ){
+    
+    unsigned char  *_destination, *_source;
+
+    _destination =   (unsigned char*)destination;
+    _source =    (unsigned char*)source;
+    for (size_t i = 0; i < num; i++){   
+        _destination[i] = _source[i];
     }
 
-    return dest;
+    return _destination;
+    
 }
 
- int memcmp(const void *s1, const void *s2, size_t n ){
-    int result = 0;
-    const unsigned char *p1 = s1, *p2 = s2;
-    for(size_t i = 0; i < n ; ++i){
-        if(p1[i] != p2[i]){
-            result = p1[i] - p2[i];
-            result = result < 0? -1 : 1;
-            break;       
+int memcmp( const void * ptr1, const void * ptr2, size_t num ){
+
+    unsigned char *h1, *h2;
+    h1 = (unsigned char *)ptr1;
+    h2 = (unsigned char *)ptr2;
+
+    for (size_t i = 0; i < num; i++){
+        
+        if(h1[i] != h2[i] ){
+            return ( h1[i] - h2[i]);
+        }
+        
+    }
+    
+    return 0;
+}
+
+
+int is_char_in_str(const char c, const char * str){
+    int c_count = 0;
+    for(int i = 0; str[i] != '\0'; i++){
+        if(str[i] == c){
+            c_count++;
         }
     }
-    return result;
- }
+
+    return c_count;
+}
+
+int strcmp(const char *str1, const char * str2){
+    for(int i = 0; ; ++i){
+
+        //ugly af but true to the reference i suppose
+        if( (str1[i] != '0' && str2[i] != '0') && ( str1[i] != str2[i]) ){
+            return 1; //?
+        }
+
+        if( str1[i] == '\0' && str2[i] != '\0'){
+            return -1;
+        }
+
+        if( str1[i] != '\0' && str2[i] == '\0'){
+            return 1;
+        }
+
+        if( str1[i] == '\0' && str2[i] == '\0'){
+            return 0;
+        }
+
+    }
+
+    return 0;
+}
+
+
+int strncmp(const char *str1, const char * str2, int n){
+    for(int i = 0; i < n; ++i){
+
+        //ugly af but true to the reference i suppose
+        if( (str1[i] != '0' && str2[i] != '0') && ( str1[i] != str2[i]) ){
+            return 1; //?
+        }
+
+        if( str1[i] == '\0' && str2[i] != '\0'){
+            return -1;
+        }
+
+        if( str1[i] != '\0' && str2[i] == '\0'){
+            return 1;
+        }
+
+        if( str1[i] == '\0' && str2[i] == '\0'){
+            return 0;
+        }
+
+    }
+
+    return 0;
+}

@@ -30,7 +30,7 @@ void ps2_mouse_handler(struct regs *r){
     (void)r;
     
     if(!is_available) is_available = 1;
-    u8 * phead = &ps2_mouse_irq_package;
+    u8 * phead = (u8*)&ps2_mouse_irq_package;
     for(int i = 0; i < 3; ++i){
        phead[i] = inb(PS2_DATA_PORT);
     } 
@@ -60,8 +60,8 @@ uint8_t ps2_mouse_fs_read(uint8_t * buffer, uint32_t offset, uint32_t len, void 
     dev;
 
     int32_t data = ps2_mouse_read();
-    char * p8 = &data;
     if(data != -1){
+        char * p8 = (u8 *)&data;
         for(int i = 0; i < 3; ++i){
             buffer[i] = p8[i]; 
         }

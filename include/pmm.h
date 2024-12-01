@@ -8,6 +8,7 @@
 #define BLOCK_SIZE 4096
 extern uint32_t kernel_end;
 extern uint32_t kernel_phy_end;
+extern uint32_t * memory_window;
 
 typedef union {
     struct{
@@ -46,7 +47,7 @@ typedef union{
         uint32_t page_size:1;
         uint32_t available:3;
 
-        uint32_t:21;
+        uint32_t :21;
 
     } __attribute__((packed));
     uint32_t raw;
@@ -73,6 +74,7 @@ typedef union{
 extern uint32_t * kdir_entry;
 extern uint8_t * kernel_heap;
 
+extern uint32_t * current_page_dir;
 
 void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags);
 void unmap_virtaddr(void * virtual_addr);
@@ -88,6 +90,10 @@ void * allocate_physical_page();
 int deallocate_physical_page(void * address);
 
 
+typedef struct{
+    u32 vmem;
+    u32 phymem;
+} vmem_map_t;
 
 struct Block
 {
@@ -102,6 +108,7 @@ typedef struct Block block_t;
 void kmalloc_init(int npages);
 void * kmalloc(unsigned int size);
 void * kcalloc(u32 nmemb, u32 size);
+void * krealloc( void *ptr, size_t size);
 void kfree(void * ptr);
 
 void * kpalloc(unsigned int npages);
@@ -112,6 +119,8 @@ void alloc_print_list();
 void *get_physaddr_d( void * directory, void * virtualAddr);
 void map_virtaddr_d(void *directory, void * virtual_addr, void * physical_addr, uint16_t flags);
 void unmap_virtaddr_d( void * directory, void * virtual_addr);
+
+void paging_directory_list(void * dir_entry);
 
 
 

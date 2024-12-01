@@ -1,5 +1,5 @@
 #include <filesystems/tar.h>
-#include <pmm.h>    
+
 
 static const char * type_table[23] = {
     "Regular File",
@@ -44,7 +44,7 @@ tar_header_t *tar_get_file(const char * path, int mode){
     ->/ dev share consolefonts screenfonts.psf
     or just add "./" at the beginning and just search it through?
     but i don't have dynamic memory allocator 
-    or just ignore the "./" in the tar pathnames
+    or just ignore the "." at the beginning in the tar pathnames
     */ 
    tar_header_t * ans = NULL;
     for(int i = 0; ; ++i){
@@ -87,6 +87,21 @@ void tar_parse(){
 
 }
 
+static tar_header_t * tar_next(tar_header_t * head){
+    if(head->filename[0] == '\0')
+        return NULL;
+    
+    int size = o2d(head->size);
+    int offset = 1 + (size / 512) + ( size % 512 != 0); //like ceil
+    
+    
+    if(head[offset].filename[0] == '\0')
+        return NULL;
+
+    return &head[offset];
+
+}
+
 file_types_t tar_get_filetype(tar_header_t * tar){
     return tar->typeflag[0] -'0';
 }
@@ -102,4 +117,82 @@ int tar_get_minor_number(tar_header_t * t){
     if(tar_get_filetype(t) == REGULAR_FILE) return -1;
     return o2d(t->devminor);
     // return t->devminor[6] - '0';
+}
+
+
+
+
+
+/*
+    Few assumptions:
+        -> it seems tar places directories and its contents like
+            Dir1 : 
+                Dir2:
+                    file4
+                    file5
+
+                file1
+                file2
+                file3
+
+    so when given a directory node(?) i can use offset flag to scan the files and dirs.
+    altough dirs are listed first we can pass over them by the name, since names are
+    root_dir/file* or root_dir/dir*_/ for dirs each time i had to pass over them but anyway
+    
+            
+*/
+int32_t tar_read_dir(file_t * dir, tar_header_t ** out){
+    
+    tar_header_t * tar = dir->f_inode;
+    if(tar_get_filetype(tar) != DIRECTORY){
+        return -1;
+    }
+    
+    // fb_console_printf("file_t dir: %u\n", dir->f_pos);
+
+    for(long off = 0; off < dir->f_pos; ++off){
+
+
+        tar = tar_next(tar);
+        if(!tar){ //null
+            return -1;
+        }
+
+        //outside the dir?
+        if( strncmp(&dir->f_inode->filename[1], &tar->filename[1], strlen(&dir->f_inode->filename[1]) ) ) return -1;
+
+        //for instance we find a file within the subfolder, means we should pass over it
+        //since it seems subfolders are listed first thus we will be here in the 2nd pass instead of returning lets decrement i
+        //for detecting, scan for "/" character for the pathnames of files sliced from dir to end of the text
+        //if we find second one we pass
+        int limit =  tar_get_filetype(tar) != DIRECTORY ? 0 : 1;
+        
+        if( tar_get_filetype(tar) != DIRECTORY || 1){
+
+            char * head = tar->filename;
+            head += strlen(dir->f_inode->filename);
+            if( is_char_in_str('/', head) != limit) off--;
+            // fb_console_printf("%s : %u\n", head, is_char_in_str('/', head));
+
+        }
+
+    }
+
+
+
+
+        if(out) 
+            *out = tar;
+        else
+        {
+            tar_header_t * d = tar;
+            int size = o2d(d->size);
+		    fb_console_printf("%s\n", d->filename);
+		    fb_console_printf("size : %x\n", size);
+		    fb_console_printf("type : %s\n", type_table[ tar_get_filetype(d) ]);    
+        }
+	
+
+        // dir->f_pos += 1;
+    return 0;
 }

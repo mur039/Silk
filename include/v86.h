@@ -19,7 +19,7 @@
 #define V86_STI 0xFB
 #define V86_IRET 0xCF
 
-pcb_t * v86_create_task(const char * filename);
+pcb_t * v86_create_task(char * filename);
 
 void v86_monitor(struct regs * r, pcb_t * task);
 #endif

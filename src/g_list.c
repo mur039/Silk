@@ -29,7 +29,8 @@ listnode_t * list_insert_end(list_t * list, void * val){
     if(head == NULL){
         list->head = t;
         t->next = NULL;
-        t->prev = list->head;    
+        t->prev = NULL;    
+        // t->prev = list->head;    
     }
     else{
         for( ; head->next != NULL && head != NULL ;head = head->next); //get last node
@@ -65,16 +66,37 @@ listnode_t * list_insert_start(list_t * list, void * val){
 listnode_t * list_remove(list_t * list, listnode_t * node){
 
     //check  if node is the head
-    if(node == list->head){
+    // if(node == list->head){
+    //     list->head = node->next;
+    // }
+
+    // if(node->prev && node->next){ //if both forward and backward nodes exist
+    //     node->prev->next = node->next;
+    //     node->next->prev = node->prev;
+    // }
+    // else if(node->prev){
+    //     node->prev->next = NULL;
+    // }
+    // else if(node->next){
+    //     node->next->prev = NULL;
+    // }
+
+     if(node->prev && node->next){ //if forward and backward exists
+        node->prev->next = node->next;
+        node->next->prev = node->prev;
+        node = node->prev;
+
+    }else if(node->next){ //arkası boş
         list->head = node->next;
+        node->next->prev = list->head;
+
+    }else if(node->prev){ //önü boş            
+        node->prev->next = list->tail;
+
     }
-
-
-    node->prev->next = node->next;
-    node->next->prev = node->prev;
 
     list->size -= 1;
     kfree(node);
 
-    return NULL; //could've been void tho
+    return node; //could've been void tho, could it?
 }

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <sys.h>
-
+#include <pmm.h>    
 
 typedef enum{
     O_RDONLY = 0b001,
@@ -48,6 +48,16 @@ typedef union
 } tar_header_t;
 
 
+typedef long off_t;
+
+typedef struct  {
+	unsigned short f_mode;
+	unsigned short f_flags;
+	tar_header_t *f_inode;
+	off_t f_pos;
+
+} file_t;
+
 int o2d(const char *in);
 int tar_get_major_number(tar_header_t * t);
 void tar_add_source(void * src);
@@ -56,14 +66,7 @@ void tar_parse();
 file_types_t tar_get_filetype(tar_header_t * tar);
 int tar_get_major_number(tar_header_t * t);
 int tar_get_minor_number(tar_header_t * t);
-
-typedef long off_t;
-typedef struct  {
-	unsigned short f_mode;
-	unsigned short f_flags;
-	tar_header_t *f_inode;
-	off_t f_pos;
-} file_t;
+int32_t tar_read_dir(file_t * dir, tar_header_t ** out);
 
 
 #endif

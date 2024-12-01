@@ -9,7 +9,7 @@
 #include <timer.h>
 #include <fb.h>
 #include <filesystems/tar.h>
-
+#define MAX_OPEN_FILES  8
 
 
 #define TASK_RUNNING            0
@@ -22,7 +22,7 @@
 #define TASK_CREATED            64
 #define TASK_LOADING            128
 
-typedef unsigned int pid_t;
+typedef int pid_t;
 typedef struct context {
     uint32_t eax; // 0
     uint32_t ecx; // 4
@@ -45,18 +45,26 @@ typedef struct context {
     uint32_t gs;
 }context_t;
 
+
 typedef struct {
     char filename[512];
-    context_t regs;
-    pid_t pid;
-    listnode_t * self;
-    void * stack;
-    uint32_t state;
-    uint32_t time_slice;
-    uint32_t * page_dir;
     int argc;
     char **argv;
-    file_t open_descriptors[8]; //max opened files
+    context_t regs;
+    void * stack;
+    file_t open_descriptors[MAX_OPEN_FILES]; //max opened files
+    u32 state;
+
+
+    //identifiying info, different between childs and parents
+    pid_t pid;
+    listnode_t * self;
+    u32 time_slice;
+    u32 * page_dir;
+    listnode_t* parent;
+    list_t* childs;
+
+    list_t * mem_mapping;
 }pcb_t;
 
 
@@ -68,9 +76,10 @@ void process_init();
 void schedule(struct regs * r);
 pcb_t * create_process(char * filename, char **_argv);
 int context_switch_into_process(struct regs  *r, pcb_t * process);
+void save_context(struct regs * r, pcb_t * process);
+
 void print_processes();
 void print_current_process();
-
 
 pcb_t * terminate_process(pcb_t * p);
 

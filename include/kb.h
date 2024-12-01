@@ -10,6 +10,7 @@
 
 extern int ctrl_flag;
 extern int shift_flag;
+extern int alt_gr_flag;
 extern uint32_t currently_pressed_keys[4];//bit encoded
 extern unsigned char kbdus[128] ;
 void keyboard_handler(struct regs *r);

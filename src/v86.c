@@ -1,7 +1,7 @@
 #include <v86.h>
 
 
-pcb_t * v86_create_task(const char * filename){
+pcb_t * v86_create_task(char * filename){
     file_t file;
     file.f_inode = tar_get_file(filename, O_RDONLY);
     if(!file.f_inode){
@@ -21,7 +21,7 @@ pcb_t * v86_create_task(const char * filename){
     
     map_virtaddr(0 , 0, PAGE_PRESENT | PAGE_READ_WRITE);
     flush_tlb();
-    memcpy(0x7c00, &file.f_inode[1], o2d(file.f_inode->size));
+    memcpy((void *)0x7c00, &file.f_inode[1], o2d(file.f_inode->size));
     unmap_virtaddr(0);
     flush_tlb();
 
@@ -32,7 +32,7 @@ pcb_t * v86_create_task(const char * filename){
     // p32[0] |= PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR;
     //first 1Mb is within the first table so i allocate one table
 
-    page_directory_entry_t * dir = p->page_dir;
+    page_directory_entry_t * dir = (page_directory_entry_t *)p->page_dir;
     page_table_entry_t * table;
 
     table = kpalloc(1);
@@ -59,9 +59,9 @@ void v86_monitor(struct regs * r, pcb_t * task){
     uint8_t *ip;
     uint16_t *stack, *ivt;
 
-    ip = r->cs*16 + r->eip;
+    ip = (uint8_t*)(r->cs*16 + r->eip);
     ivt = (void *)0;
-    stack = r->ss*16 + r->useresp;
+    stack = (uint16_t*)(r->ss*16 + r->useresp);
 
     fb_console_printf("V86 task-> cs:ip->%x:%x sp:%x\n", r->cs, r->eip, stack);
 

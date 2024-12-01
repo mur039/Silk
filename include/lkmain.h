@@ -4,6 +4,7 @@
 
 #include <multiboot.h>
 #include <stdint.h>
+#include <stdint-gcc.h>
 
 extern uint32_t kernel_phy_start[];
 extern uint32_t kernel_phy_end[];

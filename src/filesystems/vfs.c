@@ -36,12 +36,14 @@ typedef struct vfs_node {
     uint32_t offset;
     unsigned nlink;
     int refcount;
+
+    void  (* open)(const char * path, int mode) ;
+    void (* close)(void) ;
+    void  (* read)(void) ;
+    void (* write)(void) ;
+
 /*
     // File operations
-    read_callback read;
-    write_callback write;
-    open_callback open;
-    close_callback close;
     readdir_callback readdir;
     finddir_callback finddir;
     create_callback create;

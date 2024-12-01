@@ -5,6 +5,10 @@ static uint32_t framebuffer_width;
 static uint32_t framebuffer_heigth;
 
 
+uint8_t * get_framebuffer_address(void){
+    return framebuffer_addr;
+}
+
 void init_framebuffer(void * address, int width, int height){
     framebuffer_addr = address;
     framebuffer_width = width;
@@ -52,7 +56,8 @@ void framebuffer_put_glyph(const unsigned short symbol, int x, int y, pixel_t bg
     {
         pixel_t * row = (pixel_t *)&framebuffer_addr[(y + j) * 4 * framebuffer_width];
         for(int i = 0; i < 8; ++i){ //bits
-            row[x + i]= GET_BIT(glyph[j], (7 -i)) ? fg : bg;
+            row[x + i] = 
+                        GET_BIT(glyph[j], (7 -i)) ? fg : bg;
                 
         }
     }
@@ -163,12 +168,16 @@ void fb_console_putchar(char c){
 if(escape_sequence == 0){
     switch (c)
     {
+        // case '\0': 
+        //     break;
+        case 0:  //don't do a thing
+            break;
         case 27: //for escape sequences
             /*27 '[' 'H' -> move to 0,0*/ 
             escape_sequence = 1;
             break;
         
-        case '\r':break;;
+        case '\r':
         case '\n': 
             fb_cursor_x = 0;
             fb_cursor_y += 1;

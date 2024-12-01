@@ -110,6 +110,7 @@ void write_tss(struct gdt_entry *g) {
     tss_entry.gs = 0x13;
     tss_entry.ss = 0x13;
     
+    
 	//note that CS is loaded from the IDT entry and should be the regular kernel code segment
 }
  

@@ -2,14 +2,17 @@
 #define __SYS_H_
 
 #include <stdint.h>
+#include <stdint-gcc.h>
 #include <str.h>
 #include <uart.h>
+#include <fb.h>
 
 #ifndef NULL
 #define NULL (void *)0
 #endif
 
 
+typedef unsigned long long int u64;
 typedef unsigned int u32;
 typedef unsigned short u16;
 typedef unsigned char u8;
@@ -75,6 +78,26 @@ static inline uint32_t inl(uint16_t port)
     return ret;
 }
 
+static inline uint32_t get_cr3(){
+    uint32_t ret;
+    asm volatile ( "mov %%cr3, %0" : "=r"(ret) );
+    return ret;
+}
+
+//will return old one and replace it
+static inline uint32_t set_cr3(u32 cr3){
+    uint32_t ret = get_cr3();
+       __asm__ volatile (
+        "mov %0, %%cr3"
+        :
+        : "r"(cr3)
+        : "memory"
+    );
+    return ret;
+}
+
+
+
 
 static inline void flush_tlb(){
     asm volatile(
@@ -107,7 +130,6 @@ static inline void stack_push(unsigned int ** stack, unsigned int value){
     stack[0][0] = val;
     return;
 }
-
 
 
 

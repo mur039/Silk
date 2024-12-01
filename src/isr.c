@@ -88,7 +88,6 @@ void isrs_install()
     idt_set_gate(29, (unsigned)isr29, 0x08, 0xEE);//0x8E);
     idt_set_gate(30, (unsigned)isr30, 0x08, 0xEE);//0x8E);
     idt_set_gate(31, (unsigned)isr31, 0x08, 0xEE);//0x8E);
-    idt_set_gate(0x80, (unsigned)syscall_stub, 0x08, 0xEE);//0x8E); //syscall
     return;
 }
 
@@ -103,9 +102,11 @@ void dump_registers(struct regs *r){
          "eax : %x | ebx : %x | ecx : %x\r\n"
          "edx : %x | edi : %x | esi : %x\r\n"
          "eip : %x |uesp : %x | ebp : %x\r\n"
+         "esp : %x  \r\n"
          ,r->eax, r->ebx, r->ecx
          ,r->edx, r->edi, r->esi
-         ,r->eip, r->useresp, r->ebp
+         ,r->eip, r->useresp, r->ebp,
+         r->esp
          );
  }
 
@@ -113,13 +114,14 @@ struct stackframe {
   struct stackframe* ebp;
   u32 eip;
 };      
-void print_stack_trace(int max_frame){
+
+void print_stack_trace(int max_frame, struct regs *r){
     struct stackframe *stk;
     asm ("movl %%ebp,%0" : "=r"(stk) ::);
+    // stk = (void*)r->ebp;
     uart_print(COM1, "Stack Trace:\r\n");
 
-    for(unsigned int frame = 0; stk && (frame < max_frame); ++frame)
-    {
+    for( int frame = 0; stk && (frame < max_frame); ++frame){
         // Unwind to previous stack frame
         uart_print(COM1, "%u ->%x\r\n",frame, stk->eip );
         stk = stk->ebp;
@@ -165,14 +167,14 @@ static const char *exception_messages[] =
 
 static const char *pagefault_messages[] =
 {
-"Supervisor tried to access a non-present page entry.\r\n",
-"Supervisory process tried to read a page and caused a protection fault.\r\n",
-"Supervisory process tried to write to a non-present page entry.\r\n",
-"Supervisory process tried to write a page and caused a protection fault.\r\n",
-"User process tried to read a non-present page entry.\r\n",
-"User process tried to read a page and caused a protection fault.\r\n",
-"User process tried to write to a non-present page entry.\r\n",
-"User process tried to write a page and caused a protection fault.\r\n"
+"Supervisor tried to access a non-present page entry.",
+"Supervisory process tried to read a page and caused a protection fault.",
+"Supervisory process tried to write to a non-present page entry.",
+"Supervisory process tried to write a page and caused a protection fault.",
+"User process tried to read a non-present page entry.",
+"User process tried to read a page and caused a protection fault.",
+"User process tried to write to a non-present page entry.",
+"User process tried to write a page and caused a protection fault"
 };
 
 
@@ -186,11 +188,19 @@ void fault_handler(struct regs *r)
 {
     char buffer[72];
     uint32_t message_length = 0;
+    
     /* Is this a fault whose number is from 0 to 31? */
     if (r->int_no < 32)
     {
 	dump_registers(r);
-        
+    uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
+    print_stack_trace(10, r);
+
+    
+
+
+
+    // print_current_process();
        switch (r->int_no)
        {
        case 13: //general fault
@@ -207,17 +217,42 @@ void fault_handler(struct regs *r)
 
        case 14: //Page Fault
             print_current_process();
-            uart_print(0x3f8, pagefault_messages[r->err_code & 7]);
+            uart_print(0x3f8, "%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
 
-            if(0 == (r->err_code & 1)){ //page not present, cr2 gives linear address
+            if(!(r->err_code & 1)){ //page not present, cr2 gives linear address
                 uint32_t cr2_reg;
-                asm volatile ( "mov %%cr0, %0" : "=r"(cr2_reg) );
-                uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", cr2_reg >> 22, (cr2_reg >> 12) & 0x3FF , cr2_reg);
-                print_stack_trace(10);
+                asm volatile ( "mov %%cr2, %0" : "=r"(cr2_reg) );
+                virt_address_t va = {.address = cr2_reg};
+                int dir, table, offset;
+                
+                dir=va.directory;
+                table = va.table;
+
+                uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", dir, table , cr2_reg);
             }
 
-            //maybe i should let kernel map this page to end of the memory_space?
-            halt();
+            
+            uart_print(0x3f8, "Pagefault due to %s\r\n", (r->err_code & 16) ? "instruction access": "data access");
+
+                if(r->err_code & 4){ //fault happened in usermode
+                    paging_directory_list(current_process->page_dir);   
+
+                    listnode_t * node = current_process->mem_mapping->head;
+                    for(int i = 0; i < current_process->mem_mapping->size ; ++i){
+                        vmem_map_t * vm = node->val;
+                        uart_print(COM1, "%x -> %x\r\n", vm->vmem, vm->phymem);
+                        node = node->next;
+                    }
+            
+                    terminate_process(current_process);
+                    schedule(r);
+                    return;
+            }
+            uint32_t * ip = (void *)r->eip;
+            uart_print(COM1, "IP : %x instruction :%x\r\n", r->eip, ip[0]);
+
+            
+
         break;
 
        default:

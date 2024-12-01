@@ -258,7 +258,7 @@ extern syscall_handler
 syscall_stub:
     cli
     push byte 0
-    push byte 0x80
+    push 0x80
     
     pusha
     push ds

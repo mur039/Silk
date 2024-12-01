@@ -4,7 +4,7 @@
 
 _start:
     mov ah, 0 ;set video mode
-    mov al, 0x0;video mode 80*25 text mode
+    mov al, 0xe;video mode 80*25 text mode
     ;0xa000
 
     int 0x10
@@ -31,7 +31,7 @@ memset16:
     ; Set up segment and offset
     mov eax, 0
     mov es, ax  ; Load segment address from the stack (16-bit segment)
-    mov di, 0xa000    ; Load offset address from the stack (16-bit offset)
+    mov edi, 0xa0000    ; Load offset address from the stack (16-bit offset)
     mov al, 0    ; Load the value to set into AL
     mov cx, 640   ; Load the count of bytes to set into CX
 

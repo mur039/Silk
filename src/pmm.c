@@ -4,6 +4,7 @@
 extern uint32_t bootstrap_pde[1024];
 extern uint32_t bootstrap_pte1[1024];
 extern uint32_t bootstrap_pte2[1024];
+extern uint32_t kernel_phy_start;
 
 uint32_t * kdir_entry = bootstrap_pde;
 uint8_t * bitmap_start = (uint8_t *)&kernel_end;
@@ -11,7 +12,16 @@ uint8_t * kernel_heap = (uint8_t *)&kernel_end;;
 uint8_t * memstart;
 uint32_t bitmap_size;
 
+uint32_t * memory_window = (uint32_t *)(0xC0100000 - 0x1000);
+
 uint32_t total_block_size;
+
+uint32_t * current_page_dir;
+
+
+
+
+
 
 void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 
@@ -26,6 +36,7 @@ void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 
     memset(bitmap_start, 0, bitmap_size);
     // kdir_entry = get_physaddr(kdir_entry);
+    current_page_dir = kdir_entry;
  
 
 }
@@ -110,6 +121,22 @@ void * kmalloc(unsigned int size){
     return NULL;
 };
 
+void * krealloc( void *ptr, size_t size){
+    
+    void * retval = ptr;
+    block_t * metadata = (block_t *)ptr;
+    metadata = &metadata[-1];
+
+   if(size > metadata->size){
+      void * new = kmalloc(size);
+      memcpy(new, &metadata[1], metadata->size);
+      retval = new;
+      kfree(ptr);
+   }
+    
+    return retval;
+}
+
 void * kcalloc(u32 nmemb, u32 size){
     void * retval;
     retval = kmalloc(nmemb * size);
@@ -117,11 +144,16 @@ void * kcalloc(u32 nmemb, u32 size){
     return retval;
 }
 
+
 void * kpalloc(unsigned int npages){ //allocate page aligned pages.
     //for simpilicity npages is assigned to 1;
-    npages = 1;
+    // npages = 1;
 
     // return NULL;
+
+    u8 * ret = NULL;
+
+    for(unsigned int i = 0; i < npages; ++i){
 
     u8 * page = allocate_physical_page();
     if(!page){
@@ -130,9 +162,22 @@ void * kpalloc(unsigned int npages){ //allocate page aligned pages.
 
     map_virtaddr(kernel_heap, page, PAGE_PRESENT | PAGE_READ_WRITE);
     page = kernel_heap;
-    kernel_heap += 0x1000;
 
-    return page;
+    if(!ret) ret = page;
+
+    kernel_heap += 0x1000; // does it need tho?
+
+    }
+    
+/*
+    since this address is 4kB aligned lowest 12-bits are empty i can cram some information here too
+    or maybe not wecause when page is given to a process this info will be lost as well :(
+    well since these pages are mapped on to the heap for n = 1
+    i can just unmap it but for n!= 1 i need to know the amount i allocated
+
+    
+*/
+    return ret;
     
 };
 
@@ -263,11 +308,15 @@ void *get_physaddr(void * virtualAddr){
     page_directory_entry_t * directory;
     page_table_entry_t * table;
 
-    directory = (void *)bootstrap_pde;
+    directory = (void *)current_page_dir;
     if(!directory[vf.directory].present) return NULL;
     
-    table = (void *) ( (directory[vf.directory].raw& ~0xFFF) + 0xc0000000 );
-    
+
+    //you see
+
+    table = (void *) ( (directory[vf.directory].raw& ~0xFFF));
+    map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
+    table = memory_window;
 
     if(!table[vf.table].present) return NULL;
 
@@ -277,7 +326,7 @@ void *get_physaddr(void * virtualAddr){
 
 int is_virtaddr_mapped(void * virtaddr){
     virt_address_t v;
-    page_directory_entry_t * dir = (void *)bootstrap_pde;
+    page_directory_entry_t * dir = (void *)current_page_dir;
     page_table_entry_t * table;
     v.address = (u32)virtaddr;
     //first check if that table is mapped
@@ -322,24 +371,41 @@ int is_virtaddr_mapped_d(void * _dir, void * virtaddr){
 
 void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags){
     virt_address_t v, p;
-    page_directory_entry_t * directory = (void*)bootstrap_pde;
+    page_directory_entry_t * directory = (void*)current_page_dir;
     page_table_entry_t * table;
 
     v.address = (uint32_t)virtual_addr;
     p.address = (uint32_t)physical_addr;
 
+    if(!directory[v.directory].present){ //table doesn't exist so allocate and map one?
+        u8 * page = kpalloc(1); //maybe it will work? for sometime?
+        if(!page) return; //failed to allocate?
+        memset(page, 0, 4096);
+        directory[v.directory].raw = (uint32_t)get_physaddr(page);
+        directory[v.directory].raw |= flags;
+        table = (page_table_entry_t*)page;
+
+
+
+    }
+    else{
     directory[v.directory].raw |= flags;
-    //raw address so add 0xc0000000 to acces it without causing page fault
-    table = (void*)((directory[v.directory].raw & ~(0xffful)) + 0xc0000000);
+    table = (void*)((directory[v.directory].raw & ~(0xffful)) + 1* 0xc0000000);
+
+    // map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
+    // table = memory_window;
+
+    }
+
 
     //check if table is mapped or not mapped to the kernel heap then unmap it
- 
     
     
     table[v.table].raw = (uint32_t)p.address;
     table[v.table].raw &= ~0xFFF;
     table[v.table].raw |=  0b111;
-
+    asm("invlpg (%0)" : :  "r"(virtual_addr));
+    // flush_tlb();    
     
     return;
 
@@ -347,13 +413,15 @@ void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags){
 
 void unmap_virtaddr(void * virtual_addr){
     virt_address_t v;
-    page_directory_entry_t * directory = (void*)bootstrap_pde;
+    page_directory_entry_t * directory = (void*)current_page_dir;
     page_table_entry_t * table;
 
     v.address = (uint32_t)virtual_addr;
     table = (void*)(directory[v.directory].raw & ~(0xffful));
-
-    //directory[v.directory].raw = 0; //not necessarily
+    
+    map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
+    table = (void*)memory_window;
+    
     table[v.table].raw = 0;
     
     return;
@@ -389,17 +457,36 @@ void map_virtaddr_d(void * _directory, void * virtual_addr, void * physical_addr
         page_table_entry_t * t = kpalloc(1);
         memset(t, 0, 4096);
 
+        // for(int i = 0; i < 4096 ; ++i){
+        //     char * phead = (void*)t;
+        //     uart_print(COM1, "%x ", phead[i]);
+        //     if( i && !(i%16)) uart_print(COM1, "\r\n");
+        // }
+
         directory[v.directory].raw = (uint32_t)get_physaddr(t);
+        
+        kernel_heap -= 0x1000;
+        unmap_virtaddr_d(directory, kernel_heap);
+
         directory[v.directory].raw |= flags;
+        // uart_print(COM1, "directory[v.directory]: %x\r\n", directory[v.directory].raw);
+
+        // uart_print(COM1, "a page is allocated for table\r\n");
+        // paging_directory_list(_directory); halt();
 
         t[v.table].raw = (uint32_t)p.address;
         t[v.table].raw &= ~0xFFF;
         t[v.table].raw |=  flags;
 
+
     }
     else{
         directory[v.directory].raw |= flags;
+    
         table = (void*)((directory[v.directory].raw & ~(0xffful)));
+        map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE); //only read darling
+        table = (page_table_entry_t*)memory_window;
+
         table[v.table].raw = (uint32_t)p.address;
         table[v.table].raw &= ~0xFFF;
         table[v.table].raw |=  0b111;
@@ -420,8 +507,10 @@ void unmap_virtaddr_d( void * _directory, void * virtual_addr){
 
     v.address = (uint32_t)virtual_addr;
     table = (void*)(directory[v.directory].raw & ~(0xffful));
+    
+    map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
+    table = (page_table_entry_t *)memory_window;
 
-    //directory[v.directory].raw = 0; //not necessarily
     table[v.table].raw = 0;
     
     return;
@@ -437,3 +526,68 @@ void unmap_everything(){
     memset(bootstrap_pte2, 0, 1024*4);
     return;
 }
+
+#include <process.h>
+#include <g_list.h>
+
+void paging_directory_list(void * dir_entry){
+    pcb_t * process;
+    
+    
+    /*
+    for physical addresses  we use last entry in the kernel table as temporary page where it will act 
+    like a window into the memory
+    */
+
+    page_directory_entry_t * process_page_dir = dir_entry ;//current_process->page_dir;
+    page_table_entry_t * process_page_table;
+
+    //its in the kernel so probably it is mapped
+    virt_address_t va = {.address = 0};
+    
+    
+
+    for(int dir = 0; dir < 768; dir++){
+        if(process_page_dir[dir].present){
+            
+            void * table_phy_addr = (void *)( process_page_dir[dir].raw & ~0xfff);
+            
+           
+            /*
+            since it is physical memory address and there's no way i can find where its mapped
+            in virtual memory i will map it in the page right below the kernel_start
+            Since this mapping will be in directory copied from kernel's own directory i can 
+            use map_virtaddr
+            */
+            // unmap_virtaddr(memory_window);
+            map_virtaddr(memory_window, table_phy_addr, PAGE_PRESENT); //only read darling
+            
+            
+            process_page_table = (page_table_entry_t*)memory_window;
+
+            for(int table = 0; table < 1024; table++){
+
+                if(process_page_table[table].present){
+                    void * phy_addr = (void *)(process_page_table[table].raw & ~0xfff); 
+
+
+                    va.address = 0; va.directory = dir; va.table = table;
+                    fb_console_printf(
+                        "-> %x : %x -> dir:%u table:%u  flags:%x %x\n",
+                        va.address, 
+                        phy_addr,
+                        dir,
+                        table,
+                        process_page_dir[dir].raw & 0xffful,
+                        (process_page_table[table].raw & 0xffful)
+                        );
+                }
+            }    
+        }
+
+
+    }
+
+
+}
+

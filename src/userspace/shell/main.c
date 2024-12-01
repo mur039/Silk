@@ -1,42 +1,39 @@
 
-
-#ifndef NULL
-#define NULL (void*)0
-#endif
-
+#include <stdint-gcc.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
 
 int fileno_stdout = 0;
 int fileno_stderr = 0;
 int fileno_stdin = 0;
 
-typedef unsigned int size_t;
-extern int read(int fd);
-extern int close(int fd);
-extern int exit(int code);
-extern int execve(const char * path, const char * argv[]);
 
-typedef struct  {
-        //    unsigned int   st_dev;      /* ID of device containing file */
-        //    unsigned int   st_ino;      /* Inode number */
-           unsigned int  st_mode;     /* File type and mode */
-        //    unsigned int st_nlink;    /* Number of hard links */
-           unsigned int   st_uid;      /* User ID of owner */
-           unsigned int   st_gid;      /* Group ID of owner */
 
-} stat_t;
 
-typedef enum {
-    REGULAR_FILE = 0,
-    LINK_FILE,
-    RESERVED_2,
-    CHARACTER_SPECIAL_FILE,
-    BLOCK_SPECIAL_FILE,
-    DIRECTORY,
-    FIFO_SPECIAL_FILE,
-    RESERVED_7
-} file_types_t;
+struct dirent {
+    uint32_t d_ino;
+    uint32_t d_off;      
+    unsigned short d_reclen;    /* Length of this record */
+    int  d_type;      /* Type of file; not supported*/
+    char d_name[256]; /* Null-terminated filename */
+};
 
-extern int fstat(int fd, stat_t * stat);
+struct dirent readdir(int fd){
+    //assuming given fd points to a dir in the fd table
+    struct  dirent ret;
+    int read_s = read(fd, &ret, sizeof(struct dirent));
+
+    if(read_s == 0){ //eof
+        ret.d_type = -1;
+        return ret;
+    }
+
+    return ret;
+}
+
+
 
 typedef enum{
     O_RDONLY = 0b001,
@@ -46,17 +43,6 @@ typedef enum{
 } file_flags_t;
 
 extern int open(const char * s, int mode);
-
-
-int test_function(int c){
-    int fd = open("/dev/console", O_RDONLY);
-    fileno_stdout = fd;
-    put_hex(c);
-    fileno_stdout = -1;
-    close(fd);
-    return 0;
-}
-
 extern size_t write(int fd, const void *buf, size_t count);
 
 
@@ -67,38 +53,18 @@ typedef enum{
 
 } whence_t;
 
-extern long lseek(int fd, long offset, int whence);
 
-typedef struct
-{
-    unsigned char blue;
-    unsigned char green;
-    unsigned char red;
-    unsigned char alpha;
-} pixel_t;
+// typedef struct
+// {
+//     unsigned char blue;
+//     unsigned char green;
+//     unsigned char red;
+//     unsigned char alpha;
+// } pixel_t;
 
 
-int getline(char * dst){
-    int c = 0, i = 0;
-    while(1){
-        c = read(fileno_stdout);
-        if(c == -1) continue;
-        if(c == '\n'){
-            dst[i] = '\0';
-             return i;
-             }
-
-        dst[i] = c;
-        i += 1;
-    }
-}
-
-int log_err(char *dst){
-    while(*(dst) != '\0') write( fileno_stderr, (dst++), 1);
-    return 0;
-}
-int puts(char * dst){
-    while(*(dst) != '\0') write( fileno_stdout, (dst++), 1);
+int puts(const char * dst){
+    write( fileno_stdout, dst, strlen(dst));
     return 0;
 }
 
@@ -107,65 +73,27 @@ int putchar(int c){
 }
 
 int getchar(){
-    return read(fileno_stdin);
+    uint8_t ch = 0;
+    int ret = read(fileno_stdin, &ch, 1);
+    return ret ?  ch : -1;
 }
 
-void memcpy(void * dest, void * src, size_t size, size_t nmemb){
-
-    char  * pdest = dest;
-    char  * psrc = src;
-    for(size_t i = 0; i < size*nmemb; ++i){
-        pdest[i] = psrc[i];
-    }
-
-    return;
-}
-int memcmp( void *s1,  void *s2, size_t size){ //simple true false
-    unsigned char *b1, *b2;
-    b1 = (unsigned char*)s1;
-    b2 = (unsigned char*)s2;
-
-    for(size_t i = 0 ; i < size ; i++){
-        if(b1[i] != b2[i]){
-            return 0;
-        }
-    }
-    return 1;
-}
-
-void memset(void * addr, int c, size_t n){
-    c &= 0xff;
-    char * phead = addr;
-    for(size_t i = 0; i < n ; ++i){
-        phead[i] = c;
-    }
-}
-int strlen(char * s){
-    int i;
-    for(i = 0; s[i] != '\0'; ++i);
-    return i;
-}
-
-int is_word_in(char * word, char ** list){
-    /*
-    both word and list are null terminated
-    if word is in list, then its position will be returned
-    otherwise or in any error -1
-    */
+//both arguments are NULL terminated
+int is_word_in(const char * word, char ** list){
+    
    if(word == NULL || list == NULL) return -1; //obv
 
-   
    for(int i = 0;list[i] != NULL; ++i){
-        if(memcmp(word, list[i], strlen(list[i]))) {return i;}
+        if(!memcmp(word, list[i], strlen(list[i]))) {return i;}
    }
    return -1;
 }
 
-int is_word_in_n(char * word, size_t size, char ** list){
+int is_word_in_n(char * word, size_t size, const char ** list){
    if(word == NULL || list == NULL) return -1; //obvs
    
    for(int i = 0;list[i] != NULL; ++i){
-        if(memcmp(word, list[i], size) ){
+        if(!memcmp(word, list[i], size) ){
             return i;
         }
    }
@@ -173,44 +101,69 @@ int is_word_in_n(char * word, size_t size, char ** list){
 }
 
 
-const char hexadecimal_characters[17] = "0123456789abcdef";
-void put_hex(unsigned int hex){
-    int non_zero = 0;
-    for (int i = 0; i < 8; i++)
-    {
-        int nibble = (hex >> (28 -(4*i))) & 0xF;
-        if(non_zero == 0 && nibble != 0){
-            non_zero = 1;
-            }
-        if(non_zero|| (i == 7 && non_zero == 0) ){
-            write(fileno_stdout, &hexadecimal_characters[nibble], 1);
-        }
-    }
-    
-    return;
-}
+const char * title_artwork =
+                                "                   _                    \n"
+                                " _____            | |       _       _ _ \n"
+                                "|     |_ _ ___ ___|_|   ___| |_ ___| | |\n"
+                                "| | | | | |  _| . |    |_ -|   | -_| | |\n"
+                                "|_|_|_|___|_| |___|    |___|_|_|___|_|_|\n"
+                                "\n";
 
 
-#define COMMAND_BUFFER_MAXSIZE 64
+#define COMMAND_BUFFER_MAXSIZE 36
 int command_buffer_index = 0;
 char command_buffer[COMMAND_BUFFER_MAXSIZE];
 
+
 int shouldRun = 1;
-const char *commands[] = {
-    "exit",
-    "echo",
-    "exec",
-    "help",
-    "ls",
-    "clear",
-    NULL
+
+enum command_ids {
+    EXIT = 0,
+    ECHO,
+    EXEC,
+    HELP,
+    LS,
+    CLEAR,
+    SET
+   
 };
+
+const char *commands[] = {
+    [EXIT] = "exit",
+    [ECHO] = "echo",
+    [EXEC] = "exec",
+    [HELP] = "help",
+    [LS] = "ls",
+    [CLEAR] = "clear",
+    [SET] = "set",    
+
+
+    
+    NULL
+
+};
+
 
 typedef struct{
     char * src;
     size_t size;
 } string_t;
 
+//i have some internal variables that is settable by set VARIABLE_NAME VALUE
+
+enum internal_var_enum{
+    INTERNAL_VAR_DEBUG = 0
+};
+
+const char *internal_var_str[] = {
+    [INTERNAL_VAR_DEBUG] = "debug",
+    NULL
+};
+
+
+int internal_variables[] = {
+    [INTERNAL_VAR_DEBUG] = 0
+};
 
 
 int is_delimeter(const char c){
@@ -263,36 +216,81 @@ int execute_command(){
     //parsed the things
     int index = is_word_in_n(words[0].src, words[0].size, commands);
     int result;
+
     switch (index)
     {
+        
     case -1: //maybe i should execute a program here
         write(fileno_stdout, words[0].src, words[0].size);
         puts(" : command not found"); 
         break;
-    case 0: //exit well fuck it
 
-        // if(words[1].src == NULL){
-        //     puts("Expected exit code\n");
+    case EXIT: //exit well fuck it
+        puts("exit\n");
+
+        // if(!words[1].src){ //NULL
+        //     exit(0);
         //     return -1;
         // }
 
-        // //turn str to int
-        // int exit_code = 0;
-        // for(size_t i = 0; i < words[1].size; ++i){
-        //     exit_code *= 10;
-        //     exit_code += words[1].src[i] - '0';
-        // }
+        // words[1].src[ words[1].size ] = '\0';
+        // exit( atoi(words[1].src ) );
+        // return -1;
         exit(0);
         break;
 
-    case 1: //echo
-         if(words[1].src == NULL){
+    case ECHO: //echo
+        if(words[1].src == NULL){
             putchar('\n');
             break;
         }
         puts(words[1].src);
         break;
-    case 2: //exec
+
+    case LS:
+        if(words[1].src == NULL){
+            puts("Expected a path\n");
+            return -1;
+        }
+
+        char path_[64];
+        for (unsigned int i = 0; i < words[1].size; ){
+            path_[i] = words[1].src[i];
+            i++;
+            path_[i] = '\0';
+
+        }
+        int dir_fd = open(path_, O_RDONLY);
+        if(dir_fd == -1){
+            puts("No such directory\n");
+            return -1;
+        }
+
+
+        while(1){
+            struct dirent dir;
+            dir = readdir(dir_fd);
+            if(dir.d_type == -1) break;
+
+            int off = 255;
+            for(; dir.d_name[off] != '/'; off-- );
+
+            if(dir.d_type == DIRECTORY){ //again
+                --off;
+                for(; dir.d_name[off] != '/'; off-- );
+            }
+            
+            off++;
+            
+            
+            printf( "%c    %s\n", dir.d_type == DIRECTORY ? 'd' : '-', &dir.d_name[off] );
+            
+        }
+
+        close(dir_fd);
+        break;
+
+    case EXEC: //exec
 
         if(words[1].src == NULL){
             puts("Expected a path\n");
@@ -300,100 +298,141 @@ int execute_command(){
         }
 
         char path[64];
-        for (unsigned int i = 0; i < words[1].size; ++i){
+        for (unsigned int i = 0; i < words[1].size; ){
             path[i] = words[1].src[i];
+            i++;
+            path[i] = '\0';
+
         }
 
 
         char argv1[32];
-        memcpy(argv1, words[2].src, 1, words[2].size);
+        memcpy(argv1, words[2].src, words[2].size);
         
-
-        const char * args[] = { 
-                            path,
-                            argv1,
-                            NULL
-                            };
-
-        for(int i = 0; args[i] != NULL; ++i){
-            puts(args[i]);putchar('\n');
+        int pipe_fd[2];
+        if(pipe(pipe_fd) == -1){
+            puts("Failed to create a pipe\n");
+            return;
         }
-        result = execve(
-                        path,
-                        args
-                        );
 
-        if(result == -1){
-            puts("Failed to execute :(\n");
+        int pid = fork();
+
+        if(pid == -1){
+            puts("Failed to fork");
+            return;
+        }
+
+
+        if(pid != 0){
+            //parent doesn't need to read from pipe so closer fd[0]
+            
+            puts("parent: i'm waiting");
+            // char command[] = "echo selam\n";
+            // while(1){
+            
+            //     for(int i = 0; command[i] != '\0'; ++i){
+            //         write(pipe_fd[1], &command[i], 1);
+            //     }   
+            //     for(int i = 0; i < 0xfffff; ++i);
+            // }
+
+        }
+        else{ //imma child bitch
+            ////child doesn't need to write to pipe so closer fd[1]
+            
+            dup2( pipe_fd[0], FILENO_STDIN);
+
+            uint32_t _table[3];
+            _table[0] = (uint32_t)path;
+            _table[1] = (uint32_t)argv1[0] == '\0' ? 0 : argv1;
+            _table[2] = (uint32_t)NULL;
+
+
+            const char **_argv = (const char **)&_table;
+
+            result = execve(
+                            path,
+                            _argv
+                            );
+
+            if(result == -1){
+                puts("Failed to execute :(\n");
+                exit(0);
+            }
         }
         break;
 
-    case 3: //help
-        puts(               
-                "                   _                    \n"
-                " _____            | |       _       _ _ \n"
-                "|     |_ _ ___ ___|_|   ___| |_ ___| | |\n"
-                "| | | | | |  _| . |    |_ -|   | -_| | |\n"
-                "|_|_|_|___|_| |___|    |___|_|_|___|_|_|\n"
-                "\n"
-            );
+    case HELP: //help
+        puts( title_artwork );
         puts("Muro's shell V1.0\n");
         puts("Built-in commands:\n");
         for(int i = 0; commands[i] != NULL; ++i){
-            putchar('\t');puts(commands[i]);putchar('\n');
+            printf("\t%s\n", commands[i]);
         }
         
         break;
 
    
-    case 5: //clear
+    case CLEAR: //clear
         puts("\x1b[H"); //set cursor to (0,0)
         puts("\x1b[J"); //clear from cursor to end of the screen
         break;
+
+
+    // set DEBUG 1
+    case SET:
+        
+        if(words[1].src == NULL){
+            puts("Expected variable_name:");
+            return -1;
+        }
+        
+        puts(words[1].src);
+
+            // int _index = is_word_in_n(words[1].src, words[1].size, internal_var_str);
+            // if(index == -1){ 
+            //     puts("Invalid interval variable\n");
+            //     return -1;
+            // }
+
+            // puts(internal_var_str[index]);
+        
+
+
+        break;
+
     default:
         break;
     }
-   
-
+    
    return 0;
 }
 
 
 int main(int argc, char **argv){
-    
-    int fd_com1 = open("/dev/com1", O_RDWR);
-    if(fd_com1 == -1){
-        return 1;
-    }
-
-    int fd_kbd = open("/dev/kbd", O_RDONLY);
-    if(fd_kbd == -1){
-        return 1;
-    }
-
-    int fd_console = open("/dev/console", O_WRONLY);
-    if(fd_console == -1){
-        return 1;
-    }
-
-
-    fileno_stdout = fd_console;
-    fileno_stdin  = fd_kbd;
+   
+    fileno_stdout = 0;
+    fileno_stdin  = 1;
 
     int c = 0;
     shouldRun = 1;
     
+
+    puts(title_artwork);
+    puts("> ");
     
     
     while(shouldRun){
         
        c = getchar();
-        
         if(c != -1){             //i succesfully read something
+        
             switch (c)
             {
-            case 3: //^C
-                shouldRun = 0;
+            case 3: //^C //perhaps lets change it
+                memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
+                command_buffer_index = 0;
+                puts("\n> ");
                 continue;
                 break;
 
@@ -404,29 +443,37 @@ int main(int argc, char **argv){
                     puts("\x1b[1D \x1b[1D"); 
                 }
                 break;
-                
+            
+            case 9: //tab
+                break;
             case 10:
             case 13: //process the inout buffer
                 command_buffer[command_buffer_index++] = '\n';
                 command_buffer[command_buffer_index] = '\0';
-                puts("\n");
-                execute_command();
-                memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
+
+                if(command_buffer_index > 1){ //if user entered anything
+
+                    puts("\n");
+                    execute_command();
+                    memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
+                }
+
+
                 command_buffer_index = 0;
-                puts("\n");
-                puts("> ");
+                puts("\n> ");
                 break;
 
-            case 224: // up arrow key
-            case 225: // left arrow key
+            // case 61: //left arrow    these send typically 2 byte currently one and is also a ascii character kbd driver issur
+            // case 62: //right arrow   these send typically 2 byte currently one and is also a ascii character kbd driver issur
+            case 60: // up arrow key
+            case 63: // left arrow key
                 break;
 
 
             default: //add character
                 command_buffer[command_buffer_index] = c;
                 command_buffer_index += 1;
-                putchar(c);  //echo back to the user
-                // put_hex(c);
+                putchar(c);  //echo back to the user        
                 break;
             }
             

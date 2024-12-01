@@ -2,7 +2,8 @@
 #define __ACPI_H_
 
 #include <sys.h>
-#include <stdint.h>
+#include <pmm.h>
+#include <stdint-gcc.h>
 
 typedef struct RSDP_t {
  char Signature[8];
@@ -25,7 +26,7 @@ struct XSDP_t {
  uint8_t reserved[3];
 } __attribute__ ((packed));
 
-struct ACPISDTHeader {
+typedef struct{
   char Signature[4];
   uint32_t Length;
   uint8_t Revision;
@@ -35,10 +36,21 @@ struct ACPISDTHeader {
   uint32_t OEMRevision;
   uint32_t CreatorID;
   uint32_t CreatorRevision;
-};
+} __attribute__((packed)) ACPISDTHeader_t;
 
 
 rsdp_t find_rsdt();
 int rsdp_is_valid(rsdp_t rdsp);
+
+typedef struct {
+  ACPISDTHeader_t h;
+  uint32_t* PointerToOtherSDT;
+  // [(h.Length - sizeof(h)) / 4];
+} __attribute__((packed)) RSDT_t;
+
+
+int doSDTChecksum(ACPISDTHeader_t *tableHeader);
+void *find_sdt_by_signature(void *RootSDT, const char * signature);
+
 
 #endif

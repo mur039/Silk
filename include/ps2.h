@@ -23,8 +23,9 @@
 #define PS2_DISABLE_SECOND_PORT 0xA7
 
 #define PS2_WRITE_BYTE_SECOND_PORT_INPUT 0xD4
-typedef union ps2_controller_status{
-    struct{
+
+union ps2_controller_status {
+    struct {
         unsigned char output_buffer:1;
         unsigned char input_buffer:1;
         unsigned char system_flag:1; //cleared on reset and set by firmware is POST is passed
@@ -40,7 +41,7 @@ typedef union ps2_controller_status{
 typedef union ps2_controller_status ps2_controller_status_t;
 
 
-typedef union ps2_controller_config{
+union ps2_controller_config{
     struct{
         unsigned char first_port_interrupt:1;
         unsigned char second_port_interrupt:1;

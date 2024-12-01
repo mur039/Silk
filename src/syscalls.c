@@ -1,4 +1,5 @@
 #include <syscalls.h>
+#include <isr.h>
 #include <pmm.h>
 
 void (*syscall_handlers[64])(struct regs *r);
@@ -9,7 +10,9 @@ void unkown_syscall(struct regs *r){
     r->eax = -1;
 }
 
+extern void syscall_stub();
 void initialize_syscalls(){
+    idt_set_gate(0x80, (unsigned)syscall_stub, 0x08, 0xEE);//0x8E); //syscall
     for (int i = 0; i < 64; i++)
     {
         syscall_handlers[i] = unkown_syscall;

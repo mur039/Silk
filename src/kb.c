@@ -38,7 +38,7 @@ unsigned char kbdus[128] =
     0,	/* Page Down */
     0,	/* Insert Key */
     0,	/* Delete Key */
-    0,   0,   0,
+    0,  0,  '<',
     0,	/* F11 Key */
     0,	/* F12 Key */
     0,	/* All other keys are undefined */
@@ -82,3 +82,4 @@ unsigned char kbdus[128] =
 // }
 int ctrl_flag = 0;
 int shift_flag = 0;
+int alt_gr_flag = 0;

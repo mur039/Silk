@@ -16,16 +16,7 @@ arg4 = edi
 arg5 = ebp
 */
 
-enum syscall_numbers{
-    SYSCALL_READ = 0,
-    SYSCALL_WRITE = 1,
-    SYSCALL_OPEN = 2,
-    SYSCALL_CLOSE = 3,
-    SYSCALL_LSEEK = 4,
-    SYSCALL_FSTAT = 5,
-    SYSCALL_EXECVE = 59,
-    SYSCALL_EXIT = 60
-};
+#include <sys/syscall.h>
 
 void initialize_syscalls();
 void unkown_syscall(struct regs *r);
