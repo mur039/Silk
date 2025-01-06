@@ -21,8 +21,10 @@ typedef struct __device_t {
 	device_type dev_type;
 	filesystem_t * fs;
 	// struct __fs_t *fs;
-	uint8_t (*read)(uint8_t* buffer, uint32_t offset , uint32_t len, void* dev);
-	uint8_t (*write)(uint8_t *buffer, uint32_t offset, uint32_t len, void* dev);
+	int32_t (*read)(uint8_t* buffer, uint32_t offset , uint32_t len, void* dev);
+	int32_t (*write)(uint8_t *buffer, uint32_t offset, uint32_t len, void* dev);
+	uint8_t (*close)(int t, void* dev);
+	uint8_t (*open) (int t, void* dev);
 	void *priv;
 } device_t;
 

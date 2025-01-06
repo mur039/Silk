@@ -109,6 +109,14 @@ int va_gprintf(char (* write)(char c), const char *format, va_list args){
             case 's': //string?
                 ;
                 char * src = va_arg(args, char *);
+                if(!src){ //null pointer
+
+                    const char * null_str = "(null)";
+                    for(int i = 0; i < strlen( null_str ); ++i){
+                        write(null_str[i]);
+                    }
+                    break;
+                }
                 for(int i = 0; src[i] != '\0';++i){ //memcpy
                     write(src[i]);
                     }
@@ -262,4 +270,79 @@ int strncmp(const char *str1, const char * str2, int n){
     }
 
     return 0;
+}
+
+
+char * strcpy(char* dst, const char* src){
+
+    //in any of them is null
+    if( !dst || !src) {
+
+        return NULL;
+    }
+
+    size_t src_len = strlen(src);
+
+    for ( size_t i = 0; i < (src_len + 1); i++){
+
+        dst[i] = src[i];
+    }
+
+    return dst;
+}
+
+void kxxd(const char * src, size_t len){
+
+    for(int i = 0; i < len; ++i){
+        
+        if( i % 16 == 0 ){
+
+            if(i ){
+                
+                fb_console_printf("| ");
+                for(int j = 0; j < 16; ++j){
+                    
+                    fb_console_printf("%c", src[i + j - 16 ] <= ' ' ? '.' : src[i + j - 16 ] );
+                }
+                fb_console_printf("\n");
+            }
+
+            fb_console_printf("%x: ", src + i);
+
+        }
+
+        if( (src[i]  & 0xff) < 0xf){
+            fb_console_printf(" %x ", src[i]  & 0xff);
+        }
+        else{
+            fb_console_printf("%x ", src[i]  & 0xff);
+        }
+
+    }
+
+    
+    fb_console_printf("\n");
+
+
+}
+
+
+int atoi (const char * str){
+    
+    int sign = +1;
+    int ret_val = 0;
+    const  char *digits = str;
+
+    if(str[0] == '-'){
+        sign = -1;
+        digits++;
+    }
+
+
+
+    for(size_t i = 0; i < 11 && digits[i] != '\0' ;i++){
+        ret_val *= 10;
+        ret_val += digits[i] - '0';
+    }
+    return ret_val * sign;
 }

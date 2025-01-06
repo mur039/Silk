@@ -22,4 +22,18 @@
 pcb_t * v86_create_task(char * filename);
 
 void v86_monitor(struct regs * r, pcb_t * task);
+int v86_int(int number, context_t* ctx); //?????? how nigga how??
+
+struct VbeInfoBlock {
+   char     VbeSignature[4];         // == "VESA"
+   uint16_t VbeVersion;              // == 0x0300 for VBE 3.0
+   uint16_t OemStringPtr[2];         // isa vbeFarPtr
+   uint8_t  Capabilities[4];
+   uint16_t VideoModePtr[2];         // isa vbeFarPtr
+   uint16_t TotalMemory;             // as # of 64KB blocks
+   uint8_t  Reserved[492];
+} __attribute__((packed));
+
+typedef struct VbeInfoBlock vbe_info_block_t;
+
 #endif

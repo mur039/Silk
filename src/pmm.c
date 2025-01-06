@@ -87,11 +87,12 @@ void kmalloc_init(int npages){
 
 void * kmalloc(unsigned int size){
 
-    #if DEBUG
-    alloc_print_list();
-    #endif
+    // #if DEBUG
+    // alloc_print_list();
+    // #endif
 
     for(block_t * head = mem_list; head != NULL; head = head->next){
+        
         if(head->is_free && size < head->size ){
 
 
@@ -117,7 +118,33 @@ void * kmalloc(unsigned int size){
             return &next->prev[1];
 
         }
+
+        if(head->next == NULL){ //need more memory jessy
+            block_t * new = kpalloc(1);
+            new->is_free = 1;
+            new->size = 4096 - sizeof(block_t);
+            new->next = NULL;
+            new->prev = head;
+            head->next = new;
+
+            new->is_free = 0;
+            new->size = size;
+            new->next = ((uint8_t *)&new[1]) + size;
+
+            new->next->is_free = 1;
+            new->next->size = 4096 - 3*(sizeof(block_t)) - size ;
+            new->next->prev = new;
+            new->next->next = NULL;
+            
+            return new;
+
+
+        }
     }
+    pmm_print_usage();
+    halt();
+    //maybe dynamically allocate another page?
+    
     return NULL;
 };
 
@@ -140,7 +167,8 @@ void * krealloc( void *ptr, size_t size){
 void * kcalloc(u32 nmemb, u32 size){
     void * retval;
     retval = kmalloc(nmemb * size);
-    memset(retval, 0, nmemb * size);
+    if(retval)
+        memset(retval, 0, nmemb * size);
     return retval;
 }
 
@@ -205,7 +233,8 @@ void kfree(void * ptr){
     head -= 1;
     head->is_free = 1;
 
-    // //merge to other free blocks
+
+    //merge to other free blocks
     if( head->prev->size > 0){
         head->prev->next = head->next;
         head->next->prev = head->prev;
@@ -215,6 +244,8 @@ void kfree(void * ptr){
     else if(head->next->size > 0){
         
     }
+
+
     head->prev->next = head->next;
     head->next->prev = head->prev;
 
@@ -248,7 +279,7 @@ void pmm_print_usage(){
                     end_addr = start_addr;
                     end_addr += 0x1000*(8*i + bit);
                     state = 0;
-                    uart_print(COM1, "[%x...%x]: Allocated size -> %u\r\n", start_addr, end_addr, end_addr - start_addr);
+                    uart_print(COM1, "[%x...%x]: Allocated size -> %x\r\n", start_addr, end_addr, end_addr - start_addr);
                 }
                 else{
                     used_pages++;
@@ -316,7 +347,7 @@ void *get_physaddr(void * virtualAddr){
 
     table = (void *) ( (directory[vf.directory].raw& ~0xFFF));
     map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
-    table = memory_window;
+    table = (page_table_entry_t *)memory_window;
 
     if(!table[vf.table].present) return NULL;
 
@@ -346,6 +377,7 @@ int is_virtaddr_mapped(void * virtaddr){
     return 1;
 }
 
+
 int is_virtaddr_mapped_d(void * _dir, void * virtaddr){
     virt_address_t v;
     page_directory_entry_t * dir = _dir;
@@ -357,7 +389,9 @@ int is_virtaddr_mapped_d(void * _dir, void * virtaddr){
     }
 
     //if table exist then check in the table if corresponding entry exists
-    table = (void *) ( (dir[v.directory].raw& ~0xFFF) + 0xc0000000 );
+    table = (void *) ( (dir[v.directory].raw& ~0xFFF));
+    map_virtaddr(memory_window, table, PAGE_PRESENT);
+    table = (page_table_entry_t *)memory_window;
 
     if(!(table[v.table].raw & 1)){
         return 0;

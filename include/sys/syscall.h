@@ -1,3 +1,6 @@
+#ifndef __SYS_SYSCALL_H__
+#define __SYS_SYSCALL_H__
+
 enum syscall_numbers{
     SYSCALL_READ = 0,
     SYSCALL_WRITE = 1,
@@ -5,6 +8,7 @@ enum syscall_numbers{
     SYSCALL_CLOSE = 3,
     SYSCALL_LSEEK = 4,
     SYSCALL_FSTAT = 5,
+    SYSCALL_MMAP = 9,
     SYSCALL_GETPID = 20,
     SYSCALL_PIPE = 22,
     SYSCALL_DUP2 = 41,
@@ -12,4 +16,11 @@ enum syscall_numbers{
     SYSCALL_EXECVE = 59,
     SYSCALL_EXIT = 60,
     SYSCALL_WAIT4 = 61,
+    SYSCALL_KILL = 62,
+    SYSCALL_GETCWD = 79,
+    SYSCALL_CHDIR = 80,
+    SYSCALL_SYSINFO = 99,
 };
+
+
+#endif

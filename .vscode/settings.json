@@ -14,7 +14,17 @@
         "pmm.h": "c",
         "stdio.h": "c",
         "wait.h": "c",
-        "syscalls.h": "c"
+        "syscalls.h": "c",
+        "ps2_mouse.h": "c",
+        "signals.h": "c",
+        "pipe.h": "c",
+        "process.h": "c",
+        "circular_buffer.h": "c",
+        "glyph.h": "c",
+        "vmm.h": "c",
+        "ata.h": "c",
+        "sysinfo.h": "c",
+        "v86.h": "c"
     }
     
 }

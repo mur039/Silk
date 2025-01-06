@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <sys.h>
 #include <pmm.h>    
+#include <dev.h>
+#include <filesystems/vfs.h>
 
 typedef enum{
     O_RDONLY = 0b001,
@@ -55,6 +57,7 @@ typedef struct  {
 	unsigned short f_flags;
 	tar_header_t *f_inode;
 	off_t f_pos;
+	device_t ops;
 
 } file_t;
 

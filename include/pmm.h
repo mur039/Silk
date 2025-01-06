@@ -79,6 +79,8 @@ extern uint32_t * current_page_dir;
 void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags);
 void unmap_virtaddr(void * virtual_addr);
 int is_virtaddr_mapped(void * virtaddr);
+int is_virtaddr_mapped_d(void * _dir, void * virtaddr);
+
 
 void *get_physaddr(void * virtualAddr);
 void unmap_everything();
@@ -89,11 +91,6 @@ int pmm_mark_allocated(void * address);
 void * allocate_physical_page();
 int deallocate_physical_page(void * address);
 
-
-typedef struct{
-    u32 vmem;
-    u32 phymem;
-} vmem_map_t;
 
 struct Block
 {

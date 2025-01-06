@@ -54,12 +54,15 @@ struct tss_entry_struct {
 } __packed;
 typedef struct tss_entry_struct tss_entry_t;
 
-void set_kernel_stack(uint32_t stack);
+void set_kernel_stack(uint32_t stack, tss_entry_t * tss);
 extern void flush_tss(void);
 extern void gdt_flush();
 void gdt_install(void);
 void gdt_set_gate(int num, unsigned long base, unsigned long limit, unsigned char access, unsigned char gran);
-void write_tss(struct gdt_entry *g);
+void write_tss(struct gdt_entry *g, tss_entry_t * tss, uint32_t limit);
 
+extern struct gdt_entry gdt[6]; //NULL COde DATA usrCode usrData Tss
+extern struct gdt_ptr gp;
+extern tss_entry_t tss_entry;
 
 #endif

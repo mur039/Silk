@@ -1,5 +1,5 @@
 BUILD_DIR = ./build
-CFLAGS = -ffreestanding -m32 -g -c -Wextra -I./include
+CFLAGS = -ffreestanding -m32 -g -c -Wextra -I./include -DDEBUG
 default: 
 	make kernel
 	make libsilk
@@ -14,7 +14,7 @@ userspace:
 		done
 init: ./initrd
 	cp build/init_bin/* ./initrd/tar_files/bin/
-	cp $(BUILD_DIR)v86.bin ./initrd/tar_files/bin/v86.bin
+	cp $(BUILD_DIR)/v86.bin ./initrd/tar_files/bin/v86.bin
 	cd initrd && make
 	
 
@@ -35,12 +35,12 @@ run_virtio: bootable.iso
 
 kernel: 
 
-	nasm -f elf32 -g src/boot.asm -o $(BUILD_DIR)boot.o
-	nasm -f elf32 -g src/irq.asm -o  $(BUILD_DIR)irq_asm.o
-	nasm -f elf32 -g src/isr.asm -o  $(BUILD_DIR)isr_asm.o
-	nasm -f elf32 -g src/misc.asm -o $(BUILD_DIR)misc_asm.o
+	nasm -f elf32 -g src/boot.asm -o $(BUILD_DIR)/boot.o
+	nasm -f elf32 -g src/irq.asm -o  $(BUILD_DIR)/irq_asm.o
+	nasm -f elf32 -g src/isr.asm -o  $(BUILD_DIR)/isr_asm.o
+	nasm -f elf32 -g src/misc.asm -o $(BUILD_DIR)/misc_asm.o
 
-	nasm -f bin src/v86.asm -o $(BUILD_DIR)v86.bin
+	nasm -f bin src/v86.asm -o $(BUILD_DIR)/v86.bin
 	
 
 	
@@ -59,6 +59,8 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/pit.c -o $(BUILD_DIR)/pit.o
 
 	i686-elf-gcc $(CFLAGS) ./src/v86.c -o $(BUILD_DIR)/v86.o
+	i686-elf-gcc $(CFLAGS) ./src/semaphore.c -o $(BUILD_DIR)/semaphore.o
+	i686-elf-gcc $(CFLAGS) ./src/queue.c -o $(BUILD_DIR)/queue.o
 
 	i686-elf-gcc $(CFLAGS) ./src/dev.c -o  $(BUILD_DIR)/dev.o
 	i686-elf-gcc $(CFLAGS) ./src/kb.c -o  $(BUILD_DIR)/kb.o
@@ -81,13 +83,14 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/g_list.c -o $(BUILD_DIR)/g_list.o
 	i686-elf-gcc $(CFLAGS) ./src/circular_buffer.c -o $(BUILD_DIR)/circular_buffer.o
 	i686-elf-gcc $(CFLAGS) ./src/pipe.c -o $(BUILD_DIR)/pipe.o
+	i686-elf-gcc $(CFLAGS) ./src/vmm.c -o $(BUILD_DIR)/vmm.o
 
 	cd $(BUILD_DIR) && i686-elf-ld -o ../kernel.elf -T ../linker.ld  \
 		boot.o lkmain.o \
 		kmain.o str.o uart.o acpi.o idt.o isr.o isr_asm.o irq.o irq_asm.o \
 		pmm.o pit.o gdt.o misc_asm.o ps2.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
 		v86.o pci.o elf.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o \
-		ata.o cmos.o virtio.o pipe.o
+		ata.o cmos.o virtio.o pipe.o vmm.o queue.o semaphore.o
 
 	
 debug_kernel:kernel.elf

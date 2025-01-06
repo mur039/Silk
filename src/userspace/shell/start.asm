@@ -1,6 +1,6 @@
 global _start
 extern main ; takes argument in ecx
-extern test_function ;int test_function(char ** argv)
+extern malloc_init ;int test_function(char ** argv)
 extern exit
 
 _start:
@@ -9,6 +9,11 @@ _start:
 
     push esi
     push edi
+
+    call malloc_init
+
+    pop edi
+    pop esi
     
     call main
     push eax ;return

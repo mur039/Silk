@@ -16,43 +16,35 @@ pcb_t * v86_create_task(char * filename){
     p->regs.esp = 0xffff;
     p->regs.cs = 0;
     p->regs.ds = 0;
+    p->regs.es = 0;
+    p->regs.fs = 0;
+    p->regs.gs = 0;
 
-    //to load program withing the first 4kB
     
-    map_virtaddr(0 , 0, PAGE_PRESENT | PAGE_READ_WRITE);
-    flush_tlb();
-    memcpy((void *)0x7c00, &file.f_inode[1], o2d(file.f_inode->size));
-    unmap_virtaddr(0);
-    flush_tlb();
-
-    // void * pe = kpalloc(1);
-    // memset(pe, 0, 4096);
-    // uint32_t * p32 = p->page_dir;
-    // p32[0] = (uint32_t)get_physaddr(pe);
-    // p32[0] |= PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR;
-    //first 1Mb is within the first table so i allocate one table
-
-    page_directory_entry_t * dir = (page_directory_entry_t *)p->page_dir;
-    page_table_entry_t * table;
-
-    table = kpalloc(1);
-    memset(table, 0, 4096);
-
-    dir[0].raw = (uint32_t)get_physaddr(table);
-    dir[0].present = 1;
-    dir[0].read_write = 1;
-    dir[0].user_supervisor = 1;
-
-    fb_console_printf("First table is %x\n", dir[0].raw);
-    for(int i = 0; i < 205; ++i){
-        table[i].raw = i*0x1000 | PAGE_PRESENT | PAGE_USER_SUPERVISOR | PAGE_READ_WRITE; //no usr tho
-    }
-
-    // map_virtaddr_d(p->page_dir, 0x0, 0, PAGE_READ_WRITE | PAGE_USER_SUPERVISOR | PAGE_PRESENT); //enteresan
     //1:1 mapping the first 1MB for v86 task
+    map_virtaddr_d(p->page_dir, 0 , 0, PAGE_PRESENT | PAGE_USER_SUPERVISOR);
+    for(int i = 1; i < 205; ++i){
+        map_virtaddr_d(p->page_dir, (void*)(i*0x1000) , (void*)(i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+    }
+    
+    map_virtaddr(memory_window, (void *)0x7000, PAGE_PRESENT | PAGE_READ_WRITE);
+    memcpy((void *)(((uint32_t)memory_window) + 0xc00), &file.f_inode[1], 512); // a sector
+    unmap_virtaddr(memory_window);
+
+    //kernel stack 
+    void * page = kpalloc(1);
+    p->kstack = page;
+    memset(page, 0, 4096);
+
+    // p->state = TASK_RUNNING;
+    flush_tlb();
+
     return p;
 
 }
+
+
+
 
 
 void v86_monitor(struct regs * r, pcb_t * task){
@@ -74,13 +66,74 @@ void v86_monitor(struct regs * r, pcb_t * task){
         int interrupt_no = ip[1];
         uart_print(COM1, "An int instruction calling interrupt %u\r\n", interrupt_no);
        
+       //turn it into a syscall of sort?
         if(interrupt_no == 3){ //ilgi istiyo abisi
-            // terminate_process(current_process);
-            // schedule(r);
-            r->eax = 0xbeef;
+            
+            switch (r->eax & 0xFF) //value in al
+            {
+            case 0x0: //exit
+                current_process->state = TASK_ZOMBIE;
+                schedule(r);
+                break;
+            
+            case 1: //puts //es:di daki string
+                ;
+                u8 * str = (u8*)(r->es*0 + r->edi & 0xffff);
+                uart_print(COM1, "v86 :%s\r\n", str);
+                break;
+            
+            case 2: //write es:di-> src, ebx->length
+                ;
+                u8 * _str = (u8*)(r->es*0x10 + r->edi & 0xffff);
+                uart_print(COM1, "v86 : %s\r\n", _str);
+                
+                // uart_print(COM1, "\r\n");
+                break;
+            
+            case 3: //hex dump, src-> es:edi length->ebx
+                ;
+                u8 * hex_head = (u8*)(r->es*0x10 + r->edi);
+                u16 len = r->ebx;
+
+                for(int i = 0; i < len; ++i){
+                    if(i % 16 == 0){
+
+
+                        if(i){
+                        
+                        uart_print(COM1, "|");
+                        for(int j = 0; j < 16 ; ++j){
+                            u8* rh = hex_head + i - 16;
+                            uart_print(COM1, "%c", rh[j] <= 32 ? '.' : rh[j] );
+                        }
+
+                        uart_print(COM1, "\r\n");
+                        } 
+
+
+                        uart_print(COM1, "%x: ", hex_head + i);
+                    }
+
+                    uart_print(COM1, "%x ", hex_head[i]);
+                }
+                break;
+            default:
+                break;
+            }
+            
+
+
+            r->eax = 1;
             r->eip += 2;
             break;
         }
+
+        // hacky
+        if(task->pid < 0){
+            r->es = 0;
+            
+        }
+
 
         stack -= 3;
         r->useresp = ((r->useresp & 0xffff) - 6) & 0xffff;
@@ -95,9 +148,10 @@ void v86_monitor(struct regs * r, pcb_t * task){
             stack[2] &= ~(1u << V86_IF_BIT);
 
         r->eflags &= ~(1 << V86_IF_BIT);
-        r->cs = ivt[ip[1] * 2 + 1];
-        r->eip = ivt[ip[1] * 2];
+        r->cs  = ivt[ interrupt_no * 2 + 1];
+        r->eip = ivt[ interrupt_no * 2];
         break;
+
     //emulation of out/in is slow af maybe extend the tss to +8192 byte :/
     case V86_OUT_AL_DX: //output byte in al to port dx
         uart_print(COM1, "out al, dx port:%x value:%x\r\n", r->edx & 0xffff, r->eax & 0xff);
@@ -124,6 +178,7 @@ void v86_monitor(struct regs * r, pcb_t * task){
         break;
 
     case V86_PUSHF:
+        uart_print(COM1, "v86:pushf\r\n");
         r->useresp = ((r->useresp & 0xffff) - 2) & 0xffff;
         stack--;
         stack[0] = (uint16_t) r->eflags;
@@ -136,6 +191,7 @@ void v86_monitor(struct regs * r, pcb_t * task){
         break;
 
     case V86_POPF:
+        uart_print(COM1, "v86:popf\r\n");
         r->eflags = (1 << V86_IF_BIT) | (1 << V86_VM_BIT) | stack[0];
         r->eflags =  (r->eflags & ~(1 << V86_IF_BIT) )  | ((1 << V86_IF_BIT) * (stack[0] & (1 << V86_IF_BIT)) != 0); //hmmmm
         r->useresp = ((r->useresp & 0xffff) + 2) & 0xffff;
@@ -143,19 +199,88 @@ void v86_monitor(struct regs * r, pcb_t * task){
         break;
 
     case V86_IRET:
-        r->eip = stack[0];
-        r->cs = stack[1];
-        r->eflags = (1 << V86_IF_BIT) | (1 << V86_VM_BIT) | stack[2];
-        r->eflags =  (r->eflags & ~(1 << V86_IF_BIT) )  | ((1 << V86_IF_BIT) * (stack[2] & (1 << V86_IF_BIT)) != 0); //hmmmm
-        r->useresp = ((r->useresp & 0xffff) + 6) & 0xffff;
+        uart_print(COM1, "v86:iret\r\n");
+
+        if(task->pid >= 0){
+
+            r->eip = stack[0];
+            r->cs = stack[1];
+            r->eflags = (1 << V86_IF_BIT) | (1 << V86_VM_BIT) | stack[2];
+            r->eflags =  (r->eflags & ~(1 << V86_IF_BIT) )  | ((1 << V86_IF_BIT) * (stack[2] & (1 << V86_IF_BIT)) != 0); //hmmmm
+            r->useresp = ((r->useresp & 0xffff) + 6) & 0xffff;
+            break;
+        }
+
+        /*
+            uint32_t * recovery_info = current_process->kstack;
+            recovery_info[0] = (uint32_t)ebp;
+            recovery_info[1] = (uint32_t)ctx;
+            pcb_t * p_head = &recovery_info[2];
+            *p_head = *current_process;
+
+        */        
+        
+        u32 * pk = (u32 *)current_process->kstack;
+        
+        u32 * old_ebp = (u32 *)pk[0];
+        context_t * old_v86ctx = (context_t *)pk[1]; 
+        pcb_t * old_context = (pcb_t *)&pk[2]; 
+
+
+        fb_console_printf("[0]:%x [1]:%x [2]:%x\n", old_ebp, old_v86ctx, old_context);
+        old_v86ctx->eax = r->eax;
+        old_v86ctx->ebx = r->ebx;
+        old_v86ctx->ecx = r->ecx;
+        old_v86ctx->edx = r->edx;
+        old_v86ctx->esp = r->esp;
+        old_v86ctx->ebp = r->ebp;
+        old_v86ctx->esi = r->esi;
+        old_v86ctx->edi = r->edi;
+        old_v86ctx->eflags = r->eflags;
+        old_v86ctx->eip = r->eip;
+
+
+        vbe_info_block_t * t = r->edi;
+        fb_console_printf("eax: %x\n", r->eax);
+        fb_console_printf("edi: %x\n", r->edi);
+
+        fb_console_put("VBE SIGNATURE: ");
+        for(int i = 0; i < 4; ++i)
+            fb_console_putchar(t->VbeSignature[i]);    
+        fb_console_putchar('\n');
+
+
+
+        *current_process = *old_context;
+
+
+        current_process->regs.ebp = old_ebp[0];  
+        current_process->regs.esp = old_ebp[0];
+
+        current_process->regs.eip = old_ebp[1];
+
+        // current_process->regs.eflags &= ~(1ul << V86_VM_BIT);
+        // current_process->regs.cs = (1 * 8 ) | 0;
+        // current_process->regs.ds = (2 * 8 ) | 0;
+        // current_process->regs.es = (2 * 8 ) | 0;
+        // current_process->regs.fs = (2 * 8 ) | 0;
+        // current_process->regs.gs = (2 * 8 ) | 0;
+
+
+        current_process->state = TASK_LOADING;
+        // terminate_process(current_process);
+        context_switch_into_process(r, current_process);
+        schedule(r);
         break;
 
     case V86_CLI:
+        uart_print(COM1, "v86:cli\r\n");
         r->eflags &= ~(1 << V86_IF_BIT);
         r->eip += 1;
         break;
 
     case V86_STI:
+        uart_print(COM1, "v86:sti\r\n");
         r->eflags = (1 << V86_IF_BIT);
         r->eip += 1;
         break;
@@ -166,4 +291,83 @@ void v86_monitor(struct regs * r, pcb_t * task){
         uart_print(COM1, "**************************************\r\n");
         break;
     }
+}
+
+
+int v86_int(int number, context_t* ctx){ //?????? how nigga how??
+
+
+
+    //well ebp can be snatch from here and put inside the tss?
+    //ok turn k_thread into a v8086 process
+    save_current_context(current_process);
+    uint32_t* ebp;
+    asm volatile("mov %%ebp, %0": "r="(ebp) ::);
+    fb_console_printf(" ebp :%x ebp[0]:%x eip[1]:%x\n", ebp, ebp[0], ebp[1]);
+    
+
+    /*
+    since there's no priviliege switching TSS doesn't switch stacks in interrupts
+    we store some information into the k_stack structure and use it to return 
+    */
+
+    uint32_t * recovery_info = current_process->kstack;
+    recovery_info[0] = (uint32_t)ebp;
+    recovery_info[1] = (uint32_t)ctx;
+    pcb_t * p_head = &recovery_info[2];
+    *p_head = *current_process;
+
+    
+    
+    
+
+    
+
+    
+
+    //1:1 mapping the first 1MB for v86 task
+    map_virtaddr_d(current_process->page_dir, 0 , 0, PAGE_PRESENT | PAGE_USER_SUPERVISOR);
+    
+    for(u32 addr = 0x1000; addr < 0x100000; addr+= 0x1000){
+        if(addr == 0x8000 ){
+            continue;
+
+        }
+
+        map_virtaddr_d(current_process->page_dir, (void *)(addr) , (void *)(addr), PAGE_PRESENT | PAGE_USER_SUPERVISOR);
+    }
+
+    // for(int i = 1; i < 205; ++i){
+    //     if ( i == 8) continue;
+    //     map_virtaddr_d(current_process->page_dir, (void *)(i*0x1000) , (void *)(i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+    // }
+    
+
+    current_process->regs = *ctx;
+    current_process->regs.cs = 0;
+    current_process->regs.ds = 0;
+    current_process->regs.esp = 0xfffc;
+    current_process->regs.ebp = 0xfffc;
+    current_process->regs.eflags |= (1ul << V86_VM_BIT) | (1ul << V86_IF_BIT);
+    // current_process->regs.eflags |= 1ul << 8; //trap flag
+
+    // current_process->kstack = (uint8_t* )ebp;
+
+    current_process->regs.cs = 0;
+    current_process->regs.eip = 0x7c00;
+    
+    uint8_t * phead = 0x7c00;
+    phead[0] = 0xcd;
+    phead[1] = number;
+    
+
+    // u16 * ivt = 0;
+    // current_process->regs.eip = ivt[ number * 2];
+    // current_process->regs.cs = ivt[ number * 2 + 1];
+
+    current_process->state = TASK_LOADING;
+    while(1);
+
+
+    return 0;
 }

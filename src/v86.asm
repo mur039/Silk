@@ -2,48 +2,99 @@
 [org 0x7c00]
 [section .text]
 
+
+struc VesaInfoBlock				;	VesaInfoBlock_size = 512 bytes
+	.Signature		resb 4		;	must be 'VESA'
+	.Version		resw 1
+	.OEMNamePtr		resd 1
+	.Capabilities		resd 1
+
+	.VideoModesOffset	resw 1
+	.VideoModesSegment	resw 1
+
+	.CountOf64KBlocks	resw 1
+	.OEMSoftwareRevision	resw 1
+	.OEMVendorNamePtr	resd 1
+	.OEMProductNamePtr	resd 1
+	.OEMProductRevisionPtr	resd 1
+	.Reserved		resb 222
+	.OEMData		resb 256
+endstruc
+
+
+
+
 _start:
-    mov ah, 0 ;set video mode
-    mov al, 0xe;video mode 80*25 text mode
-    ;0xa000
+    push ds
+    pop es
+    mov di, VesaInfoBlockBuffer
 
+    mov ax, 0x4f00
     int 0x10
-
-    ;call memset16
-
+    cmp ax, 0x004f
+    
+    je .vbe_success
+    mov al, 1
+    mov di, _failed_vbe_str
     int 3
+
+.vbe_success:
+    mov al, 1
+    mov di, _success_vbe_str
+    int 3
+    
+    
+    mov di, VesaInfoBlockBuffer
+    mov al, 2
+    mov bx, 4
+    int 3
+
+    mov al, 3
+    mov bx, 512
+    int 3
+
+    mov cl, [VesaInfoBlockBuffer + VesaInfoBlock.VideoModesSegment]
+    mov es, cx 
+    mov di, [VesaInfoBlockBuffer + VesaInfoBlock.VideoModesOffset]
+    mov al, 3
+    mov bx, 2*4
+    int 3
+
+
+	mov bx, [VesaInfoBlockBuffer + VesaInfoBlock.VideoModesOffset]	;	get video modes list address
+
+;    push word [VesaInfoBlockBuffer + VesaInfoBlock.VideoModesSegment]
+;	pop es
+;	mov di, VesaModeInfoBlockBuffer
+
+	mov cx, [bx]							;	get first video mode number
+	cmp cx, 0xffff							;	vesa modes list empty
+
+
+
+
+    jmp exit
     jmp $
 
 
-;mov ah, 0 ;set video mode
-;mov al, 3;video mode 80*25 text mode
-;int 0x10
-;int 3
+exit:
+    mov al, 0
+    int 3
+
+_failed_vbe_str:
+    db "Failed to execute VBE command", 0  
+
+_success_vbe_str:
+    db "Succesfully execute VBE command", 0  
+
+_str:
+    db "Hello", 0  
 
 
-memset16:
-    ; Save registers that we will use
-    push ax
-    push bx
-    push di
-    push es
 
-    ; Set up segment and offset
-    mov eax, 0
-    mov es, ax  ; Load segment address from the stack (16-bit segment)
-    mov edi, 0xa0000    ; Load offset address from the stack (16-bit offset)
-    mov al, 0    ; Load the value to set into AL
-    mov cx, 640   ; Load the count of bytes to set into CX
+ALIGN(4)
 
-    ; Main loop
-fill_loop:
-    stosb            ; Store byte at ES:DI and increment DI
-    loop fill_loop   ; Repeat until CX is zero
-
-    ; Restore registers
-    pop es
-    pop di
-    pop bx
-    pop ax
-
-    ret
+	VesaInfoBlockBuffer: istruc VesaInfoBlock
+		at VesaInfoBlock.Signature,				db "VESA"
+		times 508 db 0
+	iend

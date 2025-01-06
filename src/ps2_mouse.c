@@ -1,10 +1,15 @@
 #include <ps2_mouse.h>
+#include <circular_buffer.h>
 
 void ps2_mouse_send_command(unsigned char command){
     ps2_send_command(PS2_WRITE_BYTE_SECOND_PORT_INPUT);
     ps2_send_data(command);
 }
 
+
+
+
+circular_buffer_t ps2_mouse_cb;
 
 void ps2_mouse_initialize(){
 
@@ -19,23 +24,32 @@ void ps2_mouse_initialize(){
     ps2_mouse_send_command(PS2_MOUSE_ENABLE_REPORTING);
     //mouse should return ack so read and discard it
     inb(PS2_DATA_PORT);
+    ps2_mouse_cb = circular_buffer_create(3 * 10);
 
 }
 
 
 
 volatile int is_available = 0;
+int lock = 0;
 ps2_mouse_generic_package_t ps2_mouse_irq_package;
 void ps2_mouse_handler(struct regs *r){
     (void)r;
-    
-    if(!is_available) is_available = 1;
-    u8 * phead = (u8*)&ps2_mouse_irq_package;
-    for(int i = 0; i < 3; ++i){
-       phead[i] = inb(PS2_DATA_PORT);
-    } 
+        ps2_mouse_generic_package_t in;
+        u8 * phead = (u8*)&in;
+        for(int i = 0; i < 3; ++i){
+            
+            phead[i] = inb(PS2_DATA_PORT);
+        }
 
-    // fb_console_printf("PS/2 mouse  (dx, dy): %x %x\n", pack.x_axis_move& 0xff, pack.y_axis_move & 0xff);
+
+    if(!lock){
+        ps2_mouse_irq_package = in;
+        lock = 1;
+    }
+    
+    
+    // fb_console_printf("PkcsS/2 mouse  (dx, dy, button): %x %x %x\r", ps2_mouse_irq_package.x_axis_move& 0xff, ps2_mouse_irq_package.y_axis_move & 0xff, ps2_mouse_irq_package.bits.raw);
     return;
 }
 
@@ -43,10 +57,20 @@ void ps2_mouse_handler(struct regs *r){
 int32_t ps2_mouse_read(){
     unsigned int max_tries = 1000;
     while(max_tries--){
-        if(is_available){
-            is_available = 0;
-            // fb_console_printf("PS/2 mouse  (dx, dy): %x %x\n", ps2_mouse_irq_package.x_axis_move& 0xff, ps2_mouse_irq_package.y_axis_move & 0xff);
+
+        if(lock){
+            
+            
+            // u8 * phead = (u8*)&ps2_mouse_irq_package;
+            // fb_console_printf("PS/2 mouse:\n");
+            // for(int i = 0; i < 3; ++i){
+            //     fb_console_printf("\t->%x\n", phead[i]);
+            // }
+            
+            
+            lock = 0;
             return (int32_t)ps2_mouse_irq_package.raw;
+            
         }
     }
 

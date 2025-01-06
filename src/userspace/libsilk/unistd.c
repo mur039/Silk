@@ -55,5 +55,38 @@ pid_t wait4(pid_t pid, int * wstatus, int options, struct rusage * rusage){
     return syscall(SYSCALL_WAIT4, pid, wstatus, options, rusage) ;
 }
 
+void *mmap(void *addr , size_t length, int prot, int flags, int fd, size_t offset){
+    return syscall(SYSCALL_MMAP, addr, length, prot, flags, fd, offset);
+    }
+
+int kill(pid_t pid, int sig){
+    return syscall(SYSCALL_KILL, pid, sig);
+}
+
+char* getcwd(char* buf, size_t size){
+    long result = syscall(SYSCALL_GETCWD, buf, size);
+    //err
+    if(result & 0x80000000){
+        return NULL;
+    }
+
+    return result;
+
+}
+
+int chdir(const char* path){
+
+    //do jack-shit
+    long result = syscall(SYSCALL_CHDIR, path);
+    return result;
+
+}
+
+int sysinfo(struct sysinfo *info){
+    return syscall(SYSCALL_SYSINFO, info);
+}
+
+
+
 
 

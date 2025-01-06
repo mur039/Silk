@@ -116,6 +116,21 @@ __attribute__((noreturn)) static inline void halt(){
     //somehow returns?
     for(;;);
 }
+
+
+static inline void idle(){
+    uart_print(COM1, "\r\nSystem Halted.\r\n");
+    enable_interrupts();    
+    asm volatile(
+        "hlt\n\t"
+    );
+    return;
+}
+
+extern void sys_thread(struct regs * r);
+
+static  void (*kprintf)(const char* fmt, ...) = NULL;
+
 #define GET_BIT(value, bit) ((value >> bit) & 1)
 
 static inline const char * find_next(const char * src, char c){

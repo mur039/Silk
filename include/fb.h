@@ -24,7 +24,7 @@ uint8_t framebuffer_write_wrapper(uint8_t * buffer, uint32_t offset, uint32_t le
 int framebuffer_raw_write(size_t start, void * src, size_t count);
 void init_fb_console(int cols, int rows);
 void fb_set_console_color(pixel_t fg, pixel_t bg);
-void fb_console_putchar(char c);
+void fb_console_putchar(unsigned short c);
 void fb_console_write(void * src, uint32_t size, uint32_t nmemb);
 void fb_console_put(char * s);
 void fb_console_printf(const char * fmt, ...);

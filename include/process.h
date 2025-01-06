@@ -4,12 +4,13 @@
 #include <stdint.h>
 #include <sys.h>
 #include <pmm.h>
+#include <vmm.h>
 #include <isr.h>
 #include <g_list.h>
 #include <timer.h>
 #include <fb.h>
 #include <filesystems/tar.h>
-#define MAX_OPEN_FILES  8
+#define MAX_OPEN_FILES  16
 
 
 #define TASK_RUNNING            0
@@ -64,7 +65,11 @@ typedef struct {
     listnode_t* parent;
     list_t* childs;
 
+    char * cwd;
     list_t * mem_mapping;
+    int recv_signals;
+    u8 * kstack;
+
 }pcb_t;
 
 
@@ -82,6 +87,15 @@ void print_processes();
 void print_current_process();
 
 pcb_t * terminate_process(pcb_t * p);
+pcb_t * process_get_by_pid(pid_t pid);
+pcb_t * process_get_runnable_process();
+pcb_t * load_process(pcb_t * proc);
+
+void list_vmem_mapping(pcb_t * process);
+
+pcb_t * create_kernel_process(void * stack_base, void* esp, void * eip, void* arg);
+void save_current_context(pcb_t * proc);
+
 
 
 

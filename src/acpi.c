@@ -44,6 +44,8 @@ int doSDTChecksum(ACPISDTHeader_t *tableHeader){
     return sum == 0;
 }
 
+
+
 void *find_sdt_by_signature(void *RootSDT, const char * signature){
     RSDT_t *rsdt = (RSDT_t *) RootSDT;
     int entries = (rsdt->h.Length - sizeof(rsdt->h)) / 4;

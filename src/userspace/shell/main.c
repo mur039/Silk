@@ -4,13 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-
-int fileno_stdout = 0;
-int fileno_stderr = 0;
-int fileno_stdin = 0;
-
-
-
+#include <signals.h>
 
 struct dirent {
     uint32_t d_ino;
@@ -42,9 +36,6 @@ typedef enum{
 
 } file_flags_t;
 
-extern int open(const char * s, int mode);
-extern size_t write(int fd, const void *buf, size_t count);
-
 
 typedef enum{
     SEEK_SET = 0,
@@ -54,27 +45,18 @@ typedef enum{
 } whence_t;
 
 
-// typedef struct
-// {
-//     unsigned char blue;
-//     unsigned char green;
-//     unsigned char red;
-//     unsigned char alpha;
-// } pixel_t;
-
-
 int puts(const char * dst){
-    write( fileno_stdout, dst, strlen(dst));
+    write( FILENO_STDOUT, dst, strlen(dst));
     return 0;
 }
 
 int putchar(int c){
-    return write(fileno_stdout, &c, 1);
+    return write(FILENO_STDOUT, &c, 1);
 }
 
 int getchar(){
     uint8_t ch = 0;
-    int ret = read(fileno_stdin, &ch, 1);
+    int ret = read(FILENO_STDIN, &ch, 1);
     return ret ?  ch : -1;
 }
 
@@ -101,6 +83,9 @@ int is_word_in_n(char * word, size_t size, const char ** list){
 }
 
 
+int child_pid = -1;
+int child_write_fd = -1;
+int shell_state = 0;
 const char * title_artwork =
                                 "                   _                    \n"
                                 " _____            | |       _       _ _ \n"
@@ -114,9 +99,24 @@ const char * title_artwork =
 int command_buffer_index = 0;
 char command_buffer[COMMAND_BUFFER_MAXSIZE];
 
+void colour_test(){
+    //for now only 8 colours
+    for(int count = 0; count < 2; ++count){
+
+        for(int i = 0; i < 8; ++i){
+            printf("\x1b[1;%um", 30 + i);
+            putchar(219);putchar(219);putchar(219);
+        }
+        putchar('\n');
+    }
+
+    printf("\x1b[0m\n");
+
+}
+
 
 int shouldRun = 1;
-
+char* prompt_buf = NULL;
 enum command_ids {
     EXIT = 0,
     ECHO,
@@ -124,18 +124,24 @@ enum command_ids {
     HELP,
     LS,
     CLEAR,
-    SET
+    KILL,
+    CD,
+    PWD,
+    USAGE
    
 };
 
 const char *commands[] = {
-    [EXIT] = "exit",
-    [ECHO] = "echo",
-    [EXEC] = "exec",
-    [HELP] = "help",
-    [LS] = "ls",
+     [EXIT] = "exit",
+     [ECHO] = "echo",
+     [EXEC] = "exec",
+     [HELP] = "help",
+       [LS] = "ls",
     [CLEAR] = "clear",
-    [SET] = "set",    
+      [KILL] = "kill",    
+       [CD] = "cd",    
+      [PWD] = "pwd",    
+      [USAGE] = "usage",    
 
 
     
@@ -144,26 +150,12 @@ const char *commands[] = {
 };
 
 
+
+
 typedef struct{
     char * src;
     size_t size;
 } string_t;
-
-//i have some internal variables that is settable by set VARIABLE_NAME VALUE
-
-enum internal_var_enum{
-    INTERNAL_VAR_DEBUG = 0
-};
-
-const char *internal_var_str[] = {
-    [INTERNAL_VAR_DEBUG] = "debug",
-    NULL
-};
-
-
-int internal_variables[] = {
-    [INTERNAL_VAR_DEBUG] = 0
-};
 
 
 int is_delimeter(const char c){
@@ -221,7 +213,14 @@ int execute_command(){
     {
         
     case -1: //maybe i should execute a program here
-        write(fileno_stdout, words[0].src, words[0].size);
+        //yes let's try
+        //reduce, reuse
+        //see if we entered /bin/program
+
+
+
+        
+        write(FILENO_STDOUT, words[0].src, words[0].size);
         puts(" : command not found"); 
         break;
 
@@ -248,18 +247,24 @@ int execute_command(){
         break;
 
     case LS:
-        if(words[1].src == NULL){
-            puts("Expected a path\n");
-            return -1;
-        }
+        ;
 
         char path_[64];
-        for (unsigned int i = 0; i < words[1].size; ){
-            path_[i] = words[1].src[i];
-            i++;
-            path_[i] = '\0';
 
+        if(words[1].src == NULL){ // just ls so list current directory
+            getcwd(path_, 64);
         }
+        else{
+            
+            for (unsigned int i = 0; i < words[1].size; ){
+                path_[i] = words[1].src[i];
+                i++;
+                path_[i] = '\0';
+
+            }
+        }
+
+
         int dir_fd = open(path_, O_RDONLY);
         if(dir_fd == -1){
             puts("No such directory\n");
@@ -282,8 +287,34 @@ int execute_command(){
             
             off++;
             
+    
+    
+    
+    
+    
+    
+    
+    // printf( "%c    %s\n", dir.d_type == DIRECTORY ? 'd' : '-', &dir.d_name[off] );
+    
+            switch (dir.d_type){
+                case REGULAR_FILE:
+                case LINK_FILE:
+                case CHARACTER_SPECIAL_FILE:
+                case BLOCK_SPECIAL_FILE:
+                case FIFO_SPECIAL_FILE:
+                    printf( "<--->\t%s\n", &dir.d_name[off] );
+                    break;
+
+                case DIRECTORY:
+                    printf( "<dir>\t\x1b[1;33m%s\x1b[0m\n", &dir.d_name[off] );
+                    break;
+                    
+
+                default:
+                break;
+            }
+
             
-            printf( "%c    %s\n", dir.d_type == DIRECTORY ? 'd' : '-', &dir.d_name[off] );
             
         }
 
@@ -325,21 +356,20 @@ int execute_command(){
 
         if(pid != 0){
             //parent doesn't need to read from pipe so closer fd[0]
+            // close(pipe_fd[0]);
+        
+            // wait4(-1, NULL, 0, NULL); //wait for the child
+            shell_state = 1;
+            child_write_fd = pipe_fd[1];
+            child_pid = pid;
+            //when child exits, we will close some things
             
-            puts("parent: i'm waiting");
-            // char command[] = "echo selam\n";
-            // while(1){
             
-            //     for(int i = 0; command[i] != '\0'; ++i){
-            //         write(pipe_fd[1], &command[i], 1);
-            //     }   
-            //     for(int i = 0; i < 0xfffff; ++i);
-            // }
 
         }
         else{ //imma child bitch
             ////child doesn't need to write to pipe so closer fd[1]
-            
+            // close(pipe_fd[1]);
             dup2( pipe_fd[0], FILENO_STDIN);
 
             uint32_t _table[3];
@@ -364,6 +394,7 @@ int execute_command(){
 
     case HELP: //help
         puts( title_artwork );
+        colour_test();
         puts("Muro's shell V1.0\n");
         puts("Built-in commands:\n");
         for(int i = 0; commands[i] != NULL; ++i){
@@ -375,65 +406,123 @@ int execute_command(){
    
     case CLEAR: //clear
         puts("\x1b[H"); //set cursor to (0,0)
-        puts("\x1b[J"); //clear from cursor to end of the screen
+        puts("\x1b[0J"); //clear from cursor to end of the screen
         break;
 
 
     // set DEBUG 1
-    case SET:
+    case KILL:
         
         if(words[1].src == NULL){
-            puts("Expected variable_name:");
+            puts("Expected pid");
             return -1;
         }
         
-        puts(words[1].src);
+        {
 
-            // int _index = is_word_in_n(words[1].src, words[1].size, internal_var_str);
-            // if(index == -1){ 
-            //     puts("Invalid interval variable\n");
-            //     return -1;
-            // }
 
-            // puts(internal_var_str[index]);
+        char * tmp = malloc(words[1].size + 1);
+        memcpy(tmp, words[1].src, words[1].size);
+        unsigned int kpid = atoi(tmp);
+        kill(kpid, SIGKILL);
+        free(tmp);
+        }
+
+    
+        break;
+
+    case CD:
         
+        if(words[1].src == NULL){ // "cd" defaults to "/"
+            chdir("/");
+            sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", "/");
+            break;
+        }
 
+        char* tmp = malloc(words[1].size + 1);
+        memcpy(tmp, words[1].src, words[1].size + 1);
+        tmp[words[1].size] = '\0';
 
+        chdir(tmp);
+        sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", tmp);
+        free(tmp);
+        break;
+
+    case PWD:
+        ;
+        char* buf = malloc(64);
+        getcwd(buf, 64);
+        puts(buf);
+        free(buf);
+        break;
+
+    case USAGE:
+        ;
+        struct sysinfo info;
+        sysinfo(&info);
+
+        printf(
+            "Used ram: %u%s\n"
+            "Free ram:  %u%s\n"
+            "Total ram: %u%s\n"
+            "Number of processes: %u\n"
+            ,
+            (info.totalram - info.freeram)/1024 > 999 ? (info.totalram - info.freeram)/(1024 * 1024) : (info.totalram - info.freeram)/1024,    (info.totalram - info.freeram)/1024 > 999 ? "MB" : "KB",
+            
+             info.freeram/1024 > 999 ? info.freeram/(1024 * 1024) : info.freeram/1024,    info.freeram/1024 > 999 ? "MB" : "KB",
+             info.totalram/1024 > 999 ? info.totalram/(1024 * 1024) : info.totalram/1024,  info.totalram/1024 > 999 ? "MB" : "KB",
+            
+            info.procs
+            );
         break;
 
     default:
         break;
+
+
     }
     
    return 0;
 }
 
 
-int main(int argc, char **argv){
-   
-    fileno_stdout = 0;
-    fileno_stdin  = 1;
+int pass_key_to_child(c){
+    switch(c){
+        case 3: //ctrl + c
+            
+            kill(child_pid, SIGKILL);
+            shell_state = 0;
+            child_pid = -1;
+            break;
 
-    int c = 0;
-    shouldRun = 1;
-    
+        case 26: //ctrl+z
+            kill(child_pid, SIGSTOP);
+            shell_state = 0;
+            break;
+            
+        default : 
+            ;
+            if( write(child_write_fd, &c, 1) == -1){
+                puts("child somehow exited?\n");
+                shell_state = 0;
+                child_pid = 0;
 
-    puts(title_artwork);
-    puts("> ");
-    
-    
-    while(shouldRun){
-        
-       c = getchar();
-        if(c != -1){             //i succesfully read something
-        
-            switch (c)
-            {
+            }
+            break;
+    }
+}
+
+
+
+
+int process_key(int c){
+
+    // printf("received character : %u:%x:%c\n", c, c, c);
+     switch (c) {
             case 3: //^C //perhaps lets change it
                 memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
                 command_buffer_index = 0;
-                puts("\n> ");
-                continue;
+                printf("\n%s ", prompt_buf);
                 break;
 
             case '\b': //remove character
@@ -460,24 +549,73 @@ int main(int argc, char **argv){
 
 
                 command_buffer_index = 0;
-                puts("\n> ");
+                printf("\n%s ", prompt_buf);
                 break;
 
             // case 61: //left arrow    these send typically 2 byte currently one and is also a ascii character kbd driver issur
             // case 62: //right arrow   these send typically 2 byte currently one and is also a ascii character kbd driver issur
-            case 60: // up arrow key
-            case 63: // left arrow key
-                break;
+              
 
+            case 0xe0: //up
+                putchar(219);
+                break;
+            
+            // case 0xe3: //down
+            //     puts("\x1b[1B");
+            //     break;
 
             default: //add character
                 command_buffer[command_buffer_index] = c;
                 command_buffer_index += 1;
-                putchar(c);  //echo back to the user        
+                putchar(c);  //echo back to the user  
+                // printf("%c : %x\n", c, c);      
                 break;
+            }
+
+}
+
+
+
+int main(int argc, char **argv){
+   
+    int c = 0;
+    shouldRun = 1;
+
+    malloc_init();
+    char cwd_buf[32];
+    //discard the err
+    getcwd(cwd_buf, 32);
+
+
+    puts("\x1b[H"); //set cursor to (0,0)
+    puts("\x1b[0J"); //clear from cursor to end of the screen
+
+    prompt_buf = malloc(32);
+    sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", cwd_buf);
+    // printf("current working directory: %s\n", cwd_buf);
+    
+    puts(title_artwork);
+    colour_test();  
+    
+    printf("%s ", prompt_buf);
+
+    memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
+    while(shouldRun){
+        
+       c = getchar();
+        if(c != -1){             //i succesfully read something
+
+            if(!shell_state){
+
+                process_key(c);
+            }
+            else{
+
+                pass_key_to_child(c);
             }
             
         }
+
     }
     
     return 0;

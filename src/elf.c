@@ -93,9 +93,9 @@ void * elf_load(pcb_t * process){
     uint8_t * program_entry;
 
     program_entry = (void*)elf_get_entry_address(&init);
-    uart_print(COM1, "init's entry point : %x\r\n",  program_entry );
+    uart_print(COM1, "\"%s\" entry point : %x\r\n", process->filename,  program_entry );
     if(program_entry == NULL){
-        uart_print(COM1, "/bin/init is not a valid ELF executable\r\n");
+        uart_print(COM1, "\"%s\" is not a valid ELF executable\r\n", process->filename);
         process->state = TASK_ZOMBIE;
         return NULL;
     }

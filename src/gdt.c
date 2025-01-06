@@ -27,11 +27,11 @@ void gdt_install(void){
     *  this entry's access byte says it's a Data Segment */
     gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);
 
-    gdt_set_gate(3, 0x0, 0xFFFFFFFF, 0xFA ,0xCF); //user mode code
-    gdt_set_gate(4, 0x0, 0xFFFFFFFF, 0xF2 ,0xCF); //user mode data
+    gdt_set_gate(3, 0x0, 0xc0000000, 0xFA ,0xCF); //user mode code
+    gdt_set_gate(4, 0x0, 0xc0000000, 0xF2 ,0xCF); //user mode data
     gdt_flush();
     /* Flush out the old GDT and install the new changes! */
-    write_tss(&gdt[5]);
+    write_tss(&gdt[5], &tss_entry, sizeof(tss_entry_t));
     flush_tss();
 }
 
@@ -52,10 +52,10 @@ void gdt_set_gate(int num, unsigned long base, unsigned long limit, unsigned cha
 
 }
 
-void write_tss(struct gdt_entry *g) {
+void write_tss(struct gdt_entry *g, tss_entry_t * tss, uint32_t limit){
 	// Compute the base and limit of the TSS for use in the GDT entry.
-	uint32_t base = (uint32_t) &tss_entry;
-	uint32_t limit = sizeof(tss_entry);
+	uint32_t base = (uint32_t) tss;
+	// uint32_t limit = sizeof(tss_entry_t);
  
 
         typedef struct  {
@@ -99,21 +99,21 @@ void write_tss(struct gdt_entry *g) {
 
 
 	// Ensure the TSS is initially zero'd.
-	memset(&tss_entry, 0, sizeof tss_entry);
+	memset(tss, 0, sizeof(tss_entry) );
  
-	tss_entry.ss0  = (2 * 8) | 0 ;  // Set the kernel stack segment.
-	tss_entry.esp0 = 0; // Set the kernel stack pointer.
-    tss_entry.cs = 0x0b;
-    tss_entry.ds = 0x13;
-    tss_entry.es = 0x13;
-    tss_entry.fs = 0x13;
-    tss_entry.gs = 0x13;
-    tss_entry.ss = 0x13;
+	tss->ss0  = (2 * 8) | 0 ;  // Set the kernel stack segment.
+	tss->esp0 = 0; // Set the kernel stack pointer.
+    tss->cs = 0x0b;
+    tss->ds = 0x13;
+    tss->es = 0x13;
+    tss->fs = 0x13;
+    tss->gs = 0x13;
+    tss->ss = 0x13;
     
     
 	//note that CS is loaded from the IDT entry and should be the regular kernel code segment
 }
  
-void set_kernel_stack(uint32_t stack) { // Used when an interrupt occurs
-	tss_entry.esp0 = stack;
+void set_kernel_stack(uint32_t stack, tss_entry_t * tss) { // Used when an interrupt occurs
+	tss->esp0 = stack;
 }

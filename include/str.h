@@ -17,4 +17,21 @@ size_t strlen(const char * s);
 int strcmp(const char *str1, const char * str2);
 int strncmp(const char *str1, const char * str2, int n);
 int is_char_in_str(const char c, const char * str);
+char * strcpy(char* dst, const char* src);
+void kxxd(const char * src, size_t len);
+
+#define IS_ALPHABETICAL(character) \
+            (character >= 'a' &&  character <= 'z') \
+            || (character >= 'A' &&  character <= 'Z')
+
+#define IS_NUMBER(character) \
+            (character >= '0' &&  character <= '9') \
+
+
+#define IS_ALPHANUMERIC(character) \
+            IS_NUMBER(character) || IS_ALPHABETICAL(character)
+
+int atoi (const char * str);
+
+
 #endif

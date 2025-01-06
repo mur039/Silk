@@ -14,3 +14,7 @@ _start:
     call main
     push eax ;return
     call exit
+
+_wait:
+    hlt
+    jmp _wait

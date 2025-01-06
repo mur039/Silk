@@ -9,7 +9,10 @@ listnode_t * list_insert_front(list_t * list, void * val){
 		list->tail = t;
     }
     else{
-	    list->head->prev = t;
+        //check if its circular it shouldn't but check it anyway
+        if(list->head->prev)
+	        list->head->prev = t;
+        
         t->next = list->head;
 	    t->val = val;
 	    list->head = t;
@@ -21,15 +24,17 @@ listnode_t * list_insert_front(list_t * list, void * val){
 	return t;
 }
 
+#include <process.h>
 listnode_t * list_insert_end(list_t * list, void * val){
     listnode_t * t = kcalloc(sizeof(listnode_t), 1);
     t->val = val;
 
     listnode_t * head = list->head;
-    if(head == NULL){
+    if(head == NULL){ //empty list
         list->head = t;
         t->next = NULL;
-        t->prev = NULL;    
+        t->prev = NULL;
+        list->tail;
         // t->prev = list->head;    
     }
     else{
@@ -39,6 +44,10 @@ listnode_t * list_insert_end(list_t * list, void * val){
         t->prev = head;
     }
     list->size += 1;
+
+
+
+
     return t;
 }
 
@@ -64,22 +73,6 @@ listnode_t * list_insert_start(list_t * list, void * val){
 }
 
 listnode_t * list_remove(list_t * list, listnode_t * node){
-
-    //check  if node is the head
-    // if(node == list->head){
-    //     list->head = node->next;
-    // }
-
-    // if(node->prev && node->next){ //if both forward and backward nodes exist
-    //     node->prev->next = node->next;
-    //     node->next->prev = node->prev;
-    // }
-    // else if(node->prev){
-    //     node->prev->next = NULL;
-    // }
-    // else if(node->next){
-    //     node->next->prev = NULL;
-    // }
 
      if(node->prev && node->next){ //if forward and backward exists
         node->prev->next = node->next;

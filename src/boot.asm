@@ -22,6 +22,9 @@ mboot:
     dd 600;height
     dd 4;depth  
 
+    ;1280x800
+    ;
+
 
 extern lkmain
 global _start
@@ -88,10 +91,10 @@ _changeSP:
     mov ecx, [esp + 8] ;next func
     mov edx, [esp + 12];argument to the next func
 
-;    mov esp, ebx
-;   mov ebp, esp
-;    push ebx
-;    push eax
+   mov esp, ebx
+   mov ebp, esp
+;   push ebx
+;   push eax
 
     push edx
     call ecx

@@ -23,7 +23,8 @@ void circular_buffer_destroy(circular_buffer_t * cb);
 int circular_buffer_getc(circular_buffer_t * cb);
 int circular_buffer_putc(circular_buffer_t * cb, uint8_t val);
 int circular_buffer_write(circular_buffer_t * bf, void * src, uint32_t size, uint32_t nmemb);
-
+int circular_buffer_avaliable(const circular_buffer_t* cb);
+int circular_buffer_read(circular_buffer_t * bf, void * dbuf, uint32_t size, uint32_t nmemb);
 
 
 

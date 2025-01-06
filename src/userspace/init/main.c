@@ -39,7 +39,8 @@ int main(int _argc, char * _argv[]){
     }
 
 
-    int fd_kbd = open("/dev/kbd", O_RDONLY);
+    // int fd_kbd = open("/dev/kbd", O_RDONLY);
+    int fd_kbd = open("/dev/console", O_RDONLY);
     if(fd_kbd == -1){
         return 1;
     }
@@ -54,7 +55,6 @@ int main(int _argc, char * _argv[]){
     fileno_stderr = fd_com1;
 
 
-
     if(getpid() != 0){
         puts("Must be runned as PID, 0\n");
         return 1;
@@ -65,6 +65,7 @@ int main(int _argc, char * _argv[]){
     puts("Let's try to fork and execute init process...\n");
     
     int pid = fork();
+    // while(1);
     
     if(pid == -1){
         puts("Failed to fork, exitting...\n");
@@ -95,15 +96,9 @@ int main(int _argc, char * _argv[]){
     }
 
 
-
-    // wait4(-1, NULL, 0, NULL);
-    puts("i shouldn't see this before the child\n");
-    while(1);
-    
-    
-    
+    wait4(-1, NULL, 0, NULL);
     //if we return that means child has exited thus means no other process left so it would terminate
-    printf("Child exited\n");
+    printf("child exited\n");
 
     return 0;
 }

@@ -103,10 +103,15 @@ void dump_registers(struct regs *r){
          "edx : %x | edi : %x | esi : %x\r\n"
          "eip : %x |uesp : %x | ebp : %x\r\n"
          "esp : %x  \r\n"
+         " cs : %x |  ds : %x |  es : %x\r\n"
+         " fs : %x |  gs : %x \r\n"
+
          ,r->eax, r->ebx, r->ecx
          ,r->edx, r->edi, r->esi
          ,r->eip, r->useresp, r->ebp,
-         r->esp
+         r->esp,
+         r->cs, r->ds, r->es,
+         r->fs, r->gs
          );
  }
 
@@ -115,14 +120,26 @@ struct stackframe {
   u32 eip;
 };      
 
+#include <process.h>
 void print_stack_trace(int max_frame, struct regs *r){
     struct stackframe *stk;
-    asm ("movl %%ebp,%0" : "=r"(stk) ::);
-    // stk = (void*)r->ebp;
-    uart_print(COM1, "Stack Trace:\r\n");
+    
+    uart_print(COM1, "Stack Trace:\r\n");    
+    if(r->cs & 3){ //user mode
+        uart_print(COM1, "User mode stack Trace:\r\n");    
+    } 
+    else{ //kernel
+        uart_print(COM1, "Kernel mode stack trace:\r\n");    
+    }
+    
+    stk = (struct stackframe* )r->ebp;
 
     for( int frame = 0; stk && (frame < max_frame); ++frame){
         // Unwind to previous stack frame
+        if(!is_virtaddr_mapped_d( current_process->page_dir, stk)){
+            uart_print(COM1, "ebp:%x not mapped\r\n", stk);
+            break;
+        }
         uart_print(COM1, "%u ->%x\r\n",frame, stk->eip );
         stk = stk->ebp;
     }
@@ -194,7 +211,9 @@ void fault_handler(struct regs *r)
     {
 	dump_registers(r);
     uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
-    print_stack_trace(10, r);
+    if(!(r->eflags & ( 1 << V86_VM_BIT)) ){ //if not a v86 task
+        print_stack_trace(10, r);
+    }
 
     
 
@@ -203,20 +222,31 @@ void fault_handler(struct regs *r)
     // print_current_process();
        switch (r->int_no)
        {
+        case 0: //div/0
+        case 6: //invalid opcode
+            if( r->cs & 3) //happened in user mode
+            {
+                print_current_process();
+                // list_vmem_mapping(current_process);
+                terminate_process(current_process);
+                schedule(r);
+                return;
+            }
+            break;
+
        case 13: //general fault
             if(r->eflags & ( 1 << V86_VM_BIT) ){ //if v86 task
                 v86_monitor(r, current_process);
                 break;
             }
 
-            message_length = sprintf(buffer, "%x %s\r\n", r->int_no, exception_messages[r->int_no]);
-            uart_write(0x3f8, buffer, 1, message_length);
+            
+            uart_print(0x3f8, "%x %s\r\n", r->int_no, exception_messages[r->int_no]);
             uart_print(0x3f8, "\r\nSystem Halted.");
             halt(); 
             break;
 
        case 14: //Page Fault
-            print_current_process();
             uart_print(0x3f8, "%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
 
             if(!(r->err_code & 1)){ //page not present, cr2 gives linear address
@@ -235,14 +265,10 @@ void fault_handler(struct regs *r)
             uart_print(0x3f8, "Pagefault due to %s\r\n", (r->err_code & 16) ? "instruction access": "data access");
 
                 if(r->err_code & 4){ //fault happened in usermode
-                    paging_directory_list(current_process->page_dir);   
+                    print_current_process();
+                    // paging_directory_list(current_process->page_dir);   
 
-                    listnode_t * node = current_process->mem_mapping->head;
-                    for(int i = 0; i < current_process->mem_mapping->size ; ++i){
-                        vmem_map_t * vm = node->val;
-                        uart_print(COM1, "%x -> %x\r\n", vm->vmem, vm->phymem);
-                        node = node->next;
-                    }
+                    // list_vmem_mapping(current_process);
             
                     terminate_process(current_process);
                     schedule(r);
@@ -259,8 +285,8 @@ void fault_handler(struct regs *r)
             ;
             message_length =  sprintf(buffer, "%s\r\n", exception_messages[r->int_no]);
             uart_write(0x3f8, buffer, 1, message_length);
-            // puts(exception_messages[r->int_no]);
-            // puts(" Exception. System Halted!\n");
+            
+            
             break;
        }
         

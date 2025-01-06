@@ -33,9 +33,9 @@ disable_interrupts:
 	ret
 
 
-extern ie_func
 
-;first arg in ecx, second is in edx"
+extern schedule
+
 global jump_usermode
 jump_usermode:
 	mov ax, (4 * 8) | 3 ; ring 3 data with bottom 2 bits set for ring 3
@@ -46,11 +46,57 @@ jump_usermode:
  
 	; set up the stack frame iret expects
 	mov eax, esp
-	push (4 * 8) | 3 ; data selector
+	push (4 * 8) | 3 ; data selector, stack segment also
 	push edx ; user stack
 	pushf ; eflags
 	push (3 * 8) | 3 ; code selector (ring 3 code with bottom 2 bits set for ring 3)
 	push ecx  ; instruction address to return to
+
+
+	;yes i will set up typical interrupt frame for the schedular and directly jump 
+	; to the next ready process instead of intermediate empty code block
+	;set up what interrupt handlers like timer which calls the schedular expects
+	push 0 ;err_code
+	push 0 ; supposed interrupt number
+
+	pusha
+    push ds
+    push es
+    push fs
+    push gs
+    
+    mov eax, esp   ; Push us the stack
+    push eax
+    mov eax, schedule
+    call eax
+	pop eax
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    add esp, 8     ; Cleans up the pushed error code and pushed ISR number
+	
+
+
 	iret
-user_func:
-	ret
+
+
+
+;Push(EAX);
+;Push(ECX);
+;Push(EDX);
+;Push(EBX);
+;Push(Temp);
+;Push(EBP);
+;Push(ESI);
+;Push(EDI);
+;
+global promote_to_kproc
+promote_to_kproc:
+	
+
+    
+
+	
+    
