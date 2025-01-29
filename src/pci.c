@@ -1,4 +1,5 @@
 #include <pci.h>
+#include <uart.h>
 
 unsigned int numberofdevices = 0;
 list_t  pci_devices = {.head = 0, .tail = 0, .size = 0};

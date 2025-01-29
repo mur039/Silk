@@ -4,7 +4,7 @@
 #include <multiboot.h>
 #include <stdint.h>
 #include <sys.h>
-
+#include <uart.h>
 //psf has two different versions.
 
 

@@ -20,14 +20,11 @@ uint32_t * current_page_dir;
 
 
 
-
-
-
 void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 
     memstart = (void *)mem_start;
     bitmap_size = mem_size / (8 * 4 * 1024); //total blocks as bitss
-    
+    bitmap_start = kernel_heap;
     kernel_heap += bitmap_size;
     kernel_heap = align2_4kB(kernel_heap);
     
@@ -38,13 +35,13 @@ void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
     // kdir_entry = get_physaddr(kdir_entry);
     current_page_dir = kdir_entry;
  
-
 }
 
 
 
-block_t * mem_list = NULL;	  // All the memory blocks that are
 
+block_t * kmalloc_mem_list = NULL;	  // All the memory blocks that are
+block_t * malloc_last_block = NULL;
 
 void kmalloc_init(int npages){
 
@@ -53,7 +50,9 @@ void kmalloc_init(int npages){
         halt();
     }
     
-    mem_list = (void *)(kernel_heap);
+    kernel_heap = align2_4kB(kernel_heap);
+    kmalloc_mem_list = (void *)(kernel_heap);
+    malloc_last_block = kmalloc_mem_list;
 
     for(int i = 0; i < npages ; ++i){
         
@@ -67,86 +66,63 @@ void kmalloc_init(int npages){
         kernel_heap += 0x1000;
     }
 
-    // unmap_virtaddr(kernel_heap);
-    // map_virtaddr(
-    //     kernel_heap, 
-    //     allocate_physical_page(), 
-    //     PAGE_PRESENT | PAGE_READ_WRITE
-    // );
-    // kernel_heap += 0x1000;
-
     //lets say 2 pages
-    mem_list->is_free = 1;
-    mem_list->size = 4096 * npages;
-    mem_list->size -= sizeof(block_t);
-    mem_list->prev = NULL;
-    mem_list->next = NULL;
+    kmalloc_mem_list->is_free = 1;
+    kmalloc_mem_list->size = 4096 * npages;
+    kmalloc_mem_list->size -= sizeof(block_t);
+    kmalloc_mem_list->prev = NULL;
+    kmalloc_mem_list->next = NULL;
     
     return;
 }
 
 void * kmalloc(unsigned int size){
-
-    // #if DEBUG
     // alloc_print_list();
-    // #endif
+    
+    block_t* head;
+    for(head = kmalloc_mem_list ;  head  ; head = head->next){
 
-    for(block_t * head = mem_list; head != NULL; head = head->next){
+        if(head->is_free && (size + sizeof(block_t)) <= head->size  ){
+            uint8_t* placement = &head[1];
+            placement += size;
+
+            block_t* next_free = placement;
+            next_free->is_free = 1;
+            next_free->size = head->size - size - sizeof(block_t);
+            next_free->prev = head;
+            next_free->next = head->next;
+
+            if(!next_free->next){ //possible the last item
+                malloc_last_block = next_free;
+            }
+
+            head->is_free = 0;
+            head->next = next_free;
+            head->size = size;
         
-        if(head->is_free && size < head->size ){
-
-
-           block_t  temp;
-           block_t  * next;
-           
-           temp = *head;
-
-            next = head;
-            next->size = size;
-            next->is_free = 0;
-            next->next = (block_t *)((uint8_t *)(next) + sizeof(block_t) + size);
-
-            
-            next->next->prev = next;
-            next = next->next;
-            next->size = temp.size - (size + sizeof(block_t));
-            next->next = NULL;
-            next->is_free = 1;
-            
-
-
-            return &next->prev[1];
-
-        }
-
-        if(head->next == NULL){ //need more memory jessy
-            block_t * new = kpalloc(1);
-            new->is_free = 1;
-            new->size = 4096 - sizeof(block_t);
-            new->next = NULL;
-            new->prev = head;
-            head->next = new;
-
-            new->is_free = 0;
-            new->size = size;
-            new->next = ((uint8_t *)&new[1]) + size;
-
-            new->next->is_free = 1;
-            new->next->size = 4096 - 3*(sizeof(block_t)) - size ;
-            new->next->prev = new;
-            new->next->next = NULL;
-            
-            return new;
-
-
+            return &head[1];
         }
     }
-    pmm_print_usage();
-    halt();
-    //maybe dynamically allocate another page?
+    //maybe allocate page and put it at the end?
     
-    return NULL;
+    error("out of memory");
+    uart_print(COM1, "tried to allocate %u, allocating a page\r\n", size);
+    
+    block_t* newpage = kpalloc(16);
+    
+    newpage->size = 16*0x1000 - sizeof(block_t);
+    newpage->next = NULL;
+    newpage->prev = malloc_last_block;
+    newpage->is_free = 1;
+
+    malloc_last_block->next = newpage;
+
+    alloc_print_list();
+
+    return kmalloc(size);
 };
+
+
 
 void * krealloc( void *ptr, size_t size){
     
@@ -164,7 +140,7 @@ void * krealloc( void *ptr, size_t size){
     return retval;
 }
 
-void * kcalloc(u32 nmemb, u32 size){
+void * kcalloc(uint32_t nmemb, uint32_t size){
     void * retval;
     retval = kmalloc(nmemb * size);
     if(retval)
@@ -219,37 +195,61 @@ void kpfree(void * address){
 void alloc_print_list(){
     uart_print(COM1, "*alloc list\r\n");
     int i = 0;
-    for(block_t * head = mem_list; /*head->next != NULL &&*/ head != NULL; head = head->next){
+    for(block_t * head = kmalloc_mem_list; /*head->next != NULL &&*/ head != NULL; head = head->next){
         
-        uart_print(COM1, "\t%u : size->%x, isFree->%x\r\n", i, head->size, head->is_free);
+        uart_print(COM1, "\t->%u : size->%x, isFree->%x\r\n", i, head->size, head->is_free);
         i++;
     }
 
 }
 
 void kfree(void * ptr){
-    // uart_print(COM1, "KFREE TODO\r\n");
-    block_t * head = (block_t *)ptr;
-    head -= 1;
+
+    if(!ptr){
+        uart_print(COM1, "kfree: ptr is NULL\r\n");
+        asm volatile("hlt");
+    }
+
+    block_t * head = ptr;
+    head -= 1;  
+
+
+    // uart_print(COM1, "KFREE: ptr:%x %x\r\n", ptr, head);
+    // uart_print(COM1, "%u %u %x %x\r\n", head->is_free, head->size, head->prev, head->next);
+    
+    
     head->is_free = 1;
+    block_t* prev = head->prev;
+    block_t* next = head->next;
 
 
-    //merge to other free blocks
-    if( head->prev->size > 0){
-        head->prev->next = head->next;
-        head->next->prev = head->prev;
+    // if(next && next->is_free){
+
+    //     head->size += next->size + sizeof(block_t);
+    //     head->next = next->next;
+    //     if(next->next){
+    //         next->next->prev = head;
+    //     }
+    // }
+
+
+    // if(prev && prev->is_free){
+
+    //     prev->size += head->size + sizeof(block_t);
         
-        head->prev->size += head->size + sizeof(block_t);
-    }
-    else if(head->next->size > 0){
-        
-    }
+    //     prev->next = head->next;
+    //     if(head->next){
+    //         head->next->prev = head;
+    //     }
+    // }
+
+    
+    // alloc_print_list();
 
 
-    head->prev->next = head->next;
-    head->next->prev = head->prev;
 
-    //merge free consequent free block to prevent fragmentation
+    //no
+    
 }
 
 void pmm_print_usage(){

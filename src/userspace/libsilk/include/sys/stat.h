@@ -1,7 +1,7 @@
 #ifndef __STAT_H__
 #define __STAT_H__
 
-
+// #include <dirent.h>
 
 typedef struct  {
         //    unsigned int   st_dev;      /* ID of device containing file */

@@ -10,7 +10,7 @@ to find free mappings in virtual address space for mmap
 of release pages when process exits
 */
 
-
+#define VMM_ATTR_EMPTY_SECTION 0
 #define VMM_ATTR_PHYSICAL_PAGE 1 << 0
 #define VMM_ATTR_PHYSICAL_MMIO 1 << 1
 #define VMM_ATTR_PHYSICAL_SHARED 1 << 2

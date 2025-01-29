@@ -17,3 +17,6 @@ b irq13
 b irq14
 b irq15
 b kmain
+
+
+;qemu-system-x86_64 -serial telnet:localhost:1234,server,nowait 

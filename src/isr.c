@@ -266,16 +266,17 @@ void fault_handler(struct regs *r)
 
                 if(r->err_code & 4){ //fault happened in usermode
                     print_current_process();
-                    // paging_directory_list(current_process->page_dir);   
-
-                    // list_vmem_mapping(current_process);
-            
-                    terminate_process(current_process);
+                    paging_directory_list(current_process->page_dir );   
+                    uart_print(COM1, "------------------------------------------------------");
+                    list_vmem_mapping(current_process);
+                    current_process->state = TASK_ZOMBIE;
                     schedule(r);
                     return;
+                    
             }
             uint32_t * ip = (void *)r->eip;
             uart_print(COM1, "IP : %x instruction :%x\r\n", r->eip, ip[0]);
+            halt();
 
             
 
@@ -285,7 +286,7 @@ void fault_handler(struct regs *r)
             ;
             message_length =  sprintf(buffer, "%s\r\n", exception_messages[r->int_no]);
             uart_write(0x3f8, buffer, 1, message_length);
-            
+            halt();
             
             break;
        }

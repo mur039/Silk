@@ -5,36 +5,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <signals.h>
-
-struct dirent {
-    uint32_t d_ino;
-    uint32_t d_off;      
-    unsigned short d_reclen;    /* Length of this record */
-    int  d_type;      /* Type of file; not supported*/
-    char d_name[256]; /* Null-terminated filename */
-};
-
-struct dirent readdir(int fd){
-    //assuming given fd points to a dir in the fd table
-    struct  dirent ret;
-    int read_s = read(fd, &ret, sizeof(struct dirent));
-
-    if(read_s == 0){ //eof
-        ret.d_type = -1;
-        return ret;
-    }
-
-    return ret;
-}
-
-
-
-typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
+#include <dirent.h>
 
 
 typedef enum{
@@ -95,7 +66,7 @@ const char * title_artwork =
                                 "\n";
 
 
-#define COMMAND_BUFFER_MAXSIZE 36
+#define COMMAND_BUFFER_MAXSIZE 128
 int command_buffer_index = 0;
 char command_buffer[COMMAND_BUFFER_MAXSIZE];
 
@@ -127,7 +98,10 @@ enum command_ids {
     KILL,
     CD,
     PWD,
-    USAGE
+    USAGE,
+    RM,
+    MKDIR,
+
    
 };
 
@@ -141,7 +115,10 @@ const char *commands[] = {
       [KILL] = "kill",    
        [CD] = "cd",    
       [PWD] = "pwd",    
-      [USAGE] = "usage",    
+      [USAGE] = "usage",
+      [RM] = "rm",
+      [MKDIR] = "mkdir",
+
 
 
     
@@ -162,7 +139,7 @@ int is_delimeter(const char c){
     return (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\0');
 }
 
-const int max_words = 5;
+const int max_words = 6;
 int execute_command(){
     string_t words[max_words];
     for(int i = 0; i < max_words ; ++i)
@@ -215,7 +192,7 @@ int execute_command(){
     case -1: //maybe i should execute a program here
         //yes let's try
         //reduce, reuse
-        //see if we entered /bin/program
+        //see if we entered /bin/program but we need env and PATH
 
 
 
@@ -252,7 +229,7 @@ int execute_command(){
         char path_[64];
 
         if(words[1].src == NULL){ // just ls so list current directory
-            getcwd(path_, 64);
+            memcpy(path_, "./", 3);
         }
         else{
             
@@ -273,40 +250,34 @@ int execute_command(){
 
 
         while(1){
+
+            uint32_t ncount;
             struct dirent dir;
-            dir = readdir(dir_fd);
-            if(dir.d_type == -1) break;
+            ncount = getdents(dir_fd, &dir, sizeof(struct dirent));
 
-            int off = 255;
-            for(; dir.d_name[off] != '/'; off-- );
+            if(ncount == -1 || ncount == 0) break;
 
-            if(dir.d_type == DIRECTORY){ //again
-                --off;
-                for(; dir.d_name[off] != '/'; off-- );
-            }
-            
-            off++;
-            
-    
-    
-    
-    
-    
-    
-    
-    // printf( "%c    %s\n", dir.d_type == DIRECTORY ? 'd' : '-', &dir.d_name[off] );
     
             switch (dir.d_type){
-                case REGULAR_FILE:
-                case LINK_FILE:
-                case CHARACTER_SPECIAL_FILE:
-                case BLOCK_SPECIAL_FILE:
-                case FIFO_SPECIAL_FILE:
-                    printf( "<--->\t%s\n", &dir.d_name[off] );
+                case FS_FILE:
+                    printf( "<--->\t%s\n", dir.d_name );
                     break;
 
-                case DIRECTORY:
-                    printf( "<dir>\t\x1b[1;33m%s\x1b[0m\n", &dir.d_name[off] );
+                case FS_SYMLINK:
+                    printf( "<sym>\t\x1b[1;34m%s\x1b[0m\n", dir.d_name );
+                    // printf( "<sym>\t%s\n", dir.d_name );
+                    break;
+
+                case FS_BLOCKDEVICE:
+                case FS_CHARDEVICE:
+                case FS_PIPE:
+                    printf( "<dev>\t\x1b[1;35m%s\x1b[0m\n", dir.d_name );
+                    // printf( "<dev>\t%s\x1b\n", dir.d_name );
+                    break;
+
+                case FS_DIRECTORY:
+                    printf( "<dir>\t\x1b[1;33m%s\x1b[0m\n", dir.d_name );
+                    // printf( "<dir>\t%s\n", dir.d_name );
                     break;
                     
 
@@ -328,6 +299,8 @@ int execute_command(){
             return -1;
         }
 
+
+        
         char path[64];
         for (unsigned int i = 0; i < words[1].size; ){
             path[i] = words[1].src[i];
@@ -335,7 +308,6 @@ int execute_command(){
             path[i] = '\0';
 
         }
-
 
         char argv1[32];
         memcpy(argv1, words[2].src, words[2].size);
@@ -372,17 +344,28 @@ int execute_command(){
             // close(pipe_fd[1]);
             dup2( pipe_fd[0], FILENO_STDIN);
 
-            uint32_t _table[3];
-            _table[0] = (uint32_t)path;
-            _table[1] = (uint32_t)argv1[0] == '\0' ? 0 : argv1;
-            _table[2] = (uint32_t)NULL;
 
 
-            const char **_argv = (const char **)&_table;
+            string_t * proc_argv_strings = &words[1]; // programname + arguments
+            int proc_argc;
+            for(proc_argc = 0; proc_argv_strings[proc_argc].src != NULL; ++proc_argc);
 
+            //create argv table for new process
+            char** proc_argv = malloc( (proc_argc + 1) * sizeof(char*) );
+            memset(proc_argv, 0, (proc_argc + 1) * sizeof(char*));
+
+            for(int i = 0; i < proc_argc; ++i){
+                
+                proc_argv[i] = malloc(proc_argv_strings[i].size + 1);
+                memset(proc_argv[i], 0, proc_argv_strings[i].size + 1);
+                memcpy(proc_argv[i], proc_argv_strings[i].src, proc_argv_strings[i].size);
+
+            }
+
+          
             result = execve(
                             path,
-                            _argv
+                            proc_argv
                             );
 
             if(result == -1){
@@ -430,6 +413,43 @@ int execute_command(){
 
     
         break;
+    
+    case RM:
+        if(words[1].src == NULL){
+            puts("Expected filename");
+            return -1;
+        }
+
+        {
+
+            char * tmp = malloc(words[1].size + 1);
+            memcpy(tmp, words[1].src, words[1].size);
+            tmp[words[1].size] = 0;
+        
+            unlink(tmp);
+            free(tmp);
+        }
+        
+        break;
+
+    case MKDIR:
+        if(words[1].src == NULL){
+            puts("Expected directory name");
+            return -1;
+        }
+
+        {
+
+            char * tmp = malloc(words[1].size + 1);
+            memcpy(tmp, words[1].src, words[1].size);
+            tmp[words[1].size] = 0;
+        
+            mkdir(tmp, 0644);
+            // free(tmp);
+        }
+        
+        break;
+
 
     case CD:
         
@@ -443,8 +463,15 @@ int execute_command(){
         memcpy(tmp, words[1].src, words[1].size + 1);
         tmp[words[1].size] = '\0';
 
-        chdir(tmp);
-        sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", tmp);
+        if(!chdir(tmp)){
+            free(tmp);
+            tmp = malloc(64);
+            getcwd(tmp, 64);
+            sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", tmp);
+        }
+        else{
+            printf("No such directory\n");
+        }
         free(tmp);
         break;
 
@@ -586,10 +613,6 @@ int main(int argc, char **argv){
     //discard the err
     getcwd(cwd_buf, 32);
 
-
-    puts("\x1b[H"); //set cursor to (0,0)
-    puts("\x1b[0J"); //clear from cursor to end of the screen
-
     prompt_buf = malloc(32);
     sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", cwd_buf);
     // printf("current working directory: %s\n", cwd_buf);
@@ -602,6 +625,19 @@ int main(int argc, char **argv){
     memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
     while(shouldRun){
         
+        if(shell_state){
+            int wstat;
+            int err = wait4(-1, &wstat, 0x1, NULL); //WHONOHANG
+
+            if(err){ //child exited
+                int child_exit_code = wstat & 0xff;
+                printf("\nchild exited with code: %u\n", child_exit_code);
+                shell_state = 0;
+                printf("%s ", prompt_buf);
+            }
+        }
+
+
        c = getchar();
         if(c != -1){             //i succesfully read something
 

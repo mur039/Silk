@@ -121,18 +121,57 @@ void  free(void *ptr){
     head -= 1;
     head->is_free = 1;
 
-    // //merge to other free blocks
-    if( head->prev->size > 0){
-        head->prev->next = head->next;
-        head->next->prev = head->prev;
-        
-        head->prev->size += head->size + sizeof(block_t);
+    return;
+
+    //merging
+    /*three options 
+       ->  block ->
+           block ->
+        -> block
+    */
+    block_t* prev = head->prev;
+    block_t* next = head->next;
+   if(prev && next){
+      
+
+        //again 3 options
+        if(prev->is_free && next->is_free){ //both blocks are free
+
+            prev->size += head->size;
+            prev->size += next->size;
+
+            next->prev = prev;
+            prev->next = next->next;
+        }
+        else if(prev->is_free){
+
+            prev->size += head->size;
+            head->next->prev = prev;
+            prev->next = head->next;
+        }
+        else if(next->is_free){
+            head->size += next->size;
+            if(next->next)
+                next->next->prev = head;
+            head->next = next->next;
+        }
+   }
+
+   else if(prev){
+
+        if(prev->is_free){
+            prev->size += head->size;
+        }
     }
-    else if(head->next->size > 0){
-        
+
+    else if(next){
+        head->size += next->size;
+        if(next->next)
+            next->next->prev = head;
+        head->next = next->next;
     }
-    head->prev->next = head->next;
-    head->next->prev = head->prev;
+
+
     return;
 }
 

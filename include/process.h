@@ -10,7 +10,7 @@
 #include <timer.h>
 #include <fb.h>
 #include <filesystems/tar.h>
-#define MAX_OPEN_FILES  16
+#define MAX_OPEN_FILES  32
 
 
 #define TASK_RUNNING            0
@@ -96,7 +96,6 @@ void list_vmem_mapping(pcb_t * process);
 pcb_t * create_kernel_process(void * stack_base, void* esp, void * eip, void* arg);
 void save_current_context(pcb_t * proc);
 
-
-
+void process_release_sources(pcb_t * proc);
 
 #endif

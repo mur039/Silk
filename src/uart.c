@@ -1,6 +1,9 @@
 #include <uart.h>
 #include <sys.h>
 #include <str.h>
+#include <queue.h>
+
+
 
 int init_uart_port(int port)
 {
@@ -70,26 +73,176 @@ void uart_print(int port, const char * source, ...){
 }
 
 
+
+
+
+
+typedef  struct uart_console_priv_dat{
+    queue_t work_queue;
+    circular_buffer_t internal_circular_buffer;
+    uint8_t refcount;
+
+} uart_console_priv_dat_t;
+
 extern volatile int is_received_char;
 extern volatile char ch;
+
+#include <process.h>
+typedef struct uart_work_desc {
+    pcb_t* req_proc;
+    size_t byte_size;
+} uart_work_desc_t;
+
+
+device_t* com1_dev = NULL;
+
 void uart_handler(struct regs *r){
     (void)r;
+    
     char c = serial_read(0x3f8);
+    
+    if(com1_dev){
+        uart_console_priv_dat_t* priv = com1_dev->priv;
+        if(priv->refcount){
+            
+            circular_buffer_putc(&priv->internal_circular_buffer, c);
 
+            int size = circular_buffer_avaliable(&priv->internal_circular_buffer);
+            uart_work_desc_t* pending_job = queue_dequeue_item(&priv->work_queue);
+        
+
+            if(pending_job){ //check if there's a pending job
+
+                if(size >= pending_job->byte_size){
+                    //unblock the process
+                    // pending_job->req_proc->regs.eip -= 2; //wind it back to the int 0x80 call
+                    pending_job->req_proc->state = TASK_RUNNING;
+
+                }
+                else{
+                //if not push job back to the queue
+                queue_enqueue_item(&priv->work_queue, pending_job);
+                }
+            }
+
+        }
+    }
 
     is_received_char = 1;
     ch = c;
 
-    // semaphore_uart_handler->value++;
-    // pcb_t * proc = queue_dequeue_item(&semaphore_uart_handler->queue);
-    // if(proc){
-    //     proc->state = TASK_RUNNING;
-        
-    // }
-    // fb_console_printf("%c:%x\n",ch, ch);
     return;
 }
 
 
+
+static int port_addr_index(int port){
+    if(port == COM1){
+        return 0;
+    }
+    return -1;
+}
+
+
+
+
+device_t* create_uart_device(int port){
+
+    if( init_uart_port(port) ){ //faulty 
+        return NULL;
+    }
+
+
+    int pindex = port_addr_index(port);
+    device_t* dev = kcalloc(1, sizeof(device_t));
+    if(!dev)
+        error("failed allocate for dev");
+
+    dev->name = kmalloc(5);
+    if(!dev->name)
+        error("failed allocate for dev->name");
+
+    sprintf(dev->name, "ttyS%u", pindex);
+
+    dev->write = uart_console_write;
+    dev->read = uart_console_read;
+    dev->open = uart_console_open;
+    dev->close = uart_console_close;
+    dev->dev_type = DEVICE_CHAR;
+    dev->unique_id = port;
+
+    dev->unique_id = pindex;
+    
+    uart_console_priv_dat_t* priv = kmalloc(sizeof(uart_console_priv_dat_t));
+    if(!priv)
+        error("failed allocate for priv");
+    
+    priv->work_queue = queue_create(1);
+    priv->internal_circular_buffer  = circular_buffer_create(256);
+    priv->refcount = 0;
+    dev->priv = priv;
+    
+    com1_dev = dev;
+    
+    return dev;    
+}
+
+
+
+open_type_t uart_console_open(fs_node_t* node, uint8_t read, uint8_t write){
+    
+
+    device_t* dev = node->device;
+    uart_console_priv_dat_t* priv = dev->priv;
+
+    priv->refcount++;
+    return;
+}
+
+
+close_type_t uart_console_close(fs_node_t* node){
+    
+    device_t* dev = node->device;
+    uart_console_priv_dat_t* priv = dev->priv;
+     
+    priv->refcount--;
+    return;
+}
+
+
+
+write_type_t uart_console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+    (void)node;
+    (void)offset;
+
+    uart_write(COM1, buffer, 1, size);
+    return size;
+}   
+
+
+read_type_t uart_console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+    (void)node;
+    (void)offset;
+    // (void)size;
+
+    device_t* dev = node->device;
+    uart_console_priv_dat_t* priv = dev->priv;
+
+    int availble_char = circular_buffer_avaliable( &priv->internal_circular_buffer );
+    
+
+    if( size <= availble_char){ //enough bytes in buffer
+        circular_buffer_read(&priv->internal_circular_buffer, buffer, 1, size);
+        return size;
+    }
+
+    //should block but how?
+    uart_work_desc_t* job = kcalloc(1, sizeof(uart_work_desc_t));
+    
+    job->req_proc = current_process;
+    job->byte_size = size;
+    queue_enqueue_item(&priv->work_queue, job);
+    return -1;
+}
 
 

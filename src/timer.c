@@ -3,7 +3,7 @@
 #include <fb.h>
 /* This will keep track of how many ticks that the system
 *  has been running for */
-unsigned timer_ticks = 0;
+unsigned int timer_ticks = 0;
 
 void (* timer_callback)(struct regs *r) = NULL;
 
@@ -18,9 +18,7 @@ void timer_handler(struct regs *r)
         if(timer_callback != NULL) timer_callback(r);
         
     }
-    else if(timer_ticks % 40 == 0){
-        // fb_console_blink_cursor();
-    }
+    
 }
 
 void register_timer_callback( void (* func)(struct regs *r) ){

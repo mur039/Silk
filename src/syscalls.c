@@ -4,8 +4,9 @@
 #include <vmm.h>
 #include <process.h>
 #include <ps2_mouse.h>
+#include <filesystems/vfs.h>
 
-#define MAX_SYSCALL_NUMBER 128
+#define MAX_SYSCALL_NUMBER 256
 void (*syscall_handlers[ MAX_SYSCALL_NUMBER ])(struct regs *r);
 
 
@@ -89,42 +90,97 @@ void syscall_dup2(struct regs * r){
     return;
 }
 
-
+//int execve(const char * path, const char * argv[]){
 void syscall_execve(struct regs * r){ //more like spawn 
     r->eax = -1;
-    if(tar_get_file((const char *)r->ebx, O_RDONLY) == NULL) return;
-    
-    //leap of faith
-    pcb_t * np = create_process((char *)r->ebx, (char **)r->ecx); //pathname and arguments
-    
-    //copy file descriptors
-    memcpy(np->open_descriptors, current_process->open_descriptors, MAX_OPEN_FILES * sizeof(file_t));
-    for(int i = 0; i < MAX_OPEN_FILES; ++i){
+    char* path = (const char*)r->ebx;
+    char** argv = (const char**)r->ecx;
 
-        // if(np->open_descriptors[i].f_inode && tar_get_filetype(np->open_descriptors[i].f_inode) == FIFO_SPECIAL_FILE){
-        //     np->open_descriptors[i].ops.open(
-        //     np->open_descriptors[i].f_mode == 1 ? 0 : 1,
-        //     np->open_descriptors[i].ops.priv
-        // );
-        // }
+    if(!kopen(path, 0)){
+
+        r->eax = -1;
+        return;    
+    }
+
+
+    pcb_t* cp = current_process;
+
+    //free the resources and allocate new ones
+    strcpy(cp->filename, path);
+    
+    for(int i = 0; i < cp->argc  ; ++i){
+        kfree(cp->argv[i]);
+    }
+    kfree(cp->argv);
+
+    int argc;
+    for(argc = 0;  argv[argc];++argc);
+
+    cp->argc = argc;
+    cp->argv = kcalloc(argc + 1, sizeof(char*));
+    for(int i = 0; i < argc; ++i){
+        cp->argv[i] = strdup(argv[i]);    
+    }
+
+    
+    // cp->state = TASK_CREATED;
+    // r->eax = 0;
+    // schedule(r);
+    // return;
+
+
+
+
+
+
+    memset(&cp->regs, 0, sizeof(context_t));
+    cp->regs.eflags = 0x206;
+    cp->stack = (void*)0xC0000000;
+    cp->regs.esp = (0xC0000000);
+    cp->regs.ebp = 0; //for stack trace
+    cp->regs.cs = (3 * 8) | 3;
+    cp->regs.ds = (4 * 8) | 3;
+    cp->regs.es = (4 * 8) | 3;
+    cp->regs.fs = (4 * 8) | 3;
+    cp->regs.gs = (4 * 8) | 3;
+    cp->regs.ss = (4 * 8) | 3;;
+
+    cp->regs.cr3 = (u32)get_physaddr(cp->page_dir);
+
+
+    //open descriptors unless specified remain open
+    cp->state = TASK_CREATED; //so that schedular can load the image
+
+
+    
+
+    for(listnode_t * vmem_node = cp->mem_mapping->head; vmem_node; vmem_node = vmem_node->next){
+        
+        vmem_map_t * vmap = vmem_node->val;
+        
+
+        if(vmap->attributes >> 20){
+            //gotta free the allocated pages
+            deallocate_physical_page( (void*)vmap->phymem );
+            unmap_virtaddr_d(cp->page_dir, (void*)vmap->vmem);
+            uart_print(COM1, "vmem: %x->%x :: %x\r\n", vmap->vmem, vmap->phymem, vmap->attributes >> 20);
+        }
+        list_remove(cp->mem_mapping, vmem_node);
+        // kfree(vmem_node->val);
 
     }
 
-    //copy the working directory of the caller
-    kfree(np->cwd);
-    np->cwd = kmalloc( strlen(current_process->cwd) + 1) ;
-    memcpy(np->cwd, current_process->cwd, strlen(current_process->cwd) + 1 );
 
+    vmem_map_t* empty_pages = kcalloc(1, sizeof(vmem_map_t));
+    empty_pages->vmem = 0;
+    empty_pages->phymem = 0xc0000000;
+    empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); //3G -> 786432 pages
+    list_insert_end(cp->mem_mapping, empty_pages);
 
-    np->parent = current_process->parent;
-    np->childs = current_process->childs;
-    np->pid = current_process->pid; //ughhh
+    r->eax = 0;
 
-    current_process->state = TASK_ZOMBIE;
-    //force schedule?
-    r->eax = 1;
+    context_switch_into_process(r, cp); //hacky
     schedule(r);
-    
     return;
 }
 
@@ -135,13 +191,7 @@ void syscall_exit(struct regs *r){
     int exitcode = (int)r->ebx;
     r->eax = exitcode;
     current_process->state = TASK_ZOMBIE;
-
-
     schedule(r);
-    
-    
-
-
 }
 
 
@@ -153,22 +203,30 @@ typedef enum{
     SEEK_END = 2
 
 } whence_t;
+
 void syscall_lseek(struct regs * r){
-    file_t * file;
-    file = &current_process->open_descriptors[r->ebx];
+    int fd = (int)r->ebx;
+
+    file_t * file = &current_process->open_descriptors[fd];
+
     if (file->f_inode == NULL)
     { // check if its opened
         r->eax = -1;
         return;
     }
 
+
+    fs_node_t * node = (void*)file->f_inode;
+
     if (!(
-            tar_get_filetype(file->f_inode) == BLOCK_SPECIAL_FILE ||
-            tar_get_filetype(file->f_inode) == REGULAR_FILE))
+            node->flags & FS_BLOCKDEVICE ||
+            node->flags & FS_FILE        ))
     { // not a block device nor a normal file so non seekable
         r->eax = -1;
         return;
     }
+
+
 
     long new_pos = 0;
     if (r->edx == SEEK_SET)
@@ -181,34 +239,73 @@ void syscall_lseek(struct regs * r){
     }
     else if (r->edx == SEEK_END)
     {
-        new_pos = o2d(file->f_inode->size) - r->ecx;
+        new_pos = node->length - r->ecx;
     }
 
+    node->offset = new_pos;
     file->f_pos = new_pos;
     r->eax = new_pos;
-    // uart_print(COM1, "lseek fd:%x offset:%x whence:%x\r\n", r->ebx, r->ecx, r->edx);
 
     return;
+
 }
 
 
-int32_t open_for_process(pcb_t * process, const char * path, int mode ){
+
+int32_t open_for_process(pcb_t * process,  char * path, int flags, int mode ){
      
     for(int i = 0; i < MAX_OPEN_FILES; i++){
         if(process->open_descriptors[i].f_inode == NULL){ //find empty entry
-            process->open_descriptors[i].f_inode = tar_get_file(path, mode); //open file
-        
-            if(process->open_descriptors[i].f_inode != NULL) {
-                uart_print(COM1, "Succesfully opened file %s : %x\r\n", path, i);
-                process->open_descriptors[i].f_mode = mode;
-                process->open_descriptors[i].f_pos = tar_get_filetype(process->open_descriptors[i].f_inode) == DIRECTORY ? 1 : 0;  
-                return i;
+
+            // process->open_descriptors[i].f_inode = tar_get_file(path, mode); //open file
+
                 
+            // const char* abs_path = vfs_canonicalize_path(current_process->cwd, path);
+            // fb_console_printf("syscall_open : %s\n", abs_path);
+            fs_node_t* file =  kopen(path, flags);
+
+            if(!file){ //faile to find file
+                
+                if(flags & O_CREAT){ //creating specified then create the file
+                    char* canonical_path = vfs_canonicalize_path(current_process->cwd, path);
+                    int index = strlen(canonical_path);
+                    //will go backward until i find a /
+                    for( ; index >= 0 ;index-- ){
+                        if(canonical_path[index] == '/'){
+                            canonical_path[index] = '\0';
+                            break;
+                        }
+                    }
+                    
+                    file = kopen(canonical_path, flags);
+                    create_fs(file, path, mode);
+                    
+                    file = kopen(path, flags);
+                    kfree(canonical_path);
+
+                }
+                else{
+                    return -1;
+                }
             }
-            else{
+            
+
+
+            
+
+                uart_print(COM1, "Succesfully opened file %s : %x\r\n", path, i);
+                process->open_descriptors[i].f_inode = (void*)file; //forcefully
+                process->open_descriptors[i].f_flags = 0x6969;
+                process->open_descriptors[i].f_pos = 0;
+                process->open_descriptors[i].f_mode = mode;
+                return i;
+            /*
+            else{ //failed to find file
+                
                 return -1;
             }
             
+            */
         }
     }
     return -1;
@@ -217,7 +314,10 @@ int32_t open_for_process(pcb_t * process, const char * path, int mode ){
 
 /*O_RDONLY, O_WRONLY, O_RDWR*/
 void syscall_open(struct regs *r){
-    r->eax = open_for_process(current_process, (char *)r->ebx, (int)r->ecx ) ;
+    char* path = (char*)r->ebx;
+    int flags = (int)r->ecx;
+    int mode = (int)r->edx;
+    r->eax = open_for_process(current_process, path, flags, mode) ;
 }
 
 
@@ -230,19 +330,13 @@ extern char ch;
 extern volatile int  is_kbd_pressed;
 extern char kb_ch;
 extern uint8_t kbd_scancode;
-extern semaphore_t * semaphore_uart_handler;
 extern circular_buffer_t * ksock_buf;
 
 
 
 
-typedef struct  {
-    uint32_t d_ino;
-    uint32_t d_off;      
-    unsigned short d_reclen;    /* Length of this record */
-    int  d_type;      /* Type of file; not supported*/
-    char d_name[256]; /* Null-terminated filename */
-} dirent_t;
+typedef struct dirent dirent_t;
+
 
 void syscall_read(struct regs *r){ 
 
@@ -261,7 +355,28 @@ void syscall_read(struct regs *r){
         return;
     }
 
-        
+    
+    if(file->f_flags == 0x6969){
+
+        fs_node_t * node = (void*)file->f_inode;
+        int result = read_fs(node, file->f_pos, count, buf);
+
+        if( result == -1){
+            
+            current_process->state = TASK_INTERRUPTIBLE;
+            r->eip -= 2;
+            save_context(r, current_process);
+            schedule(r);
+            return;
+        }
+
+        r->eax = result;
+        file->f_pos += r->eax;
+        return;
+    }
+
+
+#if 0
     switch (tar_get_filetype(file->f_inode))
     {
     case REGULAR_FILE: //regular read negro
@@ -282,7 +397,7 @@ void syscall_read(struct regs *r){
 
         }
         break;
-            
+    
     case BLOCK_SPECIAL_FILE:
     case CHARACTER_SPECIAL_FILE:
         switch (tar_get_major_number(file->f_inode))
@@ -389,8 +504,8 @@ void syscall_read(struct regs *r){
         
         r->eax = count;
         if(dir){
-            memcpy(dir->d_name, &h->filename[1], 99);
-            dir->d_type = tar_get_filetype(h);
+            memcpy(dir->name, &h->filename[1], 99);
+            dir->type = tar_get_filetype(h);
         }
         
         break;
@@ -405,6 +520,8 @@ void syscall_read(struct regs *r){
         break;
             
 }
+
+#endif
 
     return;
 }
@@ -429,9 +546,15 @@ void syscall_write(struct regs * r){
         return;
     }
 
+    if(file->f_flags == 0x6969){
+        fs_node_t * node = (fs_node_t *)file->f_inode;
+        r->eax = write_fs(node, file->f_pos, count, buf);
+        file->f_pos += r->eax;
+        return; 
+    }
 
-     switch (tar_get_filetype(file->f_inode))
-    {
+#if 0
+     switch (tar_get_filetype(file->f_inode)){
         
         case BLOCK_SPECIAL_FILE:
         case CHARACTER_SPECIAL_FILE:
@@ -497,7 +620,7 @@ void syscall_write(struct regs * r){
             break;
     };
 
-
+#endif
     
 
     return;
@@ -510,18 +633,14 @@ int close_for_process(pcb_t * process, int fd){
         return -1;
     }
 
-    // if( tar_get_filetype(process->open_descriptors[fd].f_inode) == FIFO_SPECIAL_FILE){
-        
-    //      current_process->open_descriptors[fd].ops.close(
-    //             current_process->open_descriptors[fd].f_mode == 1 ? 0 : 1,
-    //             current_process->open_descriptors[fd].ops.priv 
-    //             );
-
-    // }
-
     
-    process->open_descriptors[fd].f_flags = 0;
+    fs_node_t * node = (fs_node_t*)process->open_descriptors[fd].f_inode;
+    close_fs(node);    
     process->open_descriptors[fd].f_inode = NULL;
+
+
+
+    process->open_descriptors[fd].f_flags = 0;
     process->open_descriptors[fd].f_mode = 0;
     process->open_descriptors[fd].f_pos = 0;
     return 0;
@@ -548,133 +667,102 @@ typedef struct  {
 
 void syscall_fstat(struct regs * r){
     //ebx = fd, ecx = &stat
+    int pid = r->ebx;
+    stat_t * stat = (void *)r->ecx;
     file_t * file;
-    file = &current_process->open_descriptors[r->ebx];
+
+    file = &current_process->open_descriptors[pid];
     if(file->f_inode == NULL){   //check if its opened
         r->eax = -1;
         return;
     }
 
-    stat_t * stat = (void *)r->ecx;
-    stat->st_mode = tar_get_filetype(file->f_inode) << 16 | file->f_flags;
-    stat->st_uid = o2d(file->f_inode->uid);
-    stat->st_gid = o2d(file->f_inode->gid);
+    fs_node_t* node = (fs_node_t*)file->f_inode;
+    tar_header_t* thead = node->device;
+
+    switch(node->flags){
+        case FS_DIRECTORY:
+            stat->st_mode = DIRECTORY;
+            break;
+
+        case FS_BLOCKDEVICE:
+            stat->st_mode = BLOCK_SPECIAL_FILE;
+            break;
+        
+        case FS_CHARDEVICE:
+            stat->st_mode = CHARACTER_SPECIAL_FILE;
+            break;
+                
+        case FS_FILE:
+            stat->st_mode = REGULAR_FILE;
+            break;
+
+        default: break;
+    }
+
+    stat->st_mode <<= 16 ;
+    stat->st_mode |= file->f_flags;
+    stat->st_uid = node->uid;
+    stat->st_gid = node->gid;
     r->eax = 0;
     return;
 }
 
 
  
-void syscall_fork(struct regs * r){ //the show begins
+void syscall_fork(struct regs * r){ //the show begins 
     
+    uart_print(COM1, "syscall_fork: called from %s\r\n", current_process->filename);
     r->eax = -1;
     save_context(r, current_process); //save the latest context
     
-    
-    //create same process
-    pcb_t* child = create_process( current_process->filename, current_process->argv);
-    
-    child->parent = current_process->self;
-    list_insert_end(current_process->childs, child);
+    //create pointers for  curreent and new process
+    pcb_t* curr_proc = current_process;
+    pcb_t* child_proc = create_process(curr_proc->filename, curr_proc->argv);
 
     
-    list_t *clist;
-    listnode_t * cnode;    
+    //clone cwd
+    kfree(child_proc->cwd);
+    child_proc->cwd = kcalloc(strlen(curr_proc->cwd), 1);
+    strcpy(child_proc->cwd, curr_proc->cwd);
 
+    //copy filedescriptor table
+    memcpy(child_proc->open_descriptors, current_process->open_descriptors, sizeof(file_t) * MAX_OPEN_FILES ) ;
+        //maybe open them as well but
 
-    list_t *list;
-    listnode_t * node;    
-
-
-    list = current_process->mem_mapping;
-    node = list->head;
-
-    clist = child->mem_mapping;
-    cnode = clist->head;
-
-    
-
-    for(unsigned int i = 0; i < list->size  ; ++i){
-
-        vmem_map_t * vm = node->val;
-
-        if(!(vm->attributes >> 20)){
-            //a free page no page to copy so just pass
-            node = node->next;
-            continue;
-        }
-        vmem_map_t * cm = kmalloc(sizeof(vmem_map_t));
-
-        //create page for the child, set it to zero
-        u8 * ch_page = kpalloc(1);
-        memset(ch_page, 0, 4096);
-        
-        //create the same linked page list for the child
-        cm->vmem = vm->vmem;
-        cm->phymem = (uint32_t)get_physaddr( ch_page );
-        vmm_mark_allocated(clist, cm->vmem, cm->phymem, cm->attributes);
-        // list_insert_end(clist, cm);
-        
-        
-        //mapping calling process phy page to memory window
-        map_virtaddr(memory_window, (void *)vm->phymem, PAGE_PRESENT | PAGE_READ_WRITE); 
-        memcpy(ch_page, memory_window, 4096); //copying calling process page to child's
-        map_virtaddr_d(child->page_dir, ( void* )cm->vmem, ( void* )cm->phymem, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-
-        //unmap the ch_page
-        unmap_virtaddr(ch_page);
-        kernel_heap -= 0x1000;
-
-        //increment to the next node
-        node = node->next;
+    //copy registers except cr3
+    {
+        uint32_t oldcr3 = child_proc->regs.cr3;
+        child_proc->regs = curr_proc->regs; 
+        child_proc->regs.cr3 = oldcr3;
     }
 
+    //copy memory map
+    for(listnode_t* vnode = curr_proc->mem_mapping->head; vnode; vnode = vnode->next){
 
+        vmem_map_t* mm = vnode->val;
+        if(mm->attributes >> 20){ //allocated
+            // uart_print(COM1, "ALLOCATED : %x-> %x\r\n", mm->vmem, mm->phymem);
+            uint8_t* empty_page = allocate_physical_page();
+            map_virtaddr(memory_window, empty_page, PAGE_READ_WRITE | PAGE_PRESENT );
+            memcpy(memory_window, (void *)mm->vmem, 0x1000);
 
-    child->argc = current_process->argc;
-    // child->argv = current_process->argv; //nuh uh
-    child->argv = kcalloc(child->argc, sizeof(char**));
-    for(int i = 0; i < child->argc; ++i){
-        child->argv[i] = kmalloc( strlen(current_process->argv[i]) + 1 );
-        memcpy(child->argv[i], current_process->argv[i], strlen(current_process->argv[i]) + 1);
-    }
-
-    u32 old_cr3 = child->regs.cr3;
-    child->regs = current_process->regs;
-    child->regs.cr3 = old_cr3;
-
-    
-    //inherent file descriptors
-    memcpy(child->open_descriptors, current_process->open_descriptors, MAX_OPEN_FILES * sizeof(file_t));
-    //if there's a unnamed pipe i should increment the references as well
-    for(int fd = 0; fd < MAX_OPEN_FILES; ++fd){
-        
-        // if( child->open_descriptors[fd].f_inode &&  tar_get_filetype(child->open_descriptors[fd].f_inode) == FIFO_SPECIAL_FILE){
-
-        //     current_process->open_descriptors[fd].ops.open(
-        //         current_process->open_descriptors[fd].f_mode == 1 ? 0 : 1,
-        //         current_process->open_descriptors[fd].ops.priv 
-        //         );
+            map_virtaddr_d(child_proc->page_dir, (void *)mm->vmem, empty_page, PAGE_READ_WRITE | PAGE_USER_SUPERVISOR  | PAGE_PRESENT);
+            vmm_mark_allocated(child_proc->mem_mapping, (void*)mm->vmem, empty_page, VMM_ATTR_PHYSICAL_PAGE);
             
-        // }
+        }
+        else{ //free
+            // uart_print(COM1, "FREE : %x-> %x\r\n", mm->vmem, mm->phymem);
+        }
+
     }
 
-
-    //inherent working directory;
-    kfree(child->cwd);
-    child->cwd = kmalloc( strlen(current_process->cwd) );
-    memcpy(child->cwd, current_process->cwd, strlen(current_process->cwd));
-
-
-    
-    child->state = TASK_RUNNING;
-
-
-    r->eax = child->pid;
-    child->regs.eax = 0;
-
+    //finallt add child to child list of the parent
+    list_insert_end(curr_proc->childs, child_proc);
+    child_proc->state = TASK_RUNNING;
+    r->eax = child_proc->pid;
+    child_proc->regs.eax = 0;
     schedule(r);
-    
     return;
 }
 
@@ -700,16 +788,23 @@ void syscall_pipe(struct regs * r){
 
     int *filds = (int*)r->ebx; //int fd[2]
 
-    file_t read_pipe  = pipe_create(64);
-    file_t write_pipe = read_pipe;
+    // process->open_descriptors[i].f_inode = (void*)file; //forcefully
 
+    fs_node_t* pipe = create_pipe(300);
+    
+    open_fs(pipe, 1, 0);
+    open_fs(pipe, 0, 1);
+    
+    
     //read head
-    current_process->open_descriptors[ fd[0] ] = read_pipe;
+    current_process->open_descriptors[ fd[0] ].f_inode = (void*)pipe;
     current_process->open_descriptors[ fd[0] ].f_mode = O_RDONLY;
+    current_process->open_descriptors[ fd[0] ].f_flags = 0x6969;
     
     //write head
-    current_process->open_descriptors[ fd[1] ] = write_pipe;
+    current_process->open_descriptors[ fd[1] ].f_inode = (void*)pipe;
     current_process->open_descriptors[ fd[1] ].f_mode = O_WRONLY;
+    current_process->open_descriptors[ fd[1] ].f_flags = 0x6969;
     
     filds[0] = fd[0];
     filds[1] = fd[1];
@@ -719,6 +814,13 @@ void syscall_pipe(struct regs * r){
 
 
 //pid_t wait4(pid_t pid, int * wstatus, int options, struct rusage * rusage);
+/*options*/
+
+#define WNOHANG    0x00000001
+#define WUNTRACED  0x00000002
+#define WCONTINUED 0x00000004
+
+
 void syscall_wait4(struct regs * r){
     pid_t pid = (pid_t)r->ebx;
     int * wstatus = (int *)r->ecx;
@@ -731,11 +833,35 @@ void syscall_wait4(struct regs * r){
     we will set status to running again when child get terminated
     */
    save_context(r, current_process);
-   if(current_process->childs->size){ //do you have any darling?
-    current_process->state = TASK_INTERRUPTIBLE;
+
+    if(!options){
+        if(current_process->childs->size){ //do you have any darling?
+            current_process->state = TASK_INTERRUPTIBLE;
+        }
+        schedule(r);
    }
 
-   schedule(r);
+    
+    if(options & WNOHANG){
+        //check if anychild process exited
+
+        for(listnode_t * cnode = current_process->childs->head; cnode ; cnode = cnode->next){
+            pcb_t* cproc = cnode->val;
+            if(cproc->state == TASK_ZOMBIE){
+                pid_t retpid = cproc->pid;
+                if(wstatus) *wstatus = cproc->regs.eax;
+
+                terminate_process(cproc);
+                process_release_sources(cproc);
+
+                r->eax = retpid;
+                list_remove(current_process->childs, cnode);
+                return;
+            }
+        }
+        r->eax = 0;
+
+    }
 
 }
 
@@ -745,6 +871,8 @@ void syscall_wait4(struct regs * r){
 //void *mmap(void *addr , size_t length, int prot, int flags, int fd, size_t offset)
 void syscall_mmap(struct regs *r ){
     
+    
+
     r->eax = 0;
     void  *addr = (void *)r->ebx;
     size_t length = (size_t)r->ecx;
@@ -765,46 +893,54 @@ void syscall_mmap(struct regs *r ){
         return;
     
     }
-    else{
+    
 
     // list_vmem_mapping(current_process);
-    tar_header_t * device_in_question = current_process->open_descriptors[fd].f_inode;
+    if(fd == -1){
+        //well then no device for you
+        r->eax = -1;
+        return;
+
+    }
+    fs_node_t * device_in_question = (fs_node_t *)current_process->open_descriptors[fd].f_inode;
 
     //for now only device files are mappable to the address space
-    switch(tar_get_filetype(device_in_question)){
+    switch( device_in_question->flags ){
 
-        case BLOCK_SPECIAL_FILE:
+        case FS_BLOCKDEVICE:
+            fb_console_printf("syscall_mmap: mapping block device: %s\n", device_in_question->name);
             //only support for block device is the fb
-            if(tar_get_major_number(device_in_question) != 2){
-                break;
-            }
+            // if(tar_get_major_number(device_in_question) != 2){
+            //     break;
+            // }
 
-            vmem_map_t mp;
-            // vmem_map_t mp = vmm_get_empty_vpage();  //*pf;
-            mp.vmem = (u32)vmm_get_empty_vpage(current_process->mem_mapping, length);  //*pf;
-            // fb_console_printf("->vmem:%x phymem:%x \n", pf->vmem, pf->phymem);
+            // vmem_map_t mp;
+            // // vmem_map_t mp = vmm_get_empty_vpage();  //*pf;
+            // mp.vmem = (u32)vmm_get_empty_vpage(current_process->mem_mapping, length);  //*pf;
+            // // fb_console_printf("->vmem:%x phymem:%x \n", pf->vmem, pf->phymem);
             
-            uint8_t * fb_addr = get_framebuffer_address();
-            int page_size = length / 4096 + (length % 4096 != 0); //ceil or somethin
+            // uint8_t * fb_addr = get_framebuffer_address();
+            // int page_size = length / 4096 + (length % 4096 != 0); //ceil or somethin
             
 
-            for(int i = 0; i < page_size; ++i){
+            // for(int i = 0; i < page_size; ++i){
 
-                map_virtaddr_d(current_process->page_dir, (void *)(mp.vmem + i*0x1000), (void *)(fb_addr + i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-                vmm_mark_allocated(current_process->mem_mapping, mp.vmem + i*0x1000, ((u32)fb_addr) + i*0x1000, VMM_ATTR_PHYSICAL_MMIO);
-            }
+            //     map_virtaddr_d(current_process->page_dir, (void *)(mp.vmem + i*0x1000), (void *)(fb_addr + i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+            //     vmm_mark_allocated(current_process->mem_mapping, mp.vmem + i*0x1000, ((u32)fb_addr) + i*0x1000, VMM_ATTR_PHYSICAL_MMIO);
+            // }
 
-            // list_vmem_mapping(current_process);
-            r->eax = mp.vmem;
-            return;
+            // // list_vmem_mapping(current_process);
+            // r->eax = mp.vmem;
+            // return;
             
             break;
+
         default:
             fb_console_printf("files other than block devices are not supported");
             break;
     }
 
-    }
+    
     //err
     r->eax = -1;
     return;
@@ -851,18 +987,77 @@ void syscall_getcwd(struct regs *r ){
     r->eax = (u32)buf;
 }
 
+
+void syscall_getdents(struct regs *r ){
+    int fd = (int)r->ebx;
+    void* dirp = (void*)r->ecx;
+    unsigned int count = (unsigned int)r->edx;
+
+    file_t * file = &current_process->open_descriptors[fd];
+    if(file->f_inode == NULL){   //check if its opened
+        r->eax = -1;
+        return;
+    }
+
+
+    if(count < sizeof(struct dirent)){
+
+        r->eax = -1;
+        return;
+    }
+
+    
+
+    fs_node_t * node = file->f_inode;
+    
+
+    uint32_t old_offset = node->offset;
+    struct dirent* val =  readdir_fs(node, node->offset);
+    
+    if(val){
+        memcpy(dirp, val, sizeof(struct dirent));
+        kfree(val);
+
+        if(old_offset > node->offset){
+            r->eax = 0;
+        }
+        else{
+            r->eax = count;
+        }
+
+    }
+    else{
+        r->eax = -1;
+    }
+
+    
+    return;
+
+}
+
 void syscall_chdir(struct regs *r ){
     const char* path = (const char *)r->ebx;
 
-
-    //should canonize the path
-    //but 
+    //check whether abs_path exist on vfs
     
-    kfree(current_process->cwd);
-    current_process->cwd = kmalloc( strlen(path) + 1);
-    memcpy(current_process->cwd, path, strlen(path) + 1);
+    fs_node_t* alleged_node = kopen(path, 0);
 
-    r->eax = 0;
+    if(alleged_node &&  alleged_node->flags & FS_DIRECTORY){
+        
+        char* abs_path = vfs_canonicalize_path(current_process->cwd, path);
+        r->eax = 0;
+        kfree(current_process->cwd);
+        current_process->cwd = abs_path;
+        strcat(current_process->cwd, "/");
+        return;
+    }
+    else{
+        
+        r->eax = 1;
+        return;
+    }
+    
+
 
 }
 
@@ -917,3 +1112,215 @@ void syscall_sysinfo(struct regs *r ){
     r->eax = 0;
     return;
 }
+
+
+/*
+int mount(const char *source, const char *target,
+          const char *filesystemtype, unsigned long mountflags,
+          const void *_Nullable data);
+*/
+
+/*mount flags*/
+#define  MS_REMOUNT    0x00000001;
+#define  MS_BIND       0x00000002;
+#define  MS_SHARED     0x00000004;
+#define  MS_PRIVATE    0x00000008;
+#define  MS_SLAVE      0x00000010;
+#define  MS_UNBINDABLE 0x00000020;
+
+#include <filesystems/tar.h>
+#include <filesystems/tmpfs.h>
+#include <filesystems/fat.h>
+#include <filesystems/ext2.h>
+void syscall_mount(struct regs *r){
+
+    char *source = (const char *)r->ebx;
+    char *target = (const char *)r->ecx;
+    char *filesystemtype = (const char *)r->edx;
+    unsigned long mountflags = (unsigned long)r->esi;
+    void *data = (const void *)r->edi;
+
+    fb_console_printf(
+                        "syscall_mount :      \n"
+                        "\tsource : %s        \n"
+                        "\target : %s         \n"
+                        "\tfilesystemtype: %s  \n"
+                        "\tmountflags : %x    \n"
+                        "\tdata : %x          \n"
+                        ,
+                        source,
+                        target,
+                        filesystemtype, 
+                        mountflags,
+                        data
+        );
+
+
+    if(!mountflags){ // create a new node
+
+        if(!strcmp(source, "devfs")){
+            
+            vfs_mount(target, devfs_create());
+            r->eax = 0;
+            return;
+        }
+        else if(!strcmp(source, "tmpfs")){
+            
+            vfs_mount(target, tmpfs_install());
+            r->eax = 0;
+            return;
+        }
+        else{
+
+            //a device!!!
+            //chech whether the device exists
+            fs_node_t* devnode = kopen(source, 0);
+            device_t* dev =  dev_get_by_name(devnode->name);
+            
+            if(dev){
+                if(dev->dev_type == DEVICE_BLOCK){
+                    
+                    if(!strcmp(filesystemtype, "tar")){
+                        
+                        uint32_t * priv = dev->priv;
+		                size_t max_size = priv[0];
+		                uint8_t* raw_block = (void*)priv[1];
+                        fs_node_t* node = tar_node_create(raw_block, max_size);
+                        node->device = raw_block;
+                        vfs_mount(target, node);
+                        r->eax = 0;
+                        return;
+                    }
+                    if(!strcmp(filesystemtype, "fat")){
+                        
+                        fs_node_t* node = fat_node_create(dev);
+                        vfs_mount(target, node);
+                        r->eax = 0;
+                        return;
+                    }
+                    if(!strcmp(filesystemtype, "ext2")){
+                        
+                        fs_node_t* node = ext2_node_create(dev);
+                        if(node){
+                            vfs_mount(target, node);
+                            r->eax = 0;
+                            return;
+                        }
+                        
+                        r->eax = -3;
+                        return;
+                    }
+                    else{
+                        r->eax = -3;
+                        return;
+                    }
+                }
+                r->eax = -2;
+                return;
+            }
+            
+            r->eax = -1;
+            return;
+        
+        }
+
+        
+    }
+
+
+
+    r->eax = -1;
+    return;
+}
+
+
+void syscall_unlink(struct regs * r){
+    char* path = (char*)r->ebx;
+    
+    fs_node_t* file = kopen(path, O_RDONLY);
+    if(file){
+        unlink_fs(file, path);
+    }
+
+    return;
+}
+
+
+void syscall_mkdir(struct regs *r ){
+    char* path = (char*)r->ebx;
+    int mode = (int)r->ecx;
+
+    r->eax = 0;
+    fs_node_t* file = kopen(path, O_RDONLY);
+    if(file){ //folder? already exists
+        close_fs(file);
+        r->eax = -1;
+        return;
+    }
+
+    //create the directory
+    char* cpath = vfs_canonicalize_path(current_process->cwd, path);
+
+    fb_console_printf("cannonicalized path that is: %s\n", cpath);
+
+    char* parent_dir;
+    char* child_dir;
+
+    
+    for(int i = strlen(cpath); i >= 0 ; --i){
+        
+        if(cpath[i] == '/'){
+            parent_dir = kcalloc(i, 1);
+            memcpy(parent_dir, cpath, i);
+            parent_dir[i] = '\0';
+
+            child_dir = kcalloc( strlen(cpath) - i, 1);
+            memcpy(child_dir, &cpath[i + 1], strlen(cpath) - i);
+            break;
+        }
+    }
+
+    fb_console_printf("parent_dir::%s - child_dir::%s\n", parent_dir, child_dir);
+    
+    //open parent node
+    fs_node_t * parent_node = kopen(parent_dir, O_RDONLY);
+    if(!parent_node)
+        fb_console_printf("failed to open parent_dir::%s\n", parent_dir);    
+    
+    
+    mkdir_fs(parent_node, child_dir, 0664);
+
+    kfree(child_dir);
+    kfree(parent_dir);
+    kfree(cpath);
+    return;
+
+
+
+
+
+
+
+    // //get the parent directory
+    // char* parent_dir = strdup(cpath);
+    // char* head = parent_dir + strlen(parent_dir);
+    // for( ; *head != '/'; head--);
+    // *head = '\0';
+    
+    // fb_console_printf("syscall_mkdir: %s :: %s\n", &head[1], parent_dir);
+    // fs_node_t* parent_node = kopen(parent_dir, O_RDONLY);
+    
+    // r->eax = -1;
+    // if(parent_node){
+    //     mkdir_fs(parent_node, &head[1], mode);
+    //     r->eax = 0;
+    // }   
+    
+    // fb_console_printf("failed to open parent directory\n");
+
+    // kfree(parent_dir);
+    // kfree(cpath);
+    return;
+}
+
+

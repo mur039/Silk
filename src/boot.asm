@@ -18,8 +18,8 @@ mboot:
     dd 0 ;bssEndAddr
     dd 0 ;entryAddr
     dd 0;mode type, linear mode
-    dd 800;width
-    dd 600;height
+    dd 1280;width
+    dd 800 ;height
     dd 4;depth  
 
     ;1280x800

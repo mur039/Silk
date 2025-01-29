@@ -18,10 +18,17 @@ enum syscall_numbers{
     SYSCALL_EXIT = 60,
     SYSCALL_WAIT4 = 61,
     SYSCALL_KILL = 62,
+    SYSCALL_GETDENTS = 78,
     SYSCALL_GETCWD = 79,
     SYSCALL_CHDIR = 80,
+    SYSCALL_MKDIR = 83,
+    SYSCALL_UNLINK=86,
     SYSCALL_SYSINFO = 99,
+    SYSCALL_MOUNT = 165,
 };
+
+
+
 
 
 

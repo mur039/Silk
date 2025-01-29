@@ -18,6 +18,9 @@ int strcmp(const char *str1, const char * str2);
 int strncmp(const char *str1, const char * str2, int n);
 int is_char_in_str(const char c, const char * str);
 char * strcpy(char* dst, const char* src);
+char * strcat(char* dst, const char* src);
+char *strdup(const char *s);
+
 void kxxd(const char * src, size_t len);
 
 #define IS_ALPHABETICAL(character) \

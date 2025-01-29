@@ -2,7 +2,7 @@ ENTRY(_start)
 
 MEMORY {
 
-  ram (rwx) : ORIGIN = 0x11e000, LENGTH = 0xFFF 
+  ram (rwx) : ORIGIN = 0x11e000, LENGTH = 0x1FFF 
 }
 
 

@@ -8,31 +8,10 @@ queue_t queue_create( size_t nmemb){
 }
 
 int queue_enqueue_item( queue_t * queue, void * data){
-    // if(queue->list->size >= queue->size){
-    //     return -1;
-    // }
 
     //insert to the end
     list_t * l = queue->list;
-    listnode_t * node = kcalloc(1, sizeof(listnode_t));
-    
-    node->val = data;
-    node->next = NULL;
-
-    if(!l->head){ //empty list
-        l->head = node;
-        l->tail = node;
-    
-    }
-    else{
-        listnode_t * last;
-        last = l->tail;
-        last->next = node;
-        l->tail = node;
-        
-    }
-
-    l->size += 1;
+    list_insert_end(l, data);
     return 0;
 
 }

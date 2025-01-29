@@ -5,7 +5,11 @@
 circular_buffer_t circular_buffer_create(size_t buffer_size){
     circular_buffer_t buf;
     buf.max_size = buffer_size;
+
     buf.base = (uint8_t *)kmalloc(buffer_size);
+    if(!buf.base){
+        error("kmalloc failed");
+    }
     buf.write = 0;
     buf.read = 0;
     return buf;

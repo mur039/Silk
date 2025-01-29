@@ -4,13 +4,6 @@
 extern int dup2(int old_fd, int new_fd);
 extern int getpid();
 
-extern size_t write(int fd, const void *buf, size_t count);
-typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
 
 int fileno_stdout = 0;
 int fileno_stderr = 0;
@@ -18,7 +11,7 @@ int fileno_stderr = 0;
 int log_err(char *dst){
     while(*(dst) != '\0') write( fileno_stderr, (dst++), 1);
     return 0;
-}
+} 
 int puts(char * dst){
 
     write( fileno_stdout, dst, strlen(dst));
@@ -38,17 +31,17 @@ int main(int _argc, char * _argv[]){
         return 1;
     }
 
-
-    // int fd_kbd = open("/dev/kbd", O_RDONLY);
     int fd_kbd = open("/dev/console", O_RDONLY);
     if(fd_kbd == -1){
         return 1;
     }
 
-    int fd_com1 = open("/dev/com1", O_RDWR);
+
+    int fd_com1 = open("/dev/console", O_WRONLY);
     if(fd_com1 == -1){
         return 1;
     }
+
 
 
     fileno_stdout = fd_console;
@@ -95,7 +88,8 @@ int main(int _argc, char * _argv[]){
         
     }
 
-
+    while (1);
+    
     wait4(-1, NULL, 0, NULL);
     //if we return that means child has exited thus means no other process left so it would terminate
     printf("child exited\n");

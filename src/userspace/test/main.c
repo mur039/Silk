@@ -10,15 +10,6 @@ int puts(const char *str){
     return write(0, str, strlen(str));
 }
 
-
-typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
-
-
 typedef enum{
     SEEK_SET = 0,
     SEEK_CUR = 1, 
@@ -145,7 +136,6 @@ int main( int argc, char* argv[]){
     // argv[2] = client write
     //let's try to write  aclient for our window manager
 
-    printf("hallo\n");
     if(argc != 3){
         printf("Usage test fd0 fd1\n");
         return 1;

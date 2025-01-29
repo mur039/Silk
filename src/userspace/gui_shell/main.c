@@ -13,14 +13,6 @@ int puts(const char *str){
 
 
 typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
-
-
-typedef enum{
     SEEK_SET = 0,
     SEEK_CUR = 1, 
     SEEK_END = 2
@@ -328,8 +320,17 @@ int main( int argc, char* argv[]){
     malloc_init();
     
     int display_fd = open("/dev/fb", O_WRONLY);    
-    framebuffer_addr = mmap(NULL, FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGTH*4, 0, 0, display_fd, 0); //mapping framebuffer
+    if(display_fd == -1){
+        puts("failed to open /dev/fd, exitting...");
+        return 1;
+    }
 
+    framebuffer_addr = mmap(NULL, FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGTH*4, 0, 0, display_fd, 0); //mapping framebuffer
+    if(framebuffer_addr == (void*)-1){
+        puts("failed to map display_fd, exitting...");
+        return 1;
+    }
+    
     //hopefully it's gonna be linear
     backbuffer_addr = mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
     for(int i = 1; i < 1 + (FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGTH*4 / 4096) ; ++i){

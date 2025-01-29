@@ -3,13 +3,6 @@
 
 
 typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
-
-typedef enum{
     SEEK_SET = 0,
     SEEK_CUR = 1, 
     SEEK_END = 2

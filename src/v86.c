@@ -2,9 +2,12 @@
 
 
 pcb_t * v86_create_task(char * filename){
-    file_t file;
-    file.f_inode = tar_get_file(filename, O_RDONLY);
-    if(!file.f_inode){
+    
+    
+    fs_node_t* file_node = kopen(filename, O_RDONLY);
+    // file_t file;
+    // file.f_inode = tar_get_file(filename, O_RDONLY);
+    if(!file_node){
         return NULL;
     }
 
@@ -27,9 +30,11 @@ pcb_t * v86_create_task(char * filename){
         map_virtaddr_d(p->page_dir, (void*)(i*0x1000) , (void*)(i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
     }
     
-    map_virtaddr(memory_window, (void *)0x7000, PAGE_PRESENT | PAGE_READ_WRITE);
-    memcpy((void *)(((uint32_t)memory_window) + 0xc00), &file.f_inode[1], 512); // a sector
-    unmap_virtaddr(memory_window);
+    
+    // map_virtaddr(memory_window, (void *)0x7000, PAGE_PRESENT | PAGE_READ_WRITE);
+    // read_fs(file_node, 0, file_node->length, memory_window);
+    // unmap_virtaddr(memory_window);
+    // memcpy((void *)(((uint32_t)memory_window) + 0xc00), &file.f_inode[1], 512); // a sector
 
     //kernel stack 
     void * page = kpalloc(1);
@@ -199,17 +204,17 @@ void v86_monitor(struct regs * r, pcb_t * task){
         break;
 
     case V86_IRET:
-        uart_print(COM1, "v86:iret\r\n");
-
-        if(task->pid >= 0){
+            uart_print(COM1, "v86:iret\r\n");
 
             r->eip = stack[0];
             r->cs = stack[1];
             r->eflags = (1 << V86_IF_BIT) | (1 << V86_VM_BIT) | stack[2];
             r->eflags =  (r->eflags & ~(1 << V86_IF_BIT) )  | ((1 << V86_IF_BIT) * (stack[2] & (1 << V86_IF_BIT)) != 0); //hmmmm
             r->useresp = ((r->useresp & 0xffff) + 6) & 0xffff;
+
+            current_process->state = TASK_ZOMBIE;
             break;
-        }
+        
 
         /*
             uint32_t * recovery_info = current_process->kstack;
@@ -220,57 +225,57 @@ void v86_monitor(struct regs * r, pcb_t * task){
 
         */        
         
-        u32 * pk = (u32 *)current_process->kstack;
+        // u32 * pk = (u32 *)current_process->kstack;
         
-        u32 * old_ebp = (u32 *)pk[0];
-        context_t * old_v86ctx = (context_t *)pk[1]; 
-        pcb_t * old_context = (pcb_t *)&pk[2]; 
+        // u32 * old_ebp = (u32 *)pk[0];
+        // context_t * old_v86ctx = (context_t *)pk[1]; 
+        // pcb_t * old_context = (pcb_t *)&pk[2]; 
 
 
-        fb_console_printf("[0]:%x [1]:%x [2]:%x\n", old_ebp, old_v86ctx, old_context);
-        old_v86ctx->eax = r->eax;
-        old_v86ctx->ebx = r->ebx;
-        old_v86ctx->ecx = r->ecx;
-        old_v86ctx->edx = r->edx;
-        old_v86ctx->esp = r->esp;
-        old_v86ctx->ebp = r->ebp;
-        old_v86ctx->esi = r->esi;
-        old_v86ctx->edi = r->edi;
-        old_v86ctx->eflags = r->eflags;
-        old_v86ctx->eip = r->eip;
+        // fb_console_printf("[0]:%x [1]:%x [2]:%x\n", old_ebp, old_v86ctx, old_context);
+        // old_v86ctx->eax = r->eax;
+        // old_v86ctx->ebx = r->ebx;
+        // old_v86ctx->ecx = r->ecx;
+        // old_v86ctx->edx = r->edx;
+        // old_v86ctx->esp = r->esp;
+        // old_v86ctx->ebp = r->ebp;
+        // old_v86ctx->esi = r->esi;
+        // old_v86ctx->edi = r->edi;
+        // old_v86ctx->eflags = r->eflags;
+        // old_v86ctx->eip = r->eip;
 
 
-        vbe_info_block_t * t = r->edi;
-        fb_console_printf("eax: %x\n", r->eax);
-        fb_console_printf("edi: %x\n", r->edi);
+        // vbe_info_block_t * t = r->edi;
+        // fb_console_printf("eax: %x\n", r->eax);
+        // fb_console_printf("edi: %x\n", r->edi);
 
-        fb_console_put("VBE SIGNATURE: ");
-        for(int i = 0; i < 4; ++i)
-            fb_console_putchar(t->VbeSignature[i]);    
-        fb_console_putchar('\n');
-
-
-
-        *current_process = *old_context;
+        // fb_console_put("VBE SIGNATURE: ");
+        // for(int i = 0; i < 4; ++i)
+        //     fb_console_putchar(t->VbeSignature[i]);    
+        // fb_console_putchar('\n');
 
 
-        current_process->regs.ebp = old_ebp[0];  
-        current_process->regs.esp = old_ebp[0];
 
-        current_process->regs.eip = old_ebp[1];
-
-        // current_process->regs.eflags &= ~(1ul << V86_VM_BIT);
-        // current_process->regs.cs = (1 * 8 ) | 0;
-        // current_process->regs.ds = (2 * 8 ) | 0;
-        // current_process->regs.es = (2 * 8 ) | 0;
-        // current_process->regs.fs = (2 * 8 ) | 0;
-        // current_process->regs.gs = (2 * 8 ) | 0;
+        // *current_process = *old_context;
 
 
-        current_process->state = TASK_LOADING;
-        // terminate_process(current_process);
-        context_switch_into_process(r, current_process);
-        schedule(r);
+        // current_process->regs.ebp = old_ebp[0];  
+        // current_process->regs.esp = old_ebp[0];
+
+        // current_process->regs.eip = old_ebp[1];
+
+        // // current_process->regs.eflags &= ~(1ul << V86_VM_BIT);
+        // // current_process->regs.cs = (1 * 8 ) | 0;
+        // // current_process->regs.ds = (2 * 8 ) | 0;
+        // // current_process->regs.es = (2 * 8 ) | 0;
+        // // current_process->regs.fs = (2 * 8 ) | 0;
+        // // current_process->regs.gs = (2 * 8 ) | 0;
+
+
+        // current_process->state = TASK_LOADING;
+        // // terminate_process(current_process);
+        // context_switch_into_process(r, current_process);
+        // schedule(r);
         break;
 
     case V86_CLI:

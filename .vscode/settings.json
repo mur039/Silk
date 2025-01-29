@@ -24,7 +24,15 @@
         "vmm.h": "c",
         "ata.h": "c",
         "sysinfo.h": "c",
-        "v86.h": "c"
+        "v86.h": "c",
+        "dev.h": "c",
+        "nulldev.h": "c",
+        "vfs.h": "c",
+        "tar.h": "c",
+        "sys.h": "c",
+        "uart.h": "c",
+        "semaphore.h": "c",
+        "queue.h": "c"
     }
     
 }

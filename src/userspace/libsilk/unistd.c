@@ -7,10 +7,6 @@ size_t write(int fd, const void *buf, size_t count){
     return syscall(SYSCALL_WRITE, fd, buf, count);   
 }
 
-int open(const char * s, int mode){
-    return syscall(SYSCALL_OPEN, s, mode );
-}
-
 int read(int fd, void * buf, int count){
     return syscall(SYSCALL_READ, fd, buf, count);
 }
@@ -82,9 +78,40 @@ int chdir(const char* path){
 
 }
 
+size_t getdents(int fd, void * dirp,  unsigned int count){
+    return syscall(SYSCALL_GETDENTS, fd, dirp, count);
+
+}
+
 int sysinfo(struct sysinfo *info){
     return syscall(SYSCALL_SYSINFO, info);
 }
+
+
+/*
+*/
+int mount(const char *source, const char *target,
+          const char *filesystemtype, unsigned long mountflags,
+          const void * data)
+{
+
+    return syscall(SYSCALL_MOUNT, source ,target, filesystemtype, mountflags, data);
+}
+
+
+int unlink(const char* pathname){
+    return syscall(SYSCALL_UNLINK, pathname);
+}
+
+int mkdir(const char* pathname, int mode){
+    return syscall(SYSCALL_MKDIR, pathname, mode);
+}
+
+
+
+
+
+
 
 
 

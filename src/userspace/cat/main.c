@@ -3,14 +3,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
-
-
 int fileno_stdout = 0;
 
 int puts(char * dst){
@@ -57,7 +49,7 @@ int main(int argc, char ** argv){
     }
 
     int _byte = 0;
-    while( read(fd_file, &_byte, 1) != 0){
+    while( read(fd_file, &_byte, 1)){
         putchar(_byte);
     }
 

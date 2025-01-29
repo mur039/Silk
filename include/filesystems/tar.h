@@ -7,25 +7,6 @@
 #include <dev.h>
 #include <filesystems/vfs.h>
 
-typedef enum{
-    O_RDONLY = 0b001,
-    O_WRONLY = 0b010, 
-    O_RDWR   = 0b100
-
-} file_flags_t;
-
-typedef enum {
-    REGULAR_FILE = 0,
-    LINK_FILE,
-    RESERVED_2,
-    CHARACTER_SPECIAL_FILE,
-    BLOCK_SPECIAL_FILE,
-    DIRECTORY,
-    FIFO_SPECIAL_FILE,
-    RESERVED_7
-} file_types_t;
-
-
 typedef union
 {
 	struct{
@@ -70,6 +51,11 @@ file_types_t tar_get_filetype(tar_header_t * tar);
 int tar_get_major_number(tar_header_t * t);
 int tar_get_minor_number(tar_header_t * t);
 int32_t tar_read_dir(file_t * dir, tar_header_t ** out);
+
+
+finddir_type_t tar_finddir_initrd (struct fs_node* node, char *name);
+fs_node_t * tar_node_create(void * tar_begin, size_t tar_size);
+fs_node_t* tar_convert_tmpfs(void* tar_begin, uint32_t binary_size);
 
 
 #endif

@@ -10,20 +10,30 @@
 #include <str.h>
 #include <pit.h>
 #include <gdt.h>
+
+#include <timer.h>
 #include <dev.h>
 #include <ps2.h>
 #include <cmos.h>
 #include <ps2_mouse.h>
 #include <kb.h>
-#include <timer.h>
 #include <pci.h>
 #include <virtio.h>
+#include <tty.h>
 
 #include <v86.h>
 #include <glyph.h>
 #include <fb.h>
 #include <filesystems/tar.h>
 #include <filesystems/vfs.h>
+#include <filesystems/nulldev.h>
+#include <filesystems/proc.h>
+#include <filesystems/tmpfs.h>
+#include <filesystems/ata.h>
+#include <filesystems/fat.h>
+#include <filesystems/ext2.h>
+
+
 #include <syscalls.h>
 #include <elf.h>
 #include <process.h>
@@ -57,7 +67,6 @@ uint8_t kbd_scancode;
 
 
 semaphore_t * semaphore_uart_handler = NULL;
-
 
 void keyboard_handler(struct regs *r)
 {
@@ -153,117 +162,73 @@ void keyboard_handler(struct regs *r)
 
 
 
-void kernel_thread(void){
-    
-    context_t v86_ctx;
-    memset(&v86_ctx, 0, sizeof(context_t));
-    v86_ctx.cr3 = current_process->regs.cr3;
-    v86_ctx.eflags = current_process->regs.eflags;
-    
-    v86_ctx.eax = 0x0003;
-    v86_ctx.cs = 0;
-    v86_ctx.ds = 0;
-    v86_ctx.es = 0;
-    v86_ctx.fs = 0;
-    v86_ctx.gs = 0;
-    v86_ctx.ss = 0;
-
-    v86_ctx.edi = 0x7E00;
 
 
 
-    u8 * page = kpalloc(1);
-    map_virtaddr_d(current_process->page_dir, (void *)0x8000, get_physaddr(page), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-    
 
-    save_current_context(current_process);
-    
-    v86_int(0x10, &v86_ctx);
-    
-
-    if((v86_ctx.eax & 0xffff) != 0x0004f){
-        fb_console_printf("the fuck?\n");
-        current_process->state = TASK_ZOMBIE;
-        idle();
-    }
-
-    uint8_t * ptr = (void *)(v86_ctx.es*0x10 + v86_ctx.edi);
-    vbe_info_block_t * t = (void *)ptr;
-    
-    
-    if(memcmp(t->VbeSignature, "VESA", 4)){
-
-            kxxd(t, 512);
-
-        //well let's look for the VESA
-        for(uint8_t * head = 0; head < 0x100000; head++){
-            if(!memcmp(head, "VESA", 4)){
-                fb_console_printf("Found \"VESA\" at : %x\n", head);
-                kxxd(head, 512);
-                t = head;
-                break;
-            }
-        }
-
-
-
-        // fb_console_printf("Invalid VESA signature\n");
-        // current_process->state = TASK_ZOMBIE;
-        // while(1);
-
-    }
-    
-
-    fb_console_printf("VBA version: %x\n", t->VbeVersion);
-    fb_console_printf("VBA video mode table: %x:%x\n", t->VideoModePtr[0], t->VideoModePtr[1]);
-    
-    uint16_t * video_modes = (uint16_t *)((t->VideoModePtr[0] * 16) + t->VideoModePtr[1]);
-    fb_console_printf("physical ptr:%x\n", video_modes);
-
-    for( int i = 0; video_modes[i] != 0xffff ; i++ ){
-        fb_console_printf("%u -> %x\n", i, video_modes[i]);
-    }
-    
-
-    while(1){
-    }
-    return;
-
-}
 
 
 uint32_t kernel_stack[2048];
 uint32_t kernel_syscallstack[256];
 
 
-void ktty(){
-    //we will drop here from somewhere either no proc or some magic key?
-    enable_interrupts();
-    char *linebuffer = kcalloc(256, 1);
-    char ** words = NULL;
-    fb_console_put("\nkernel>");
-    while(1){
-        if(is_kbd_pressed){
-
-            char c = kb_ch;
-            switch(c){
-                case '\n':
-                case '\r':
-                    fb_console_put("\nkernel>");
-                    break;
-
-
-                default:
-                    fb_console_putchar(c);
-                    break;
-            }
-        }
-
-
-    }
+static void in_kernel_yield(struct regs* r){
+    save_context(r, current_process);
+    schedule(r);
+    return;
 }
 
 
+void vfs_traverse(fs_node_t* root_node, int depth){
+
+    char* spacing = kcalloc(1, depth + 1);
+    for(int i = 0; i < depth; ++i)
+        spacing[i] = ' ';
+    
+    
+    
+     while(1){
+
+        int old_offset = root_node->offset;
+        struct dirent* item = readdir_fs(root_node, root_node->offset);
+        
+        if(old_offset > root_node->offset){
+            break;
+        }
+
+        if(item){
+            switch(item->type){
+                case FS_FILE:
+                    fb_console_printf("%sname : %s> file\n",spacing,  item->name);
+                    break;
+                
+                case FS_DIRECTORY:
+                    fb_console_printf("%sname : %s> dir\n",spacing, item->name);
+                    fs_node_t* dnode = finddir_fs(root_node, item->name);
+                    
+                    
+
+                    if(!strcmp(root_node->name, dnode->name)){ return;}
+
+                    vfs_traverse( dnode, depth + 1);
+                    break;
+
+                default:break;
+            }
+			// char* name = strdup(item->name);
+			// list_insert_end(list, name);
+        	kfree(item);
+        }
+        else{
+            break;
+        }
+    }
+
+}
+
+
+
+//test functions for ata device
 
 void kmain(multiboot_info_t* mbd){ //high kernel
 
@@ -326,6 +291,11 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     irq_install_handler(PS2_KEYBOARD_IRQ, keyboard_handler);
     irq_install_handler(UART_IRQ, uart_handler);
     irq_install_handler(PS2_MOUSE_IRQ, ps2_mouse_handler);
+    // irq_install_handler(ATA_MASTER_IRQ, ata_master_irq_handler);
+
+    //for in kernel yield for kernel_threads
+    // idt_set_gate(0x81, (unsigned)in_kernel_yield, 0x08, 0xEE);//0x8E); //syscall
+
 
     //fiz paging problems
     virt_address_t addr;
@@ -345,52 +315,53 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
 
     for(unsigned int i = 0; i < (modules[0].mod_end - modules[0].mod_start)/4096 ; ++i){
-        map_virtaddr(
-            (void *)modules[0].mod_start + i*0x1000,
-            (void *)modules[0].mod_start + i*0x1000,
-            PAGE_PRESENT | PAGE_READ_WRITE
-        );
-        
         
         pmm_mark_allocated((void *)modules[0].mod_start + i*0x1000);
-
     }
-
-    
-
-
     flush_tlb();
 
 
     pmm_print_usage();
-    kmalloc_init(50);
+    kmalloc_init(100);
     alloc_print_list();
     
-    vfs_init();
-   
-   
+    
     //turn it into to driver of sort?
     void * tar_begin = (void*)kernel_heap;
+    size_t tar_size = (modules[0].mod_end - modules[0].mod_start);
+
     tar_add_source(tar_begin);
-    for(unsigned int i = 0; i < (modules[0].mod_end - modules[0].mod_start)/4096 ; ++i){
+    for(unsigned int i = 0; i < tar_size/4096 + (tar_size % 4096 == 0) ; ++i){
         map_virtaddr(kernel_heap, (void *)(modules->mod_start + i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE);
         kernel_heap += 0x1000;
-    }
+    }    
 
+
+    vfs_install();
+  
+    vfs_mount("/", tar_node_create(tar_begin, tar_size));
+    vfs_mount("/dev", devfs_create());
+    vfs_mount("/proc", proc_create());
+
+
+
+
+    fs_node_t* font_file = kopen("/share/screenfonts/consolefont_14.psf", O_RDONLY);
+    if(!font_file){
+        uart_print(COM1, "Failed to open font\r\n");
+        halt();
+        }
 
     
+    uint8_t* font_file_buffer = kmalloc(font_file->length);
+    if(!font_file_buffer)
+        error("failed to allocate space for font file");
+        
+    read_fs(font_file, 0, font_file->length, font_file_buffer);
+    parse_psf( font_file_buffer);
+    
+    close_fs(font_file);
 
-
-
-    //again a bit ugly innit
-    file_t font;    
-    font.f_inode = tar_get_file("/share/screenfonts/consolefont_14.psf", O_RDONLY);
-    if(font.f_inode == NULL){
-        uart_print(COM1, "Failed to open font\r\n");
-    }
-    font.f_mode = O_RDONLY; 
-    parse_psf(&(font.f_inode[1]));
-   
     uart_print(COM1, "Framebuffer at %x : %u %u %ux%u\r\n", 
                 mbd->framebuffer_addr_lower,
                 mbd->framebuffer_bpp,
@@ -399,18 +370,21 @@ void kmain(multiboot_info_t* mbd){ //high kernel
                 mbd->framebuffer_height
                  );
     init_framebuffer((void*)mbd->framebuffer_addr_lower, mbd->framebuffer_width, mbd->framebuffer_height);
-    init_fb_console(-1, -1); //maximum size //requires fonts tho
     fb_set_console_color( (pixel_t){.blue = 0xff, .red = 0xff, .green = 0xff }, (pixel_t){.blue = 0x00, .red = 0x00, .green = 0x00 });
 
- 
+    uint32_t console_size =  init_fb_console(-1, -1); //maximum size //requires fonts tho
+    uint32_t row,col;
 
-    vfs_node_t * tar_node = kcalloc(1, sizeof(vfs_node_t));
+    row = console_size & 0xffff;
+    col = console_size >> 16;
+    fb_console_printf("init console dimensions: %ux%u\n", col, row);    
+
+
+    pmm_print_usage();    
+
     
-    vfs_mount("/", tar_node);
 
-
-
-
+#if 0
     rsdp_t rsdp = find_rsdt();
     if(!rsdp_is_valid(rsdp)){
         fb_console_put("Failed to find rsdp in the memory, halting...");
@@ -483,7 +457,7 @@ void kmain(multiboot_info_t* mbd){ //high kernel
         fb_console_printf("->%u : %s\n", i, h[i].Signature);
     }
 
-
+#endif
 
     
 
@@ -506,13 +480,16 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     install_syscall_handler( SYSCALL_WAIT4, syscall_wait4);
     install_syscall_handler(  SYSCALL_MMAP, syscall_mmap);
     install_syscall_handler(  SYSCALL_KILL, syscall_kill);
+    install_syscall_handler(SYSCALL_GETDENTS, syscall_getdents);
     install_syscall_handler(SYSCALL_GETCWD, syscall_getcwd);
     install_syscall_handler(SYSCALL_CHDIR, syscall_chdir);
     install_syscall_handler(SYSCALL_SYSINFO, syscall_sysinfo);
+    install_syscall_handler(SYSCALL_MOUNT, syscall_mount);
+    install_syscall_handler(SYSCALL_UNLINK, syscall_unlink);
+    install_syscall_handler(SYSCALL_MKDIR, syscall_mkdir);
 
     timer_install();
     timer_phase(1000);
-    register_timer_callback(schedule);
     
     enumerate_pci_devices();
     
@@ -539,51 +516,54 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
     }
 
-    fb_console_printf("Installing semaphore for uart handler\n");
-    semaphore_uart_handler = kcalloc(1, sizeof(semaphore_t));
-    *semaphore_uart_handler = semaphore_create(1);
 
     ps2_mouse_initialize();
+
+    ata_find_devices();
     
+    //maybe implement pivot root?
+    //forcefully change the root
+    // struct vfs_entry* r =  fs_tree->root->value;
+    // r->file = NULL;
+    // vfs_mount("/", fat_node_create(drive0) );   
+  
+    device_t* console = kcalloc(1, sizeof(device_t));
+    console->name = strdup("console");
+    console->write = console_write;
+    console->read = console_read;
+    console->dev_type = DEVICE_CHAR;
+    console->unique_id = 2;
+    
+    dev_register(console);
+
+    dev_register( create_uart_device(COM1));
+
+
+    device_t* fb = kcalloc(1, sizeof(device_t));
+    fb->name = strdup("fb0");
+    fb->write = fb_write;
+    fb->dev_type = DEVICE_BLOCK;
+    fb->unique_id = 6;
+    dev_register(fb);
+        
     process_init();
 
     char * init_args[] = {
         "/bin/init",
+        NULL,
         NULL
     };
-
-    // for(uint16_t ch = 0; ch < 512; ++ch){
-    //     fb_console_printf("%u : ", ch);
-    //     fb_console_putchar(ch);
-    //     fb_console_putchar('\n');
-    // }
 
     pcb_t * init =  create_process("/bin/init", init_args);
     init->parent = NULL;
 
 
-    // uint8_t * _3page = kpalloc(3);
-    // tss_entry_t * v86_tss =  _3page; // tss_struct + 8192 byte i/o bitmap
-    
-    
-    // uint32_t limit = 3 * 4096;
-    // write_tss(&gdt[5], v86_tss, limit);
-    // v86_tss->iomap_base = 0x1000;
-    // memset(&_3page[0x1000], 0x00, 8192);
-    // set_kernel_stack((uint32_t)&kernel_syscallstack[127], v86_tss);
-    // flush_tss();
-    
-    // u8 * kt_stack_page = kpalloc(1);
-    // pcb_t * kt = create_kernel_process(kt_stack_page ,kt_stack_page + 0x1000, kernel_thread, NULL );
-
-    // pcb_t * init =  v86_create_task("/bin/v86.bin");
-    // init->parent = NULL;
-
-
+    register_timer_callback(schedule);
     enable_interrupts();    
     jump_usermode(); //thus calling schedular
 
     
+    //we shouldn't get there
     for(;;)
     {
     

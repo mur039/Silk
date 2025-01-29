@@ -18,6 +18,30 @@ int va_sprintf(char * dest, const char *format, va_list args){
             ++format;
             switch (*format)
             {
+
+            case 'u': //32 bit unsigned integer has maximum 9,38 + 1 = 11 digits
+                ;
+                char line_buffer[11];
+                unsigned int number = va_arg(args, unsigned int);
+                int t1, t2;
+                t1 = number;
+                for(int i = 0; i < 11; ++i){
+                    t2 = t1 / 10;
+                    t2 *= 10;
+                    line_buffer[i] = (t1 - t2);
+                    t1 /= 10;
+                }
+
+                int found_non_zero = 0;
+                for(int i = 9; i >= 0; --i){
+                    if( found_non_zero == 0 && line_buffer[i] != 0) found_non_zero = 1;
+
+                    if(found_non_zero || (i == 0 && !found_non_zero)) 
+                        *(dest++) = '0' + line_buffer[i];
+                }
+
+                break;
+
             case 'c': //character
                 ;
                 int ch = va_arg(args, int); //char gets promoted to int 
@@ -222,6 +246,11 @@ int is_char_in_str(const char c, const char * str){
 }
 
 int strcmp(const char *str1, const char * str2){
+    
+    //don't dereference null pointers
+    if(!str1 || !str2)
+        return -1;
+
     for(int i = 0; ; ++i){
 
         //ugly af but true to the reference i suppose
@@ -289,6 +318,19 @@ char * strcpy(char* dst, const char* src){
     }
 
     return dst;
+}
+
+char * strcat(char* dst, const char* src){
+    strcpy(dst + strlen(dst), src);
+    return dst;
+
+}
+#include <pmm.h>
+char *strdup(const char *s){
+    size_t str_len = strlen(s) + 1;
+    char* retval = kcalloc(str_len, 1);
+    strcpy(retval, s);
+    return retval;
 }
 
 void kxxd(const char * src, size_t len){

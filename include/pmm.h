@@ -1,7 +1,7 @@
 #ifndef __PMM_H_
 #define __PMM_H_
-#include <stdint.h>
 #include <sys.h>
+#include <stdint.h>
 #include <str.h>
 
 /*only works after high-kernel initialized*/
@@ -104,7 +104,7 @@ struct Block
 typedef struct Block block_t;
 void kmalloc_init(int npages);
 void * kmalloc(unsigned int size);
-void * kcalloc(u32 nmemb, u32 size);
+void * kcalloc(uint32_t nmemb, uint32_t size);
 void * krealloc( void *ptr, size_t size);
 void kfree(void * ptr);
 

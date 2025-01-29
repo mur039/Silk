@@ -1,12 +1,15 @@
 #include <dev.h>
-
+#include <uart.h>
 #define MAX_DEVICE 64
 device_t *devices = 0;
-int lastid = 0;
+static int lastid = 0;
 
 
 void dev_init(){
 	devices = (device_t*)kmalloc(MAX_DEVICE * sizeof(device_t)); //max 64 devices it seems
+	if(!devices)
+		error("device init failed");
+
 	memset(devices, 0, 64*sizeof(device_t));
 	lastid = 0;
 	fb_console_printf("Device Manager initialized.\n");
@@ -14,12 +17,13 @@ void dev_init(){
 }
 
 
+
+
 int dev_register(device_t* dev)
 {
 	devices[lastid] = *dev;
 	fb_console_printf("Registered Device %s (%u) as Device#%u\n", dev->name, dev->unique_id, lastid);
-	lastid++;
-	return lastid-1;
+	return lastid++;
 }
 
 void list_devices(){
@@ -37,5 +41,156 @@ device_t * dev_get_by_index(int index){
 	if(index < MAX_DEVICE && index < lastid){
 		return &devices[index];
 	}
+	return NULL;
+}
+
+device_t * dev_get_by_name(const char* devname){
+	for(int i = 0; i < MAX_DEVICE && i < lastid; ++i){
+
+		if(!strcmp(devices[i].name, devname)){
+			return &devices[i];
+		}
+	}
+	return NULL;
+
+}
+
+
+
+fs_node_t * devfs_create() {
+	fs_node_t * fnode = kmalloc(sizeof(fs_node_t));
+	if(!fnode)
+		error("failed to create devfs");
+
+	memset(fnode, 0x00, sizeof(fs_node_t));
+	fnode->inode = 0;
+	
+	strcpy(fnode->name, "devfs");
+	fnode->uid = 0;
+	fnode->gid = 0;
+	fnode->flags   = FS_DIRECTORY;
+	fnode->read    = NULL;
+	fnode->write   = NULL;
+	fnode->open    = NULL;
+	fnode->close   = NULL;
+	fnode->readdir = devfs_readdir;
+	fnode->finddir = devfs_finddir;
+	fnode->ioctl   = NULL;
+	return fnode;
+}
+
+
+read_type_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+
+	device_t * dev = node->device;
+	if(dev->dev_type == DEVICE_CHAR){
+		return 0;
+	}
+	else{ //block device
+		uint32_t * priv = dev->priv;
+		size_t max_size = priv[0];
+		uint8_t* raw_block = (void*)priv[1];
+
+		if(offset >= max_size){
+			return 0;
+		}
+
+		memcpy(buffer, &raw_block[offset], size);
+		node->offset += size;
+		return size;
+	}
+}
+
+
+
+write_type_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+
+	device_t * dev = node->device;
+	if(dev->dev_type == DEVICE_CHAR){
+		return 0;
+	}
+	else{ //block device
+
+		uint32_t * priv = dev->priv;
+		size_t max_size = priv[0];
+		uint8_t* raw_block = (void*)priv[1];
+
+
+		if(offset >= max_size){
+			return 0;
+		}
+
+		if(offset + size >= max_size){
+			size = max_size - offset;
+		}
+
+		memcpy(&raw_block[offset], buffer, size);
+		node->offset += size;
+		return size;
+	}
+}
+
+
+
+finddir_type_t devfs_finddir(struct fs_node* node, char *name){
+    //from here name should be ../dir/
+    fb_console_printf("devfs: path:%s\n", name);
+
+	
+    //assume we have it
+    device_t* dev = dev_get_by_name(name);
+
+    if(dev){ //found a mathc
+        // fb_console_printf("found:%s\n", dev->name);
+        struct fs_node * fnode = kcalloc(1, sizeof(struct fs_node));
+        fnode->inode = 1;
+		
+        strcpy(fnode->name, dev->name);
+        fnode->uid = 0;
+	    fnode->gid = 0;
+		fnode->device = dev;
+
+        fnode->flags   = dev->dev_type == DEVICE_CHAR?  FS_CHARDEVICE  : FS_BLOCKDEVICE;
+	    fnode->read    = dev->read;
+	    fnode->write   = dev->write;
+	    fnode->open    = dev->open;
+	    fnode->close   = dev->close;
+	    fnode->readdir = dev->readdir;
+	    fnode->finddir = dev->finddir;
+	    fnode->ioctl   = dev->ioctl;
+        return fnode;
+        
+    }
+
+    return NULL;
+
+}
+ 
+static struct dirent * devfs_readdir(fs_node_t *node, uint32_t index) {
+	// fb_console_printf("devfs_readdir: index:%u::%s\n", index, node->name);
+
+	if(node->flags != FS_DIRECTORY){
+		return NULL;
+	}
+	
+
+	
+	if(index < lastid){
+		
+		device_t dev = devices[index];
+		
+		struct dirent * out = kcalloc(1, sizeof(struct dirent));
+		out->ino = index;
+		out->type = dev.dev_type == DEVICE_CHAR ? FS_CHARDEVICE : FS_BLOCKDEVICE;
+		out->off = index;
+		out->reclen = 0;
+		strcpy( out->name, dev.name);
+
+		node->offset++;
+		return out;
+		
+	}
+	
+	node->offset = 0;
 	return NULL;
 }

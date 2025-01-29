@@ -41,7 +41,7 @@ uint8_t framebuffer_write_wrapper(uint8_t * buffer, uint32_t offset, uint32_t le
 
 int framebuffer_raw_write(size_t start, void * src, size_t count){
     memcpy(&framebuffer_addr[start], src, count);
-    return 0;
+    return count;
 }
 
 
@@ -88,7 +88,7 @@ static int fb_console_rows;
 
 /*-1 means maximum*/
 
-void init_fb_console(int cols, int rows){
+uint32_t init_fb_console(int cols, int rows){
     
     fb_console_cols =  (cols == -1) ? (int)(framebuffer_width / 8) :cols; 
     fb_console_rows =  (rows == -1) ? (int)(framebuffer_heigth / get_glyph_size()) :rows;
@@ -102,6 +102,11 @@ void init_fb_console(int cols, int rows){
     fb_fg.red   = 0xff;
     fb_fg.green = 0xff;
     fb_fg.blue  = 0xff;
+
+    uint32_t retval;
+    retval = fb_console_rows & 0xffff;
+    retval |= (fb_console_cols & 0xffff) << 16; 
+    return retval;   
 }
 
 void fb_set_console_color(pixel_t fg, pixel_t bg){
@@ -147,7 +152,7 @@ void fb_console_putchar(unsigned short c){
             // fb_console_printf("well escape code buffer is : %s\n", parse_head); //recursion mf
 
             // number1;number2opcode
-            list_t _parsed_args = {.head = NULL, .tail = NULL, .size = 0};
+            list_t _parsed_args = list_create();
             
             
             for(int i = 1, previous_head = 1, symbol_type = 0;  ; ++i){
@@ -317,7 +322,7 @@ void fb_console_putchar(unsigned short c){
                     
                     {
                         int color_args[5] = {-1, -1, -1, -1, -1}; //atoi(escape_code_args[0]); //must exist
-                        for(int i = 0; i < _parsed_args.size; ++i){
+                        for(unsigned int i = 0; i < _parsed_args.size; ++i){
                             color_args[i] = atoi(escape_code_args[i]); //must exist
                         }
 
@@ -392,15 +397,15 @@ void fb_console_putchar(unsigned short c){
 
 
 
-
-
-
-
-            //clear everything
-            for(listnode_t * node = _parsed_args.head; node != NULL; node = node->next){
+            // clear everything
+            for(;;){
+                listnode_t* node = list_remove(&_parsed_args, _parsed_args.head);
+                if(!node) break;
                 kfree(node->val);
-                list_remove(&_parsed_args, node);                
+                kfree(node);
             }
+            // _parsed_args = list_create();
+
             kfree(escape_code_args);
             tty_console_escape_encoder_buffer_head = 0;
             memset(tty_console_escape_encoder_buffer, 0, TTY_CONSOLE_ESCAPE_ENCODER_BUFFER_SIZE);
@@ -534,3 +539,42 @@ void fb_console_printf(const char * fmt, ...){
     );
     return;
 }
+
+
+write_type_t console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+    (void)node;
+    (void)offset;
+    
+    fb_console_write(buffer, 1, size);
+    return size;
+}   
+
+
+extern volatile int  is_kbd_pressed;
+extern char kb_ch;
+extern uint8_t kbd_scancode;
+
+read_type_t console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+    (void)node;
+    (void)offset;
+    (void)size;
+    if(is_kbd_pressed){
+        is_kbd_pressed = 0;
+        *buffer = kb_ch;
+        return 1;
+    }
+
+    //should block but
+    return 0;
+}
+
+// int framebuffer_raw_write(size_t start, void * src, size_t count){
+//     memcpy(&framebuffer_addr[start], src, count);
+//     return count;
+// }
+
+
+write_type_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+    (void)node;
+    return framebuffer_raw_write(offset, buffer, size);
+}   

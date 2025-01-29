@@ -1,5 +1,5 @@
 #include <filesystems/tar.h>
-
+#include <uart.h>
 
 static const char * type_table[23] = {
     "Regular File",
@@ -12,6 +12,17 @@ static const char * type_table[23] = {
     "Reserved 7"
 	};
     
+
+static int tar_filetype_vfs_type[9] = {
+    FS_FILE,
+    FS_SYMLINK,
+    -1,
+    FS_CHARDEVICE,
+    FS_BLOCKDEVICE,
+    FS_DIRECTORY,
+    FS_PIPE,
+    -1
+};
 
 static tar_header_t * tar;
 int o2d(const char *in)
@@ -195,4 +206,264 @@ int32_t tar_read_dir(file_t * dir, tar_header_t ** out){
 
         // dir->f_pos += 1;
     return 0;
+}
+
+
+
+static struct dirent * tar_readdir_initrd(fs_node_t *node, uint32_t index) {
+	
+    // fb_console_printf("tar_readdir_initrd: index:%u:%s\n", index, node->name);
+    
+    if(node->flags != FS_DIRECTORY){
+        return NULL;
+    }
+
+    //nevermind previous assumption, root directorys and its sub directories are in a list so
+    tar_header_t* head = tar_get_file(node->name, 0);
+    head = tar_next(head);
+
+    for(int l_index = 0; l_index < index ; l_index++){
+
+        head = tar_next(head);
+
+        if(head && !strncmp(node->name, &head->filename[1], strlen(node->name)) ){
+            
+            char * rpath = head->filename + 1 + strlen(node->name);
+            int slash_count =  is_char_in_str('/', rpath);
+
+            if(tar_get_filetype(head) == DIRECTORY ){
+                
+                if(slash_count != 1){
+
+                    l_index--;
+                    continue;
+                }
+            }
+            else{
+                if(slash_count != 0){
+
+                    l_index--;
+                    continue;
+                }
+            }
+            
+            
+            // fb_console_printf("\t->%s::%u::%s\n", rpath, slash_count, type_table[tar_get_filetype(head)]);
+            continue;
+        }
+
+        //no other
+        node->offset = 0;
+        return NULL;
+    }
+
+
+    struct dirent* out = kcalloc(1, sizeof(struct dirent));
+    out->ino = index;
+    out->type = tar_filetype_vfs_type[tar_get_filetype(head)];
+    out->off = index;
+    out->reclen = 0;
+    strcpy(out->name, &head->filename[strlen(node->name) + 1]);
+    if(out->name[strlen(out->name) - 1] == '/') out->name[strlen(out->name) - 1] = '\0';
+    // memcpy(out->name, &head->filename[strlen(node->name) + 1], strlen(node->name));
+
+    node->offset++;
+    return out;
+
+}
+
+static read_type_t tar_read_initrd(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+
+        tar_header_t* thead = node->device;
+
+        if(offset >= o2d(thead->size)){ //EOF
+            return 0;
+        }
+        else{
+        
+            uint8_t  * result;
+            result = (uint8_t*)(&(thead[1]));
+            memcpy(buffer, &result[offset], size);
+
+            node->offset += size;
+            return size;
+        }
+}
+
+
+static uint32_t tar_indode = 0;
+finddir_type_t tar_finddir_initrd (struct fs_node* node, char *name){
+    //from here name should be ../dir/
+    // fb_console_printf("tar_finddir_initrd: path: %s:%s\n", node->name, name);
+
+    //hmm needs / it seems
+    char* nname;
+
+    nname = kcalloc(strlen(node->name) + strlen(name) + 1, 1);
+    
+
+    strcat(nname, node->name);    
+    strcat(nname, name);
+    
+    
+    // fb_console_printf("new path : %s\n", nname );
+    tar_header_t * file = tar_get_file(nname, 0);
+
+    kfree(nname);
+    
+    if(file){
+        // fb_console_printf("found:%s\n", file->filename);
+        struct fs_node * fnode = kcalloc(1, sizeof(struct fs_node));
+        fnode->inode = tar_indode++;
+        strcpy(fnode->name, &file->filename[1]);
+        fnode->uid = o2d( file->uid);
+	    fnode->gid = o2d(file->gid);
+        fnode->impl = 0;
+        fnode->device = file;
+        
+        
+
+        switch(tar_get_filetype(file)){
+            
+            case DIRECTORY:
+                fnode->flags   = FS_DIRECTORY;
+	            fnode->read    = NULL;
+	            fnode->write   = NULL;
+	            fnode->open    = NULL;
+	            fnode->close   = NULL;
+	            fnode->readdir = tar_readdir_initrd;
+	            fnode->finddir = tar_finddir_initrd;
+	            fnode->ioctl   = NULL;
+                break;
+            
+            case REGULAR_FILE:
+                fnode->length = o2d(file->size);
+                fnode->flags   = FS_FILE;
+	            fnode->read    = tar_read_initrd;
+	            fnode->write   = NULL;
+	            fnode->open    = NULL;
+	            fnode->close   = NULL;
+	            fnode->readdir = NULL;
+	            fnode->finddir = NULL;
+	            fnode->ioctl   = NULL;
+                break;
+         
+
+            default:
+                break;
+
+        }
+
+        
+        
+        fnode->offset = 0;
+        return fnode;
+        
+    }
+
+    return NULL;
+
+}
+ 
+
+
+
+fs_node_t * tar_node_create(void * tar_begin, size_t tar_size){
+	fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
+
+	fnode->inode = tar_indode++;
+	strcpy(fnode->name, "/");
+    fnode->device = tar_begin;
+    fnode->impl = 0; //tar file
+	fnode->uid = 0;
+	fnode->gid = 0;
+	fnode->flags   = FS_DIRECTORY;
+	fnode->read    = NULL;
+	fnode->write   = NULL;
+	fnode->open    = NULL;
+	fnode->close   = NULL;
+	fnode->readdir = tar_readdir_initrd;
+	fnode->finddir = tar_finddir_initrd;
+	fnode->ioctl   = NULL;
+    
+	return fnode;
+}
+
+
+#include <filesystems/tmpfs.h>
+fs_node_t* tar_convert_tmpfs(void* tar_begin, uint32_t binary_size){
+
+    tar_header_t* tar = tar_begin;
+    fs_node_t* tmpfs_root = tmpfs_install();
+    tar = tar_next(tar);
+    for(tar_header_t* head = tar;  head ; head = tar_next(head)){
+        
+
+        int is_dir = head->filename[strlen(head->filename) - 1] == '/';
+        fb_console_printf(
+            "->%s %s-> ", head->filename,    
+            is_dir ? "dir"  : "file"
+            );
+        
+        char** pieces = _vfs_parse_path(&head->filename[2]);
+        for(int i = 0; pieces[i] ; i++){
+            fb_console_printf("%s ", pieces[i]);
+        }
+        fb_console_putchar('\n');
+
+
+        //doing work
+
+        fs_node_t* rnode = tmpfs_root;
+        for(int i = 0; pieces[i] ; i++){
+            
+            if(!pieces[i + 1]){
+                
+                switch (tar_filetype_vfs_type[tar_get_filetype(head)]){
+
+                    case FS_DIRECTORY:
+                        mkdir_fs(rnode, pieces[i], 0644);
+                        break;
+
+                    case FS_FILE:
+                        create_fs(rnode, pieces[i], 0x644);
+                        fs_node_t* cnode = finddir_fs(rnode, pieces[i]);
+
+                        struct tmpfs_internal_struct* tis = cnode->device;
+				        tis->priv = kmalloc( o2d(head->size) );
+				        tis->buffer_size =  o2d(head->size);
+
+                        memcpy(tis->priv, &head[1], o2d(head->size));
+                        cnode->length = o2d(head->size);
+                        // write_fs(cnode, 0, o2d(head->size), &head[1]);
+
+                        break;
+
+                    default:break;
+                    
+                }
+                break;
+            }
+
+            //check whether first folders exist for other entries   
+            fs_node_t* dnode = finddir_fs(rnode, pieces[i]);
+            if(!dnode){
+                mkdir_fs(rnode, pieces[i], 0644);
+                dnode = finddir_fs(tmpfs_root, pieces[i]);
+            }  
+
+            rnode = dnode;
+
+
+        }
+
+
+
+
+
+
+    }
+
+    return tmpfs_root;
+
 }

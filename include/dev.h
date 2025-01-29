@@ -2,11 +2,10 @@
 #define __DEV_H__
 
 #include <stdint.h>
+#include <filesystems/vfs.h>
 #include <sys.h>
-#include <fb.h>
 #include <pmm.h>
 #include <str.h>
-#include <filesystems/vfs.h>
 
 typedef enum __device_type {
 	DEVICE_UNKNOWN = 0,
@@ -19,17 +18,35 @@ typedef struct __device_t {
 	char *name;
 	uint32_t unique_id;
 	device_type dev_type;
-	filesystem_t * fs;
+	// filesystem_t * fs;
 	// struct __fs_t *fs;
-	int32_t (*read)(uint8_t* buffer, uint32_t offset , uint32_t len, void* dev);
-	int32_t (*write)(uint8_t *buffer, uint32_t offset, uint32_t len, void* dev);
-	uint8_t (*close)(int t, void* dev);
-	uint8_t (*open) (int t, void* dev);
+	read_type_t read;
+	write_type_t write;
+	open_type_t open;
+	close_type_t close;
+	readdir_type_t readdir;
+	finddir_type_t finddir;
+	create_type_t create;
+	mkdir_type_t mkdir;
+	ioctl_type_t ioctl;
+	get_size_type_t get_size;
 	void *priv;
 } device_t;
 
 void dev_init();
 int dev_register(device_t* dev);
+device_t * dev_get_by_name(const char* devname);
 void list_devices();
+
+
+//test
+fs_node_t * devfs_create();
+read_type_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+write_type_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+
+finddir_type_t devfs_finddir(struct fs_node* node, char *name);
+static struct dirent * devfs_readdir(fs_node_t *node, uint32_t index);
+
+
 
 #endif

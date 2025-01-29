@@ -18,10 +18,14 @@ pcb_t * current_process;
 static inline pcb_t* next_process(pcb_t * cp){
     pcb_t * ret_val;
     if(!cp->self) return (pcb_t *)process_list->head->val;
-    if(cp->self->next){
+
+    if(cp->self->next){ // no next?
         ret_val = cp->self->next->val;
     }
     else{
+        if(!process_list->head){ //no programs_
+            schedule(NULL);
+        }
         ret_val = process_list->head->val;
     }
     return ret_val;
@@ -45,7 +49,7 @@ void process_init() {
 
 
 int newschedule(struct regs * r){
-    if(!current_process){ //coming from pesky ie_func which just loops
+    if(!current_process){
         current_process = queue_dequeue_item(&ready_queue);   
     }
 
@@ -91,16 +95,22 @@ void schedule(struct regs * r){
 
         case TASK_ZOMBIE:
             ;
-            pcb_t * np = next_process(current_process);
-            terminate_process(current_process);
-            current_process = np;
+
+            // if(current_process->regs.eflags & (1 << V86_VM_BIT)){ //v8086 proc
+            //     pcb_t * np = next_process(current_process);
+            //     current_process = np;
+            //     break;
+            // }
+
+            // pcb_t * np = next_process(current_process);
+            // terminate_process(current_process);
+            // current_process = np;
 
 
             break;
 
         case TASK_RUNNING:
             //save context?
-            if(is_first_time){ is_first_time = 0; return;}
 
             if(current_process->recv_signals == 1){ //sigkill
                 
@@ -122,7 +132,11 @@ void schedule(struct regs * r){
             break;
         
         case TASK_INTERRUPTIBLE:
-            // save_context(r, current_process);
+
+            if(current_process->recv_signals == 1){ //sigkill
+                current_process->state = TASK_ZOMBIE;
+                schedule(r);
+            }            
             break;
 
     }
@@ -142,6 +156,7 @@ void schedule(struct regs * r){
 
 
     context_switch_into_process(r, current_process);
+    return;
 }
 
 
@@ -152,14 +167,18 @@ pid_t allocate_pid(){
 
 pcb_t * create_process(char * filename, char **_argv) {
     // Create and insert a process, the pcb struct is in kernel space
-    pcb_t * p1 = kcalloc(sizeof(pcb_t), 1);
+    pcb_t * p1 = kcalloc(1, sizeof(pcb_t));
+
 
     // //passing the arguments obv
-    for(p1->argc = 0 ; _argv[p1->argc] != NULL; p1->argc++);
-    p1->argv = kcalloc( p1->argc, sizeof(char *));
+    for(p1->argc = 0 ; _argv[p1->argc] ; p1->argc++);
+    p1->argv = kcalloc( p1->argc + 1, sizeof(char *)); //must be null terminated
 
     for(int i = 0; i < p1->argc; ++i){
         p1->argv[i] = kmalloc(strlen(_argv[i]) + 1);
+        if(!p1->argv[i]){
+            error("failed to allocate for proc argv");
+        }
         memcpy(p1->argv[i], _argv[i], strlen(_argv[i]) + 1);
     }
 
@@ -170,7 +189,7 @@ pcb_t * create_process(char * filename, char **_argv) {
     memcpy(p1->filename, filename, strlen(filename));
 
     p1->self = list_insert_end(process_list, p1);
-
+    
 
 
 #ifdef DEBUG
@@ -221,13 +240,14 @@ pcb_t * create_process(char * filename, char **_argv) {
     vmem_map_t* empty_pages = kcalloc(1, sizeof(vmem_map_t));
     empty_pages->vmem = 0;
     empty_pages->phymem = 0xc0000000;
-    empty_pages->attributes = (0 << 20) | (786432); //3G -> 786432 pages
+    empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); //3G -> 786432 pages
     list_insert_end(p1->mem_mapping, empty_pages);
 
 
-    // queue_enqueue_item(&ready_queue, p1);
     
     p1->cwd = kmalloc(2);
+    if(!p1->cwd)
+        error("failed to allocate for cwd");
     memcpy(p1->cwd, "/", 2);
     return p1;
 
@@ -236,30 +256,32 @@ pcb_t * create_process(char * filename, char **_argv) {
 pcb_t * load_process(pcb_t * proc){
 
 
-    file_t init;    
-    init.f_inode = tar_get_file(proc->filename, O_RDONLY);
-    if(init.f_inode == NULL){
+    fs_node_t * exec_file = kopen(proc->filename, O_RDONLY);
+
+    if(!exec_file){
         uart_print(COM1, "Failed to open %s\r\n", proc->filename);
         proc->state = TASK_ZOMBIE;
         return NULL;
     }
 
-//Check whether executable is a suitable elf file
-    Elf32_Ehdr* elf_header = (Elf32_Ehdr*)&init.f_inode[1];
-    if(memcmp(elf_header->e_ident, "\x7f\x45\x4c\x46", 4) ){
+    //Check whether executable is a suitable elf file
+    Elf32_Ehdr elf_header;
+    read_fs(exec_file, 0, sizeof(Elf32_Ehdr), (uint8_t*)&elf_header);
+
+    if(memcmp(elf_header.e_ident, "\x7f\x45\x4c\x46", 4) ){
         uart_print(COM1, "Invalid ELF header %s\r\n", proc->filename);
         proc->state = TASK_ZOMBIE;
         return NULL;
     }
 
-    if(elf_header->e_type != ET_EXEC ){
+    if(elf_header.e_type != ET_EXEC ){
         uart_print(COM1, "Only ELF executables supported %s\r\n", proc->filename);
         proc->state = TASK_ZOMBIE;
         return NULL;
     }
 
 
-    if(elf_header->e_machine != EM_386 ){
+    if(elf_header.e_machine != EM_386 ){
         uart_print(COM1, "Only x86 executables supported %s\r\n", proc->filename);
         proc->state = TASK_ZOMBIE;
         return NULL;
@@ -268,17 +290,21 @@ pcb_t * load_process(pcb_t * proc){
 
 //load program headers
 
-
 //switch to process address space
     uint32_t oldcr3;
     oldcr3 = get_cr3();
     set_cr3((u32)get_physaddr(proc->page_dir)  );
-
     flush_tlb();
+    
     //inside the process addr space
+    uint16_t phdr_count = elf_header.e_phnum;
+    Elf32_Phdr *phdr = kmalloc(sizeof(Elf32_Phdr) * phdr_count);
+    if(!phdr)
+        error("failed to allocate for program headers");
+    
+    read_fs(exec_file, elf_header.e_phoff, sizeof(Elf32_Phdr) * phdr_count, (uint8_t*)phdr);
 
-    uint16_t phdr_count = elf_header->e_phnum;
-    Elf32_Phdr * phdr = (Elf32_Phdr*)((unsigned int)elf_header + elf_header->e_phoff);
+    // (Elf32_Phdr*)((unsigned int)elf_header + elf_header.e_phoff);
     vmem_map_t mp;
 
     for(int i = 0; i < phdr_count; ++i){
@@ -286,62 +312,62 @@ pcb_t * load_process(pcb_t * proc){
         if(phdr[i].type == ELF_PT_LOAD){
 
             //create memory mapping and loading
-            uint8_t * data;
-
-            uint8_t * foffset = (uint8_t* )elf_header;
-            foffset += phdr[i].offset;
 
 
             int npages = (phdr[i].filesz /4096) + (phdr[i].filesz % 4096 != 0); //likeceil
-            fb_console_printf("number of pages allocated for load_%u : %x\n", i, npages);
-            data = kpalloc( npages ); 
+            fb_console_printf("number of pages allocated for process %s:  %u : %x\n", proc->filename, i,  npages);
             
-            memset(data, 0, npages * 0x1000);
-            memcpy(data, foffset, phdr[i].filesz);
+            
+            // uint8_t* data = kpalloc( npages );        
 
+            // read_fs(exec_file, phdr[i].offset, phdr[i].filesz, data);
 
             for(int j = 0 ; j < npages; ++j){
 
+                uint8_t* physical_page = allocate_physical_page();
                 map_virtaddr_d(
                                 (void *)proc->page_dir, 
                                 (void *)(phdr[i].vaddr + j*0x1000),
-                                get_physaddr(data + j*0x1000), 
-                                PAGE_PRESENT | (PAGE_READ_WRITE * phdr[i].flags & PF_W) | PAGE_USER_SUPERVISOR
+                                physical_page, // get_physaddr(data + j*0x1000), 
+                                PAGE_PRESENT | (PAGE_READ_WRITE * (phdr[i].flags & PF_W != 0) ) | PAGE_USER_SUPERVISOR
                                                                                       );
+
+
                 mp.vmem = phdr[i].vaddr + j*0x1000;
-                mp.phymem = (u32)get_physaddr(data + j*0x1000);
+                mp.phymem = (u32)physical_page;
                 mp.attributes = (1 << 20);
                 vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
 
             }
 
-       
+            memset( (void *)(phdr[i].vaddr ), 0, 0x1000 * npages);
+            read_fs(exec_file, phdr[i].offset, phdr[i].filesz, (void *)(phdr[i].vaddr));
 
 
         }
     }
 
+    kfree(phdr);
 
-    proc->regs.eip = (uint32_t)elf_header->e_entry;
+    proc->regs.eip = (uint32_t)elf_header.e_entry;
 
-    void * stack_page = kpalloc(1);//allocate_physical_page();
-    map_virtaddr_d((void *)proc->page_dir, (void *)proc->regs.esp - 0x1000, get_physaddr(stack_page), PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-
+    void * stack_page = allocate_physical_page();//kpalloc(1);//allocate_physical_page();
+    map_virtaddr_d((void *)proc->page_dir, (void *)proc->regs.esp - 0x1000, stack_page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+    
     mp.vmem = proc->regs.esp - 0x1000;
-    mp.phymem = (u32)get_physaddr(stack_page);
+    mp.phymem = (u32)stack_page;
     mp.attributes = (1 << 20);
     vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
 
     
 
 
-
-    //since we are on 32 bit, right?
+    //since we are on 32 bit, right? oh wait doesn't matte
     uint32_t * esp = (void *)proc->regs.esp;
             
     esp -= proc->argc;
     char **argv = (char **)esp;
-    memset(esp , 0, 4 * proc->argc);
+    memset(esp , 0, sizeof(char*) * proc->argc);
 
 
     for(int i = 0; i < proc->argc; ++i){
@@ -366,21 +392,13 @@ pcb_t * load_process(pcb_t * proc){
     proc->regs.edi = proc->argc;
     proc->regs.esi = (uint32_t)(argv);
 
-//switch back the address space
+
+    //switch back the address space
     set_cr3(oldcr3);
     flush_tlb();
 
-
-
-
     current_process->state = TASK_RUNNING;
-
-
-
-    // proc->self = list_insert_end(process_list, proc);
-    // queue_enqueue_item(&ready_queue, proc);
     return proc;
-
 }
 
 
@@ -396,42 +414,8 @@ pcb_t * terminate_process(pcb_t * p){
             pp->state = TASK_RUNNING; //resume the parent for now
         }
     }
-
-    list_remove(process_list, p->self);
-
-
-    void (*kprintf)(const char* fmt, ...) = fb_console_printf;
     
-    //freeing vmm map
-    listnode_t * node = p->mem_mapping->head;
-    for(unsigned int i = 0; i < p->mem_mapping->size; ++i){
-
-        vmem_map_t * mm = node->val;
-        if(mm->attributes >> 20 ){ //for allocated page maybe also release it depending on the attribute
-            
-            if( (mm->attributes & 0xFFFFF) == VMM_ATTR_PHYSICAL_PAGE  ){
-                
-                // kprintf("%u : %x:%x %x, deallocated pyhsical page \n", i, mm->vmem, mm->phymem, mm->attributes & 0xFFFFF);    
-                deallocate_physical_page((void *)mm->phymem);
-            }
-
-            // kprintf("%u : %x:%x %x \n", i, mm->vmem, mm->phymem, mm->attributes & 0xFFFFF);    
-
-            
-        }
-
-        
-        
-        listnode_t * n = node;
-        node = node->next;
-        kfree(n->val);
-        list_remove(p->mem_mapping, n);
-        
-    }
-
-    kprintf("size of mem_mapping_list : %u\n", p->mem_mapping->size);
-
-
+    list_remove(process_list, p->self);
 
     
     //close open files
@@ -439,20 +423,8 @@ pcb_t * terminate_process(pcb_t * p){
         close_for_process(p, i);
     }
 
-    //freeing argv
-    for(int i = 0; i < p->argc; ++i){
-        kfree(p->argv[i]);
-    }
-    kfree(p->argv);
-
-    // kfree(p->stack);
-    // kfree(p->kstack);
-    kfree(p->cwd);
-    
-
-
-
-    kfree(p);    
+    // process_release_sources(p);
+     
     return NULL;
 
 }
@@ -590,6 +562,9 @@ void list_vmem_mapping(pcb_t * process){
     uart_print(COM1, "-----------------------------------------------------------\r\n\n");     
 }
 
+
+
+
 pcb_t * process_get_by_pid(pid_t pid){
 
     listnode_t * node = process_list->head;
@@ -622,6 +597,64 @@ pcb_t * process_get_runnable_process(){
 
 
 
+
+void process_release_sources(pcb_t * proc){
+
+     //free the resources and allocate new ones
+    
+    for(int i = 0; i < proc->argc  ; ++i){
+        kfree(proc->argv[i]);
+    }
+    kfree(proc->argv);
+
+    memset(&proc->regs, 0, sizeof(context_t));
+    
+
+
+    
+    for(;;){
+        listnode_t* node = list_remove(proc->mem_mapping, proc->mem_mapping->head);
+        if(!node) break;
+
+
+        vmem_map_t * vmap = node->val;
+
+        if(vmap->attributes >> 20){
+            //gotta free the allocated pages
+            deallocate_physical_page(vmap->phymem);
+            unmap_virtaddr_d(proc->page_dir, ((void*)vmap->vmem));
+            // uart_print(COM1, "vmem: %x->%x :: %x\r\n", vmap->vmem, vmap->phymem, vmap->attributes >> 20);
+        }
+
+        kfree(node->val);
+        kfree(node);        
+    }
+    
+
+
+
+    kfree(proc->mem_mapping);
+
+    //actually somehow propogate zombie children here but anyway
+    kfree(proc->childs);
+
+    uint32_t* p_pt_entry = (uint32_t*)proc->page_dir;
+    for(int i = 0; i < 768; ++i){
+        deallocate_physical_page( (void*) (proc->page_dir[i] & ~0xffful) );
+    }
+    // kfree(proc->page_dir);
+    deallocate_physical_page( get_physaddr(proc->page_dir) );
+
+    deallocate_physical_page( get_physaddr(proc->kstack) );
+    
+    kfree(proc->cwd);
+
+}
+
+
+
+
+
 //exiting 
 static int kernel_thread_prologue(){
     
@@ -631,7 +664,7 @@ static int kernel_thread_prologue(){
     current_process->state = TASK_INTERRUPTIBLE;
     
     //manualy calling timer0 interrupt?
-    halt();
+    idle();
     return 0;
 }
 

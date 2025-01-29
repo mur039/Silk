@@ -4,12 +4,9 @@
 #include <stdint.h>
 #include <stdint-gcc.h>
 #include <str.h>
-#include <uart.h>
-#include <fb.h>
 
-#ifndef NULL
-#define NULL (void *)0
-#endif
+
+
 
 
 typedef unsigned long long int u64;
@@ -107,8 +104,12 @@ static inline void flush_tlb(){
     return;
 }
 
+
+
+extern void uart_print(int port, const char* source, ...);
+
 __attribute__((noreturn)) static inline void halt(){
-    uart_print(COM1, "\r\nSystem Halted.\r\n");
+    uart_print(0x3f8, "\r\nSystem Halted.\r\n");
     disable_interrupts();    
     asm volatile(
         "hlt\n\t"
@@ -119,7 +120,7 @@ __attribute__((noreturn)) static inline void halt(){
 
 
 static inline void idle(){
-    uart_print(COM1, "\r\nSystem Halted.\r\n");
+    uart_print(0x3f8, "\r\nSystem Halted.\r\n");
     enable_interrupts();    
     asm volatile(
         "hlt\n\t"
@@ -127,9 +128,7 @@ static inline void idle(){
     return;
 }
 
-extern void sys_thread(struct regs * r);
 
-static  void (*kprintf)(const char* fmt, ...) = NULL;
 
 #define GET_BIT(value, bit) ((value >> bit) & 1)
 
