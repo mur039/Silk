@@ -67,6 +67,7 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/queue.c -o $(BUILD_DIR)/queue.o
 
 	i686-elf-gcc $(CFLAGS) ./src/dev.c -o  $(BUILD_DIR)/dev.o
+	i686-elf-gcc $(CFLAGS) ./src/char.c -o $(BUILD_DIR)/char.o
 	i686-elf-gcc $(CFLAGS) ./src/kb.c -o  $(BUILD_DIR)/kb.o
 	i686-elf-gcc $(CFLAGS) ./src/ps2.c -o  $(BUILD_DIR)/ps2.o
 	i686-elf-gcc $(CFLAGS) ./src/ps2_mouse.c -o  $(BUILD_DIR)/ps2_mouse.o
@@ -81,10 +82,12 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/fat.c -o $(BUILD_DIR)/fat.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/ext2.c -o $(BUILD_DIR)/ext2.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/tmpfs.c -o $(BUILD_DIR)/tmpfs.o
+	i686-elf-gcc $(CFLAGS) ./src/filesystems/pex.c -o $(BUILD_DIR)/pex.o
 	i686-elf-gcc $(CFLAGS) ./src/virtio.c -o $(BUILD_DIR)/virtio.o
 
 	i686-elf-gcc $(CFLAGS) ./src/glyph.c -o $(BUILD_DIR)/glyph.o
 	i686-elf-gcc $(CFLAGS) ./src/fb.c -o $(BUILD_DIR)/fb.o
+		i686-elf-gcc $(CFLAGS) ./src/bosch_vga.c -o $(BUILD_DIR)/bosch_vga.o
 	i686-elf-gcc $(CFLAGS) ./src/syscalls.c -o $(BUILD_DIR)/syscalls.o
 	i686-elf-gcc $(CFLAGS) ./src/pci.c -o $(BUILD_DIR)/pci.o
 	i686-elf-gcc $(CFLAGS) ./src/process.c -o $(BUILD_DIR)/process.o
@@ -101,7 +104,7 @@ kernel:
 		pmm.o pit.o gdt.o misc_asm.o ps2.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
 		v86.o pci.o elf.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o \
 		ata.o cmos.o virtio.o pipe.o vmm.o queue.o semaphore.o g_tree.o nulldev.o proc.o \
-		fat.o ext2.o tmpfs.o tty.o
+		fat.o ext2.o tmpfs.o tty.o char.o pex.o bosch_vga.o
 
 	
 debug_kernel:kernel.elf

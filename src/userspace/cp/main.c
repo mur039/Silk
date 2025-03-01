@@ -131,7 +131,7 @@ int main(int argc, char **argv){
                 if(src_target_index < 2)
                     src_target_table[src_target_index++] = argv[i];
                 else{
-                    puts("mount: Bad usage try 'mount --help'\n");
+                    puts("mount: Bad usage try 'cp --help'\n");
                     return 1;
                 }
                 break;

@@ -17,6 +17,7 @@ tree_t * tree_create() {
 
 
 void tree_set_root(tree_t * tree, void * value) {
+	
 	/* Set the root node for a new tree. */
 	tree_node_t * root = tree_node_create(value);
 	tree->root = root;
@@ -32,11 +33,9 @@ tree_node_t * tree_node_create(void * value) {
 
 	out->value = value;
 	out->parent = NULL;
-
+	
 	out->children = kcalloc(1, sizeof(list_t));
-    out->children->size = 0;
-    out->children->head = 0;
-    out->children->tail = 0;
+    *out->children = list_create();
 	return out;
 }
 

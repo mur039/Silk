@@ -6,25 +6,21 @@
 #define FAT12_CLUSTER_END  0xFFF
 
 
-fat_struct_t* fat_probe_block_dev(device_t* device){
+fat_struct_t* fat_probe_block_dev(fs_node_t* device){
 
-	//read sector zero of block device
-	uint8_t* sector0 = kmalloc(512);
-	ata_device_t* priv = device->priv;
-
-
-	{
-
-		fs_node_t node;
-		node.device = device;
 	
-		device->read(&node, 0, 512, sector0);
-	}
-	// ata_read_sector(priv->io_base, priv->ctrl_base, 0, sector0);
-
+	uint8_t* sector0 = kmalloc(512);
+	
+	read_fs(device, 0, 512, sector0);
 	fat_bootsector_common_t* comm = (void*)sector0;
 
-	
+	//altough this driver only supports sectors of 512bytes if on accident user puts a block device that this field is 0, we get divisionbyzero
+	if(comm->BPB_BytsPerSec < 512 || comm->BPB_SecPerClus < 1){
+		kfree(sector0);
+		return NULL;
+	}
+
+
 	//determine filesystem type 12,16,32?
 	uint32_t RootDirSectors = ((comm->BPB_RootEntCnt * 32) + (comm->BPB_BytsPerSec - 1)) / comm->BPB_BytsPerSec;
 
@@ -71,19 +67,27 @@ fat_struct_t* fat_probe_block_dev(device_t* device){
 	fat->sector0 = sector0;
 
 	return fat;
+
+
 }
 
-fs_node_t * fat_node_create(device_t* blk_device){
-	
+fs_node_t * fat_node_create( fs_node_t* node){
 
-    if(blk_device->dev_type != DEVICE_BLOCK){
+	device_t *dev = node->device;
+
+    if(dev->dev_type != DEVICE_BLOCK){
         
         return NULL;
     }
 
 
     fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
-	fat_struct_t* fat = fat_probe_block_dev(blk_device);
+	
+	fat_struct_t* fat = fat_probe_block_dev(node);
+	if(!fat){ //not a valid fat partitions
+		kfree(fnode);
+		return NULL;
+	}
 
 	fnode->inode = 0;
 	sprintf(fnode->name, "fat%x", fat->fs_type);
@@ -184,8 +188,9 @@ int fat_create_usc2_from_ascii_n(char* ascii_str, uint16_t* ucs2_str, size_t len
 struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 	
 	fat_struct_t* fat = node->device;
-	device_t* dev = fat->dev;
-	ata_device_t* ata = dev->priv;
+
+	fs_node_t* dev = fat->dev;
+
 	fat_directory_entry_t dir;
 	list_t longname_list = list_create();
 
@@ -197,14 +202,11 @@ struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 
 
 
-	fs_node_t _node;
-	_node.device = dev;
-
-		
 	uint32_t i = 0;
 	while(1){ //search for entire directory to find folder/file
 
-		dev->read(&_node, dir_start_offset, sizeof(fat_directory_entry_t), &dir);
+		read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), &dir);
+		// dev->read(dev, dir_start_offset, sizeof(fat_directory_entry_t), &dir);
 		// ata_read(ata, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&dir);
 		dir_start_offset += sizeof(fat_directory_entry_t);
 
@@ -236,7 +238,8 @@ struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 
 	fat_directory_entry_t mdir;
 	// ata_read(ata, dir_start_offset, sizeof(fat_long_name_directory_entry_t), (uint8_t*)&mdir);
-	dev->read(&_node, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
+	// dev->read(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
+	read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
 
 	// dev->read(node, dir_start_offset, sizeof(fat_long_name_directory_entry_t), &mdir);
 
@@ -251,7 +254,8 @@ struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 			dir_start_offset -= sizeof(fat_directory_entry_t); //reverse back to check wheter it has long name
 			// ata_read(ata, dir_start_offset, sizeof(fat_long_name_directory_entry_t), &mdir);
 			// ata_read(node, dir_start_offset, sizeof(fat_long_name_directory_entry_t), (uint8_t*)&mdir);
-			dev->read(&_node, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
+			// dev->read(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
+			read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
 
 		}
 	}
@@ -284,8 +288,8 @@ no_dir_entry_left:
 finddir_type_t fat32_finddir(struct fs_node* node, char *name){
 
 	fat_struct_t* fat = node->device;
-	device_t* dev = fat->dev;
-	ata_device_t* ata = dev->priv;
+	fs_node_t** dev = fat->dev;
+	
 
 	fat_bootsector_32_t* bpb = fat->sector0;
 	int data_start_sector = bpb->comm.BPB_RsvdSecCnt + ( bpb->comm.BPB_NumFATs * bpb->BPB_FATSz32);
@@ -298,7 +302,8 @@ finddir_type_t fat32_finddir(struct fs_node* node, char *name){
 	list_t longname_list = list_create();
 	while(1){ //search for entire directory to find folder/file
 		fat_directory_entry_t dir;
-		ata_read(ata, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&dir);
+		// ata_read(ata, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&dir);
+		read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&dir);
 		dir_start_offset += sizeof(fat_directory_entry_t);
 
 		if(dir.dir_name[0] == 0xe5){ continue;}  //empty entry
@@ -389,8 +394,6 @@ finddir_type_t fat32_finddir(struct fs_node* node, char *name){
 	
 		
     return NULL;
-
-
 }
 
 read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uint8_t* buffer){
@@ -402,8 +405,7 @@ read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uin
 	
 
 	fat_struct_t* fat = node->device;
-	device_t* dev = fat->dev;
-	ata_device_t* ata = dev->priv;
+	fs_node_t* dev = fat->dev;
 
 
 	fat_bootsector_32_t* bpb = fat->sector0;
@@ -425,7 +427,8 @@ read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uin
 		
 		uint32_t fat_entry;
 		uint32_t offset_within_fat = current_cluster*4;
-		ata_read(ata, fat_start_offset + offset_within_fat, 4, (uint8_t*)&fat_entry);
+		// ata_read(ata, fat_start_offset + offset_within_fat, 4, (uint8_t*)&fat_entry);
+		read_fs(dev, fat_start_offset + offset_within_fat, 4, (uint8_t*)&fat_entry);
 		
 		if( (fat_entry & 0x0FFFFFFF) >= 0x0FFFFFF8) return 0; //EOC
 		current_cluster = fat_entry & 0x0FFFFFFF;
@@ -441,7 +444,8 @@ read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uin
 		dir_start_offset =  (data_start_sector + (( current_cluster - 2)*bpb->comm.BPB_SecPerClus));
 		dir_start_offset *= bpb->comm.BPB_BytsPerSec;
 		
-		ata_read(ata, dir_start_offset + cluster_offset, size, buffer);
+		// ata_read(ata, dir_start_offset + cluster_offset, size, buffer);
+		read_fs(dev, dir_start_offset + cluster_offset, size, buffer);
 		node->offset += size;
 		return size;
 	}
@@ -454,14 +458,16 @@ read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uin
 	dir_start_offset =  (data_start_sector + (( current_cluster - 2)*bpb->comm.BPB_SecPerClus));
 	dir_start_offset *= bpb->comm.BPB_BytsPerSec;
 		
-	ata_read(ata, dir_start_offset + cluster_offset, cluster_data_left, buffer);
+	// ata_read(ata, dir_start_offset + cluster_offset, cluster_data_left, buffer);
+	read_fs(dev, dir_start_offset + cluster_offset, cluster_data_left, buffer);
 	buffer += cluster_data_left;
 
 	//get next cluster
 	{
 		uint32_t fat_entry;
 		uint32_t offset_within_fat = current_cluster*4;
-		ata_read(ata, fat_start_offset + offset_within_fat, 4, (uint8_t*)&fat_entry);
+		read_fs(dev, fat_start_offset + offset_within_fat, 4, (uint8_t*)&fat_entry);
+		// ata_read(ata, fat_start_offset + offset_within_fat, 4, (uint8_t*)&fat_entry);
 		
 		current_cluster = fat_entry & 0x0FFFFFFF;
 
@@ -470,7 +476,8 @@ read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uin
 	
 	dir_start_offset =  (data_start_sector + (( current_cluster - 2)*bpb->comm.BPB_SecPerClus));
 	dir_start_offset *= bpb->comm.BPB_BytsPerSec;		
-	ata_read(ata, dir_start_offset , size - cluster_data_left , buffer);
+	// ata_read(ata, dir_start_offset , size - cluster_data_left , buffer);
+	read_fs(dev, dir_start_offset , size - cluster_data_left , buffer);
 
 
 	node->offset += size;
@@ -482,8 +489,8 @@ write_type_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_
 
 
 	fat_struct_t* fat = node->device;
-	device_t* dev = fat->dev;
-	ata_device_t* ata = dev->priv;
+	fs_node_t* dev = fat->dev;
+	
 
 
 	fat_bootsector_32_t* bpb = fat->sector0;
@@ -503,7 +510,8 @@ write_type_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_
 	for(int i = 0 ; i < cluster_index; ++i){
 		
 		int fat_entry;
-		ata_read(ata, fat_start_offset + (cluster_in_question*4), 4, (uint8_t*)&fat_entry);
+		// ata_read(ata, fat_start_offset + (cluster_in_question*4), 4, (uint8_t*)&fat_entry);
+		read_fs(dev, fat_start_offset + (cluster_in_question*4), 4, (uint8_t*)&fat_entry);
 
 		// we encountered eoc before getting to the indexed cluster
 		// allocate a new empty cluster and append it
@@ -537,7 +545,9 @@ write_type_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_
 	uint32_t file_cluster_start =  (data_start_sector + ((cluster_in_question - 2)*bpb->comm.BPB_SecPerClus));
 	file_cluster_start *= bpb->comm.BPB_BytsPerSec;
 	
-	ata_write(ata, file_cluster_start + cluster_offset, size, buffer);
+	
+	// ata_write(ata, file_cluster_start + cluster_offset, size, buffer);
+	write_fs(dev, file_cluster_start + cluster_offset, size, buffer);
 	node->offset += size;
 	return size;	
 }

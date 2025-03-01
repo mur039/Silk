@@ -108,7 +108,9 @@ int mkdir(const char* pathname, int mode){
 }
 
 
-
+int ioctl(int fd, unsigned long request, void* argp){
+    return syscall(SYSCALL_IOCTL, fd, request, argp);
+}
 
 
 

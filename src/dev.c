@@ -1,15 +1,11 @@
 #include <dev.h>
 #include <uart.h>
 #define MAX_DEVICE 64
-device_t *devices = 0;
+device_t devices[ MAX_DEVICE ];
 static int lastid = 0;
 
 
 void dev_init(){
-	devices = (device_t*)kmalloc(MAX_DEVICE * sizeof(device_t)); //max 64 devices it seems
-	if(!devices)
-		error("device init failed");
-
 	memset(devices, 0, 64*sizeof(device_t));
 	lastid = 0;
 	fb_console_printf("Device Manager initialized.\n");

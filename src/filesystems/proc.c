@@ -2,7 +2,6 @@
 
 
 
-
 static struct dirent * proc_readdir(fs_node_t *node, uint32_t index) {
 	// fb_console_printf("prof_readdir: index:%u::%s\n", index, node->name);
 
@@ -98,6 +97,8 @@ const char * process_attribute[] = {
 
 
 static read_type_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+static open_type_t proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write);
+static close_type_t proc_pid_close(struct fs_node *node);
 
 static finddir_type_t proc_pid_finddir(struct fs_node* node, char *name){
 
@@ -126,8 +127,8 @@ static finddir_type_t proc_pid_finddir(struct fs_node* node, char *name){
     fnode->flags   = FS_FILE;
 	fnode->read    = proc_pid_read;
 	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
+	fnode->open    = proc_pid_open;
+	fnode->close   = proc_pid_close;
 	fnode->readdir = NULL;
 	fnode->finddir = NULL;
 	fnode->ioctl   = NULL;
@@ -175,6 +176,8 @@ static struct dirent * proc_pid_readdir(fs_node_t *node, uint32_t index) {
 static read_type_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
         
     pcb_t * proc = process_get_by_pid(node->impl);
+    int property_index = node->inode;
+    
 
     if(node->offset > strlen(proc->filename) )
         return 0; //eof;
@@ -194,6 +197,32 @@ static read_type_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_
 
 }
  
+static open_type_t proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
+    //impl contains pid, inode contains the file index which specifies the data
+    pid_t proc_pid = node->impl;
+    uint32_t attr_index = node->inode;
+
+    
+    //should exist. this is what happens when you blindly copy paste :/
+    pcb_t* proc = process_get_by_pid(proc_pid);
+
+    switch(attr_index){
+        case CMD_LINE:
+        
+        break;
+
+        default:break;
+    }
+    return;
+}
+
+static close_type_t proc_pid_close(struct fs_node *node){
+    return;
+}
+
+
+
+
 
 
 finddir_type_t proc_finddir(struct fs_node* node, char *name){
@@ -272,6 +301,7 @@ finddir_type_t proc_finddir(struct fs_node* node, char *name){
 
 
 fs_node_t * proc_create(){
+
 	fs_node_t * fnode = kmalloc(sizeof(fs_node_t));
     if(!fnode)
         error("failed allocate fnode");
@@ -290,5 +320,7 @@ fs_node_t * proc_create(){
 	fnode->finddir = proc_finddir;
 	fnode->ioctl   = NULL;
 	return fnode;
-
+    
+    
+    return fnode;
 }

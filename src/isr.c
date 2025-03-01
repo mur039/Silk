@@ -209,10 +209,10 @@ void fault_handler(struct regs *r)
     /* Is this a fault whose number is from 0 to 31? */
     if (r->int_no < 32)
     {
-	dump_registers(r);
-    uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
-    if(!(r->eflags & ( 1 << V86_VM_BIT)) ){ //if not a v86 task
-        print_stack_trace(10, r);
+	    dump_registers(r);
+        uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
+        if(!(r->eflags & ( 1 << V86_VM_BIT)) ){ //if not a v86 task
+            print_stack_trace(10, r);
     }
 
     
@@ -247,28 +247,26 @@ void fault_handler(struct regs *r)
             break;
 
        case 14: //Page Fault
+            
             uart_print(0x3f8, "%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
 
-            if(!(r->err_code & 1)){ //page not present, cr2 gives linear address
-                uint32_t cr2_reg;
-                asm volatile ( "mov %%cr2, %0" : "=r"(cr2_reg) );
-                virt_address_t va = {.address = cr2_reg};
-                int dir, table, offset;
-                
-                dir=va.directory;
-                table = va.table;
-
-                uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", dir, table , cr2_reg);
-            }
-
-            
+            uint32_t cr2_reg;
+            asm volatile ( "mov %%cr2, %0" : "=r"(cr2_reg) );
+            virt_address_t va = {.address = cr2_reg};
+            int dir, table, offset;
+            dir=va.directory;
+            table = va.table;
+                    
             uart_print(0x3f8, "Pagefault due to %s\r\n", (r->err_code & 16) ? "instruction access": "data access");
+            uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", dir, table , cr2_reg);
 
                 if(r->err_code & 4){ //fault happened in usermode
                     print_current_process();
                     paging_directory_list(current_process->page_dir );   
                     uart_print(COM1, "------------------------------------------------------");
                     list_vmem_mapping(current_process);
+                    r->eax = 0x80000000; // a negative
+                    r->eax |= 0; //SIGSEGV? 
                     current_process->state = TASK_ZOMBIE;
                     schedule(r);
                     return;

@@ -19,19 +19,9 @@ typedef enum{
 
 } whence_t;
 
-/*
-1280x800
-*/
-#define  FRAMEBUFFER_WIDTH  800
-#define  FRAMEBUFFER_HEIGTH 600
 
-// typedef struct
-// {
-//     unsigned char blue;
-//     unsigned char green;
-//     unsigned char red;
-//     unsigned char alpha;
-// } pixel_t;
+uint32_t frame_buffer_width = 0;
+uint32_t frame_buffer_height = 0;
 
 
 pixel_t * framebuffer_addr = NULL;
@@ -58,7 +48,7 @@ void redraw_buffer(int fd){
 
 
     // //clear everything
-    memset(backbuffer_addr, 0, 800*600*4);
+    memset(backbuffer_addr, 0, frame_buffer_width*frame_buffer_height*4);
 
     for(int i = 0; i  < MAX_NUMBER_OF_WINDOWS; ++i){
 
@@ -67,19 +57,19 @@ void redraw_buffer(int fd){
             x = windows[i].x;
             y = windows[i].y;
 
-            if(x + windows[i].width > FRAMEBUFFER_WIDTH){
-                x = FRAMEBUFFER_WIDTH - windows[i].width;
+            if(x + windows[i].width > frame_buffer_width){
+                x = frame_buffer_width - windows[i].width;
             }
 
-            if(y + windows[i].height > FRAMEBUFFER_HEIGTH){
-                y = FRAMEBUFFER_HEIGTH - windows[i].height;
+            if(y + windows[i].height > frame_buffer_height){
+                y = frame_buffer_height - windows[i].height;
             }
 
             pixel_t pixel = windows[i].bg_color;
 
             for(int h = 0 ; h < windows[i].height; ++h){
 
-                uint32_t offset =  ((y + h)* FRAMEBUFFER_WIDTH) + x ;
+                uint32_t offset =  ((y + h)* frame_buffer_width) + x ;
                 for(int w = 0 ; w < windows[i].width; ++w){
                     
                     backbuffer_addr[offset + w] = windows[i].bitmap[ (h * windows[i].width)  + w];
@@ -109,20 +99,20 @@ void redraw_buffer(int fd){
             x = cursor.x;
             y = cursor.y;
 
-            if(x + cursor.width > FRAMEBUFFER_WIDTH){
-                x = FRAMEBUFFER_WIDTH - cursor.width;
+            if(x + cursor.width > frame_buffer_width){
+                x = frame_buffer_width - cursor.width;
             }
 
-            if(y + cursor.height > FRAMEBUFFER_HEIGTH){
-                y = FRAMEBUFFER_HEIGTH - cursor.height;
+            if(y + cursor.height > frame_buffer_height){
+                y = frame_buffer_height - cursor.height;
             }
 
             pixel_t pixel = cursor.bg_color;
 
             for(int h = 0 ; h < cursor.height; ++h){
 
-                uint32_t offset =  ((y + h)* FRAMEBUFFER_WIDTH) + x ;
-                // lseek(fd , ( (y + h) * 4 * FRAMEBUFFER_WIDTH) + x*4 ,SEEK_SET);
+                uint32_t offset =  ((y + h)* frame_buffer_width) + x ;
+                // lseek(fd , ( (y + h) * 4 * frame_buffer_width) + x*4 ,SEEK_SET);
 
                 for(int w = 0 ; w < cursor.width; ++w){
                     
@@ -134,8 +124,14 @@ void redraw_buffer(int fd){
 
         }
 
+    if(framebuffer_addr){
 
-    memcpy(framebuffer_addr, backbuffer_addr, 800*600*4);
+    memcpy(framebuffer_addr, backbuffer_addr, frame_buffer_width*frame_buffer_height*4);
+    }
+    else{
+        lseek(fd, 0, SEEK_SET);
+        write(fd, backbuffer_addr, frame_buffer_width*frame_buffer_height*4);
+    }
 
     change = 0;
 
@@ -319,21 +315,28 @@ int main( int argc, char* argv[]){
     // i will fork and paint one side to ue and other to red
     malloc_init();
     
-    int display_fd = open("/dev/fb", O_WRONLY);    
+    int display_fd = open("/dev/fb0", O_WRONLY);    
     if(display_fd == -1){
-        puts("failed to open /dev/fd, exitting...");
+        puts("failed to open /dev/fb0, exitting...");
         return 1;
     }
 
-    framebuffer_addr = mmap(NULL, FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGTH*4, 0, 0, display_fd, 0); //mapping framebuffer
+    uint16_t screenproportions[2];
+    ioctl(display_fd, 0, screenproportions);
+
+    frame_buffer_width = screenproportions[0];
+    frame_buffer_height = screenproportions[1];
+
+    framebuffer_addr = mmap(NULL, frame_buffer_width*frame_buffer_height*4, 0, 0, display_fd, 0); //mapping framebuffer
     if(framebuffer_addr == (void*)-1){
-        puts("failed to map display_fd, exitting...");
-        return 1;
+        puts("failed to map display_fd, will use  write function");
+        framebuffer_addr = NULL;
+        // return 1;
     }
-    
+
     //hopefully it's gonna be linear
     backbuffer_addr = mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
-    for(int i = 1; i < 1 + (FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGTH*4 / 4096) ; ++i){
+    for(int i = 1; i < 1 + (frame_buffer_width*frame_buffer_height*4 / 4096) ; ++i){
         mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
     }
 
@@ -341,16 +344,67 @@ int main( int argc, char* argv[]){
     printf("framebuffer:%x\n", framebuffer_addr);
     printf("backbuffer:%x\n", backbuffer_addr);
 
+    for(int i = 0; i < frame_buffer_height * frame_buffer_width; ++i){
+        ((uint32_t*)backbuffer_addr)[i] = 0x00FFFFFF;
+    }
+    
+    write(display_fd, backbuffer_addr, frame_buffer_height * frame_buffer_width * 4);
+    return 0;
+    while(1){
+    }
 
-    int mouse_fd = open("/dev/mouse", O_RDONLY);
-    int kbd_fd = open("/dev/kbd", O_RDONLY);
+
+    // int mouse_fd = open("/dev/mouse", O_RDONLY);
+    // int kbd_fd = open("/dev/kbd", O_RDONLY);
+
+    int kbd_fd = -1;
+    int mouse_fd = -1;
     if (glyph_load_font("/share/screenfonts/consolefont.psf") == -1){
         
         puts("Failed to parse consolefont.psf\n");
     }    
+    
+    change = 1;
 
 
+    //well before that lets bind the manager here
+    int pexfd = open("/dev/pex0", O_RDWR);
+    if(pexfd < 0){
+        puts("Failed to open /dev/pex0\n");
+        return 1;
+    }
 
+    int result;
+    result = ioctl(pexfd, 1, "desktop-manager"); //bind
+    if(result != 0){
+        puts("binding \"desktop-manager\" failed\n");
+        return 1;
+    }
+
+    puts("binded \"desktop-manager\" service.\n"); //hopefully
+    
+
+    
+
+    /*
+    fuck that shit here how it goes, server process binds, client process connect
+    it write to file, client side is responsible of converting raw data to data frames
+    and send write them to file desriptor. At kernel side, by looking at the fields,
+    adds some field like send time, who sent it etc
+    */
+
+   typedef union{
+    
+    struct{
+        uint32_t sender_pid;
+        uint8_t frame_type;
+        uint8_t data_start;
+    };
+    
+    uint8_t raw_frame[512];
+   } pex_server_frame_t;
+
+    
     cursor.exist = 1;
     cursor.height = 10;
     cursor.width = 10;
@@ -406,8 +460,26 @@ int main( int argc, char* argv[]){
 
     }
 
-    char str[16] = "can you face me";
-    write(client_sock[1], str, 16);
+    
+    change = 1;
+    while(1){
+        
+        // pex_server_frame_t frame;
+        // if(read(pexfd, &frame, sizeof(frame))){
+
+        //     printf("frame sender pid: %u, frame_type:%x\n", frame.sender_pid, frame.frame_type);
+
+        //     if(frame.frame_type == 0xc){
+
+        //         puts(&frame.data_start);
+        //     }
+        // }
+        // else{
+        //     return 0;
+        // }
+
+    }
+
 
     while (1){
         
@@ -464,94 +536,6 @@ int main( int argc, char* argv[]){
             
 
         
-        }
-
-        //see if a key is pressed
-        if(read(kbd_fd, &ch, 1 )){
-
-            switch (ch){
-
-            case 0xe0: //up arrow
-                windows[0].y -= 10; change = 1;
-                break;
-
-            case 0xe1: //left arrow
-                windows[0].x -= 10;
-                change = 1;
-                
-                break;
-
-            case 0xe2: //right arrow
-                windows[0].x += 10; change = 1;
-                break;
-
-            case 0xe3: //down arrow
-                windows[0].y += 10; change = 1;
-                break;
-            
-            default:
-                write(client_sock[1], &ch, 1);
-                break;
-            }
-        }
-
-
-        ps2_mouse_generic_package_t pac;
-        if(read(mouse_fd, &pac, 3) != -1){
-            // printf(
-            //         "-> mouse (dx, dy, status) : %x %x %x\n", 
-            //         pac.x_axis_move, 
-            //         pac.y_axis_move, 
-            //         pac.bits.raw
-            // );
-            int sensitivity = 5;
-            x +=  1 * sensitivity * pac.x_axis_move;
-            y += -1 * sensitivity * pac.y_axis_move;
-
-            if(y < 0) y = 0;
-            if(x < 0) x = 0;
-
-            if(y > FRAMEBUFFER_HEIGTH) y = FRAMEBUFFER_HEIGTH;
-            if(x > FRAMEBUFFER_WIDTH) x = FRAMEBUFFER_WIDTH;
-
-            cursor.x = x;
-            cursor.y = y;
-            if(pac.bits.raw & 1){ //lb clink
-                
-                if(windows[0].exist){
-                    
-                    if( x > (windows[0].x) && x < (windows[0].x + windows[0].width) ) {
-                        
-                        if(y > (windows[0].y) && y < (windows[0].y + windows[0].height)){
-                            windows[0].x +=  1 * sensitivity * pac.x_axis_move;
-                            windows[0].y += -1 * sensitivity * pac.y_axis_move;    
-                            change = 1;
-                        }
-                    }
-
-                }
-            }
-
-            else if( pac.bits.raw & 0b10){ //rb
-                //do somethin?
-
-            }
-
-            change = 1;
-
-            // printf("\n(x,y): (%u, %u)", x, y);
-
-
-
-        }
-
-
-
-        //redraw the screen
-        if(change){
-
-            redraw_buffer(display_fd);
-            change = 0;
         }
     
     }

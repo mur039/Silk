@@ -17,9 +17,15 @@ extern int alt_gr_flag;
 #define KBD_ALT_GR_FLAG 1 << 2
 extern int key_modifiers;
 
+extern volatile int  is_kbd_pressed;
+extern char kb_ch;
 extern uint8_t kbd_scancode;
 
 extern uint32_t currently_pressed_keys[4];//bit encoded
 extern unsigned char kbdus[128] ;
 void keyboard_handler(struct regs *r);
+void ps2_kbd_initialize();
+
+#include <process.h>
+
 #endif

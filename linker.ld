@@ -28,11 +28,13 @@ SECTIONS {
 
 	.data ALIGN (0x1000) : AT (ADDR (.data) - 0xC0000000)
 	{
+		kernel_data_start = .;
 		*(EXCLUDE_FILE(boot.o lkmain.o) .data)                                /* all data sections from all files */
 	}
 
 	.bss ALIGN (0x1000) : AT (ADDR (.bss) - 0xC0000000)
 	{
+		kernel_bss_start = .;
 		*(COMMON)                               /* all COMMON sections from all files */
 		*(.bss)         
 		*(.bootstrap)                      /* all bss sections from all files */ 

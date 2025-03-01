@@ -51,6 +51,7 @@ i32 virtio_gpu_register(pci_device_t *dev){
             virtio_pci_common_cfg_t * c_conf = (void*)(  (((u32*)&dev->header.type_0.base_address_0)[virtio_cap.bar] & ~0b1111) + virtio_cap.offset);
             vdev->common_cfg = c_conf;
 
+            fb_console_printf(" well address:%x is not mapped so nect line will cause pagefault\n", c_conf);    
             //this will cause a page fault but anyway;
             if(!is_virtaddr_mapped(c_conf)){
                 // fb_console_printf(" well address:%x is not mapped so nect line will cause pagefault\n", c_conf);    
@@ -81,7 +82,8 @@ i32 virtio_gpu_register(pci_device_t *dev){
                 c_conf->queue_select = i;
                 fb_console_printf("\tQueue %u: size: %u\n", i, c_conf->queue_size);
             }
-    
+
+            halt();
             break;
 
         case VIRTIO_PCI_CAP_NOTIFY_CFG:

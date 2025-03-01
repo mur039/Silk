@@ -199,8 +199,8 @@ int main(int argc, char ** argv){
     }
 
     if(offset){
-        size_t offset = atoi(offset);
-        lseek(fd_file, offset, 0); //sekkset
+        size_t _offset = atoi(offset);
+        lseek(fd_file, _offset, 0); //sekkset
     }
 
     int length = -1;
@@ -209,46 +209,73 @@ int main(int argc, char ** argv){
     }
 
     
-    // for(int j = 0; length == -1 || j < length  ; ++j){
+    uint32_t total_read = 0;
 
+    uint8_t line_buffer[16];
+    int line_index = 0;
 
-        
-        uint8_t line_buffer[16];
-        memset(line_buffer, 0, 16);
-        int repcount = 0;
-        while( 1 ){
-            int count = read(fd_file, line_buffer, 16);
-            if(!count) break; //oef found
+    while(1){
 
-            for(int i = 0; i < count; ++i){
-                printf("%x%x ", (line_buffer[i] >> 4) & 0xf, line_buffer[i] & 0xf );
-            }
-            
-            //padding
-            for(int i = 0; i < (16 - count); ++i){
-                printf("  ");
-            }
+        size_t tok = read(fd_file, &line_buffer[line_index], 1);
+        total_read++;
+        line_index++;
 
-            //printing text section
-            
-            puts("| ");
-            for(int i = 0; i < count; ++i){
-                printf("%c", line_buffer[i] > 32 ? line_buffer[i] : '.' );
-            }
-            putchar('\n');
-
-            memset(line_buffer, 0, 16);
-
-
-
-            if(length != -1 && repcount >= length){
-                break;
-            }
-            repcount++;
+        //check if we read enough
+        if(length != -1 && total_read >= length){
+            tok = 0;
         }
 
-        // break;
-    // }
+        if(tok){
+            
+            if(line_index >= 16){
+                
+                line_index = 0;
+                for(int i = 0; i < 16 ; ++i){
+                    if(line_buffer[i] < 0x10 ){
+                        printf("0%x ", line_buffer[i]);
+                    }else{printf("%x ", line_buffer[i]);}
+                }
+                puts("  ");
+                for(int i = 0; i < 16 ; ++i){
+                    
+                    char c = line_buffer[i];
+                    if(c < 32){ putchar('.'); }
+                    else{ putchar(c); }
+                }
+                putchar('\n');
 
+            }
+
+        }
+        else{ 
+            for(int i = 0; i < line_index; ++i){
+				if(line_buffer[i] < 0x10 ){
+                    printf("0%x ", line_buffer[i]);
+                }else{printf("%x ", line_buffer[i]);}
+			}
+			for(int i = line_index; i < 16; ++i){
+				printf("  ");
+			}
+
+
+			printf("  ");
+			for(int i = 0; i < line_index; ++i){
+				unsigned char c = line_buffer[i];
+					
+				if( c > 32){
+					putchar(c);
+				}
+				else{
+					putchar('.');
+				}
+			}
+			putchar('\n');
+            break;
+        }
+
+
+
+    } 
+       
     return 0;
 }

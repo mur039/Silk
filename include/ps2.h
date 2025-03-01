@@ -22,6 +22,18 @@
 #define PS2_ENABLE_SECOND_PORT 0xA8
 #define PS2_DISABLE_SECOND_PORT 0xA7
 
+#define PS2_CMD_TEST_FIRST_PORT 0xAB
+#define PS2_CMD_RESET_DEVICE    0xFF
+
+
+
+#define PS2_ENABLE_FIRST_PORT 0xAE
+#define PS2_DISABLE_FIRST_PORT 0xAD
+
+#define STATUS_OUTPUT_BUFFER 0x01
+#define STATUS_INPUT_BUFFER  0x02
+
+
 #define PS2_WRITE_BYTE_SECOND_PORT_INPUT 0xD4
 
 union ps2_controller_status {
@@ -65,5 +77,6 @@ ps2_controller_config_t ps2_get_configuration(void);
 void ps2_set_configuration(ps2_controller_config_t config);
 void ps2_send_command(unsigned char command);
 void ps2_send_data(unsigned char data);
-
+void wait_input_clear();
+void wait_output_full();
 #endif

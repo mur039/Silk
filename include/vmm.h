@@ -27,6 +27,7 @@ typedef struct{
 
 void * vmm_mark_allocated(list_t * map, u32 va, u32 pa, int attributes);
 void * vmm_get_empty_vpage(list_t * vmap, size_t length);
+void* vmm_get_empty_kernel_page(int n_continous_page, void* hint_addr);
 
 
 

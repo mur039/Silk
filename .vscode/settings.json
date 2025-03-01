@@ -32,7 +32,13 @@
         "sys.h": "c",
         "uart.h": "c",
         "semaphore.h": "c",
-        "queue.h": "c"
+        "queue.h": "c",
+        "tty.h": "c",
+        "token.h": "c",
+        "fs.h": "c",
+        "isr.h": "c",
+        "ps2.h": "c",
+        "idt.h": "c"
     }
     
 }

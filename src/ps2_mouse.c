@@ -59,15 +59,7 @@ int32_t ps2_mouse_read(){
     while(max_tries--){
 
         if(lock){
-            
-            
-            // u8 * phead = (u8*)&ps2_mouse_irq_package;
-            // fb_console_printf("PS/2 mouse:\n");
-            // for(int i = 0; i < 3; ++i){
-            //     fb_console_printf("\t->%x\n", phead[i]);
-            // }
-            
-            
+                        
             lock = 0;
             return (int32_t)ps2_mouse_irq_package.raw;
             

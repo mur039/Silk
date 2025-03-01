@@ -24,6 +24,7 @@
 #include <v86.h>
 #include <glyph.h>
 #include <fb.h>
+#include <bosch_vga.h>
 #include <filesystems/tar.h>
 #include <filesystems/vfs.h>
 #include <filesystems/nulldev.h>
@@ -32,8 +33,11 @@
 #include <filesystems/ata.h>
 #include <filesystems/fat.h>
 #include <filesystems/ext2.h>
+#include <filesystems/fs.h>
+#include <filesystems/pex.h>
 
 
+#include <char.h>
 #include <syscalls.h>
 #include <elf.h>
 #include <process.h>
@@ -48,7 +52,6 @@ extern uint32_t kernel_phy_end;
 extern uint32_t kernel_phy_start;
 
 
-circular_buffer_t * ksock_buf = NULL;
 extern void jump_usermode();
 
 static inline void reboot_by_ps2(){ //there's no way i can return
@@ -61,112 +64,6 @@ static inline void reboot_by_ps2(){ //there's no way i can return
 volatile int  is_received_char = 0;
 char ch;
 
-volatile int  is_kbd_pressed = 0;
-char kb_ch;
-uint8_t kbd_scancode;
-
-
-semaphore_t * semaphore_uart_handler = NULL;
-
-void keyboard_handler(struct regs *r)
-{
-    
-  if(r->err_code == 0){;}
-    unsigned char scancode;
-    scancode = inb(0x60);
-
-    /* If the top bit of the byte we read from the keyboard is
-    *  set, that means that a key has just been released */
-    /*
-    ctrl 0x1d
-    alt 0x38
-    left shift 0x2a
-    right shift 0x36
-
-    */
-    if (scancode & 0x80) //released
-    {
-        if((scancode &  0x7f) == 0x1d){ //if ctrl is released
-            ctrl_flag = 0;
-        }else if((scancode &  0x7f) == 0x2a || (scancode &  0x7f) == 0x36 ){ //shift modifier
-            shift_flag = 0;
-        }
-        else if( ( scancode & 0x7f) == 0x38 ){ //alt_gr
-            alt_gr_flag = 0;
-        }
-        /* You can use this one to see if the user released the
-        *  shift, alt, or control keys... */
-    }
-    else //pressed
-    {
-
-        kbd_scancode = scancode & 0x7f;
-        switch(scancode & 0x7f){
-            
-            //ctrl
-            case 0x1d: 
-                ctrl_flag = 1; 
-                break;
-
-            //both rshift and lshift
-            case 0x2a:
-            case 0x36:
-                shift_flag = 1;
-                break;
-            
-            //alt_gr
-            case 0x38:
-                alt_gr_flag = 1;
-                break;
-
-            //rest of the keys
-            default:
-                is_kbd_pressed = 1;
-                kb_ch = kbdus[scancode & 0x7f];
-
-                // fb_console_printf("kbd_driver : %x ->  %x/%c\n", scancode & 0x7f, kb_ch, kb_ch);
-
-                if(ctrl_flag) 
-                    kb_ch &= 0x1f;
-                
-                if(shift_flag){
-                    
-                    if(kb_ch == '<'){
-                        
-                        kb_ch += 2;
-                    }
-                    else if(kb_ch >= 'a' && kb_ch <= 'z')
-                    {
-
-                        kb_ch -= 32;
-                    }else if(kb_ch >= 'A' && kb_ch <= 'Z')
-                    {
-
-                        kb_ch += 32;
-                    }
-                }
-
-                if(alt_gr_flag){
-                    if(kb_ch == '<'){
-                        kb_ch = '|';
-                    }
-                }
-
-            
-                break;
-        }
-
-    }
-}
-
-
-
-
-
-
-
-
-
 
 uint32_t kernel_stack[2048];
 uint32_t kernel_syscallstack[256];
@@ -178,57 +75,14 @@ static void in_kernel_yield(struct regs* r){
     return;
 }
 
+void kerneltask1(void){
 
-void vfs_traverse(fs_node_t* root_node, int depth){
-
-    char* spacing = kcalloc(1, depth + 1);
-    for(int i = 0; i < depth; ++i)
-        spacing[i] = ' ';
-    
-    
-    
-     while(1){
-
-        int old_offset = root_node->offset;
-        struct dirent* item = readdir_fs(root_node, root_node->offset);
-        
-        if(old_offset > root_node->offset){
-            break;
-        }
-
-        if(item){
-            switch(item->type){
-                case FS_FILE:
-                    fb_console_printf("%sname : %s> file\n",spacing,  item->name);
-                    break;
-                
-                case FS_DIRECTORY:
-                    fb_console_printf("%sname : %s> dir\n",spacing, item->name);
-                    fs_node_t* dnode = finddir_fs(root_node, item->name);
-                    
-                    
-
-                    if(!strcmp(root_node->name, dnode->name)){ return;}
-
-                    vfs_traverse( dnode, depth + 1);
-                    break;
-
-                default:break;
-            }
-			// char* name = strdup(item->name);
-			// list_insert_end(list, name);
-        	kfree(item);
-        }
-        else{
-            break;
-        }
+    while(1){
+        uart_print(COM1, "Well hello from the kernel task1\r\n");
     }
 
 }
 
-
-
-//test functions for ata device
 
 void kmain(multiboot_info_t* mbd){ //high kernel
 
@@ -289,21 +143,21 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
     irq_install();
     irq_install_handler(PS2_KEYBOARD_IRQ, keyboard_handler);
-    irq_install_handler(UART_IRQ, uart_handler);
-    irq_install_handler(PS2_MOUSE_IRQ, ps2_mouse_handler);
+    irq_install_handler(        UART_IRQ, uart_handler);
+    irq_install_handler(   PS2_MOUSE_IRQ, ps2_mouse_handler);
     // irq_install_handler(ATA_MASTER_IRQ, ata_master_irq_handler);
 
-    //for in kernel yield for kernel_threads
-    // idt_set_gate(0x81, (unsigned)in_kernel_yield, 0x08, 0xEE);//0x8E); //syscall
 
+    //recursive paging
+    kdir_entry[RECURSIVE_PD_INDEX] = ((uint32_t)kdir_entry - 0xc0000000) | PAGE_PRESENT | PAGE_READ_WRITE;
+    flush_tlb();
 
     //fiz paging problems
     virt_address_t addr;
-    addr.address = (uint32_t)kernel_heap;
+    addr.address = (uint32_t)align2_4kB(kernel_heap);
     addr.table += 1;
     for( ; addr.table < 1023; addr.table++){
-    //   uart_print(COM1, "incremented table %u:%x , physical :%x\r\n",addr.table,  addr.address, get_physaddr((void *)addr.address));
-      unmap_virtaddr((void *)addr.address);
+        unmap_virtaddr((void *)addr.address);
     } 
 
     
@@ -312,38 +166,92 @@ void kmain(multiboot_info_t* mbd){ //high kernel
         pmm_mark_allocated((void *)0x100000 + 0x1000*i);
     }
 
-
-
-    for(unsigned int i = 0; i < (modules[0].mod_end - modules[0].mod_start)/4096 ; ++i){
+    for(unsigned int i = 0; i < (modules[0].mod_end - modules[0].mod_start)/4096 + ((modules[0].mod_end - modules[0].mod_start) % 4096 != 0) ; ++i){
         
         pmm_mark_allocated((void *)modules[0].mod_start + i*0x1000);
     }
+
+
+    
+    
+    //while there also allocate pde from 768-1023 so that if kernel map changes, it will be present in all processes
+    for(int i =  768; i < 1023; ++i){ //last entry reserved for recursive paging
+        //
+        if(!kdir_entry[i]){ //it is empty then
+            uint8_t* physical_page = allocate_physical_page();
+            kdir_entry[i] = physical_page;
+            kdir_entry[i] |= PAGE_PRESENT | PAGE_READ_WRITE;
+            
+            //well as we add it to the table, this new page is accesible by
+            // ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+            
+            uint32_t* freetable = ((uint32_t *)0xFFC00000) + (0x400 * i);
+            memset(freetable, 0, 4096);
+        }
+    }
+
+    //well some motherfucker in 768:1023 doing some shit that when corrected reboots the damn thing
+    addr.directory = 768;
+    addr.table = 1023;
+    addr.offset = 0;
+    deallocate_physical_page(get_physaddr(addr.address));
+    unmap_virtaddr(addr.address);
+    
+    
+
     flush_tlb();
 
+    extern uint32_t kernel_start;
+    extern uint32_t kernel_data_start;
+    
+    //map kernel text and rodata as well readonly
+    for(uint8_t* start = (uint8_t*)((uint32_t)(&kernel_start) & ~0xFFFul); start < (uint8_t*)&kernel_data_start; start += 4096 ){
+        set_virtaddr_flags(start, PAGE_PRESENT);
+    }
 
+    //initialize the kernel allocator
     pmm_print_usage();
-    kmalloc_init(100);
+    kmalloc_init(255); // a MB at front
     alloc_print_list();
     
     
-    //turn it into to driver of sort?
-    void * tar_begin = (void*)kernel_heap;
-    size_t tar_size = (modules[0].mod_end - modules[0].mod_start);
+    
 
-    tar_add_source(tar_begin);
+
+    //turn it into to driver of sort? //maybe not
+    size_t tar_size = (modules[0].mod_end - modules[0].mod_start);
+    size_t tar_page_count = (tar_size / 4096) + (tar_size % 4096 != 0); //like ceil
+
+    void * tar_begin = vmm_get_empty_kernel_page(tar_page_count, (void*)0xD0000000);
+
     for(unsigned int i = 0; i < tar_size/4096 + (tar_size % 4096 == 0) ; ++i){
-        map_virtaddr(kernel_heap, (void *)(modules->mod_start + i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE);
-        kernel_heap += 0x1000;
+        map_virtaddr( (void*)((uint32_t)tar_begin + i*0x1000), (void *)(modules->mod_start + i*0x1000), PAGE_PRESENT | PAGE_READ_WRITE);
+        // kernel_heap += 0x1000;
     }    
+    tar_add_source(tar_begin);
+
+    
+
 
 
     vfs_install();
   
-    vfs_mount("/", tar_node_create(tar_begin, tar_size));
+    
+    fs_node_t* ramfs = tmpfs_install();
+    fs_node_t* tar_node = tar_node_create(tar_begin, tar_size);
+    vfs_copy(tar_node, ramfs, 0);
+
+    //after unpacking tar into the tmpfs, deallocate the space used by the tar
+    for(unsigned int i = 0; i < tar_page_count ; ++i){
+        
+        uint32_t addr = (uint32_t)tar_begin;
+        kpfree(addr + i*0x1000);
+    }    
+
+
+    vfs_mount("/", ramfs);
     vfs_mount("/dev", devfs_create());
     vfs_mount("/proc", proc_create());
-
-
 
 
     fs_node_t* font_file = kopen("/share/screenfonts/consolefont_14.psf", O_RDONLY);
@@ -354,12 +262,13 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
     
     uint8_t* font_file_buffer = kmalloc(font_file->length);
-    if(!font_file_buffer)
+    if(!font_file_buffer){
+
         error("failed to allocate space for font file");
+    }
         
     read_fs(font_file, 0, font_file->length, font_file_buffer);
     parse_psf( font_file_buffer);
-    
     close_fs(font_file);
 
     uart_print(COM1, "Framebuffer at %x : %u %u %ux%u\r\n", 
@@ -370,21 +279,30 @@ void kmain(multiboot_info_t* mbd){ //high kernel
                 mbd->framebuffer_height
                  );
     init_framebuffer((void*)mbd->framebuffer_addr_lower, mbd->framebuffer_width, mbd->framebuffer_height);
-    fb_set_console_color( (pixel_t){.blue = 0xff, .red = 0xff, .green = 0xff }, (pixel_t){.blue = 0x00, .red = 0x00, .green = 0x00 });
+    fb_set_console_color( (pixel_t){.blue = 0xff, .red = 0xff, .green = 0xff }, (pixel_t){.blue = 0x61, .red = 0x61, .green = 0x61 });
+
+    //the framebuffer entry
+    kdir_entry [mbd->framebuffer_addr_lower >> 22 ] |= PAGE_WRITE_THROUGH | PAGE_CACHE_DISABLED;
+    for(size_t start = 0; start <= (mbd->framebuffer_width*mbd->framebuffer_height*4); start+= 0x1000 ){
+        set_virtaddr_flags(mbd->framebuffer_addr_lower + start, PAGE_WRITE_THROUGH | PAGE_CACHE_DISABLED | PAGE_READ_WRITE | PAGE_PRESENT);
+    }   
+
+
 
     uint32_t console_size =  init_fb_console(-1, -1); //maximum size //requires fonts tho
     uint32_t row,col;
 
     row = console_size & 0xffff;
     col = console_size >> 16;
-    fb_console_printf("init console dimensions: %ux%u\n", col, row);    
+    fb_console_printf("init console dimensions: %ux%u\n", col, row);
+    uart_print(COM1, "init console %ux%u\r\n", col, row );
 
+    
 
     pmm_print_usage();    
 
     
 
-#if 0
     rsdp_t rsdp = find_rsdt();
     if(!rsdp_is_valid(rsdp)){
         fb_console_put("Failed to find rsdp in the memory, halting...");
@@ -392,25 +310,6 @@ void kmain(multiboot_info_t* mbd){ //high kernel
         halt();
     }
 
-
-    fb_console_put("RSDP:\n");
-
-    fb_console_put("\tSignature: ");fb_console_putchar('\"');
-    for(int i = 0; i < 8; ++i){
-        fb_console_putchar(rsdp.Signature[i]);
-    }
-    fb_console_put("\"\n");
-
-
-    fb_console_put("\tOEMID: ");fb_console_putchar('\"');
-    for(int i = 0; i < 6; ++i){
-        fb_console_putchar(rsdp.OEMID[i]);
-    }
-    fb_console_put("\"\n");
-
-
-    fb_console_printf("\tRevision: %u\n", rsdp.Revision);
-    fb_console_printf("\tRsdt: %x\n", rsdp.RsdtAddress);
 
     RSDT_t * rsdt = (void *)rsdp.RsdtAddress;
     if(!is_virtaddr_mapped(rsdt) ){
@@ -422,71 +321,58 @@ void kmain(multiboot_info_t* mbd){ //high kernel
         return;
     }
     
-    char sig[5], oemid[7], oemtableid[9];
-    
-    memcpy(sig, rsdt->h.Signature, 4);
-    memcpy(oemid, rsdt->h.OEMID, 6);
-    memcpy(oemtableid, rsdt->h.OEMTableID, 8);
-
-    fb_console_printf(
-        "RSDT:\n"
-        "\tsignature:%s\n"
-        "\tlength:%u\n"
-        "\trevision:%u\n"
-        "\tchecksum:%u\n"
-        "\toemid:%s\n"
-        "\toemtableid:%s\n"
-        "\tcreatorid:%x\n"
-        "\tcreatorrevision:%x\n"
-        , 
-        sig,
-        rsdt->h.Length,
-        rsdt->h.Revision,
-        rsdt->h.Checksum,
-        oemid,
-        oemtableid,
-        rsdt->h.CreatorID,
-        rsdt->h.CreatorRevision
-
-    );
-
     fb_console_printf("other sdts:\n");
     int entries = (rsdt->h.Length - sizeof(rsdt->h)) / 4;
-    ACPISDTHeader_t *h = (ACPISDTHeader_t*)rsdt->PointerToOtherSDT;
+    ACPISDTHeader_t **h = (ACPISDTHeader_t**)&rsdt->PointerToOtherSDT; //it's a table u idiot
     for(int i = 0; i < entries; ++i){
-        fb_console_printf("->%u : %s\n", i, h[i].Signature);
+        
+        char signature[5] = {0};
+        memcpy(signature, h[i]->Signature, 4);
+        fb_console_printf("->%u : %s\n", i, signature);
     }
 
-#endif
 
+    ACPISDTHeader_t* madt = find_sdt_by_signature(rsdt, "APIC");
+    if(madt){
+        int result = acpi_parse_madt(madt);
+        if(result != 0){
+            fb_console_printf("Failed to parse madt table\n");
+            halt();
+        }
+    }
     
+
+   
+    initialize_syscalls();
+    install_syscall_handler(    SYSCALL_OPEN, syscall_open);
+    install_syscall_handler(    SYSCALL_EXIT, syscall_exit);
+    install_syscall_handler(    SYSCALL_READ, syscall_read);
+    install_syscall_handler(   SYSCALL_WRITE, syscall_write);
+    install_syscall_handler(   SYSCALL_CLOSE, syscall_close);
+    install_syscall_handler(   SYSCALL_LSEEK, syscall_lseek);
+    install_syscall_handler(  SYSCALL_EXECVE, syscall_execve);
+    install_syscall_handler(   SYSCALL_IOCTL, syscall_ioctl);
+    install_syscall_handler(   SYSCALL_FSTAT, syscall_fstat);
+    install_syscall_handler(    SYSCALL_FORK, syscall_fork);
+    install_syscall_handler(    SYSCALL_DUP2, syscall_dup2);
+    install_syscall_handler(  SYSCALL_GETPID, syscall_getpid);
+    install_syscall_handler(    SYSCALL_PIPE, syscall_pipe);
+    install_syscall_handler(   SYSCALL_WAIT4, syscall_wait4);
+    install_syscall_handler(    SYSCALL_MMAP, syscall_mmap);
+    install_syscall_handler(    SYSCALL_KILL, syscall_kill);
+    install_syscall_handler(SYSCALL_GETDENTS, syscall_getdents);
+    install_syscall_handler(  SYSCALL_GETCWD, syscall_getcwd);
+    install_syscall_handler(   SYSCALL_CHDIR, syscall_chdir);
+    install_syscall_handler( SYSCALL_SYSINFO, syscall_sysinfo);
+    install_syscall_handler(   SYSCALL_MOUNT, syscall_mount);
+    install_syscall_handler(  SYSCALL_UNLINK, syscall_unlink);
+    install_syscall_handler(   SYSCALL_MKDIR, syscall_mkdir);
+    install_syscall_handler(   SYSCALL_PIVOT_ROOT, syscall_pivot_root);
+
 
     fb_console_printf("Initializing Device Manager\n");
     dev_init();
     
-    initialize_syscalls();
-    install_syscall_handler(  SYSCALL_OPEN, syscall_open);
-    install_syscall_handler(  SYSCALL_EXIT, syscall_exit);
-    install_syscall_handler(  SYSCALL_READ, syscall_read);
-    install_syscall_handler( SYSCALL_WRITE, syscall_write);
-    install_syscall_handler( SYSCALL_CLOSE, syscall_close);
-    install_syscall_handler( SYSCALL_LSEEK, syscall_lseek);
-    install_syscall_handler(SYSCALL_EXECVE, syscall_execve);
-    install_syscall_handler( SYSCALL_FSTAT, syscall_fstat);
-    install_syscall_handler(  SYSCALL_FORK, syscall_fork);
-    install_syscall_handler(  SYSCALL_DUP2, syscall_dup2);
-    install_syscall_handler(SYSCALL_GETPID, syscall_getpid);
-    install_syscall_handler(  SYSCALL_PIPE, syscall_pipe);
-    install_syscall_handler( SYSCALL_WAIT4, syscall_wait4);
-    install_syscall_handler(  SYSCALL_MMAP, syscall_mmap);
-    install_syscall_handler(  SYSCALL_KILL, syscall_kill);
-    install_syscall_handler(SYSCALL_GETDENTS, syscall_getdents);
-    install_syscall_handler(SYSCALL_GETCWD, syscall_getcwd);
-    install_syscall_handler(SYSCALL_CHDIR, syscall_chdir);
-    install_syscall_handler(SYSCALL_SYSINFO, syscall_sysinfo);
-    install_syscall_handler(SYSCALL_MOUNT, syscall_mount);
-    install_syscall_handler(SYSCALL_UNLINK, syscall_unlink);
-    install_syscall_handler(SYSCALL_MKDIR, syscall_mkdir);
 
     timer_install();
     timer_phase(1000);
@@ -498,63 +384,68 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     for(listnode_t * node = pci_devices.head; node != NULL ;node = node->next ){
         pci_device_t *dev = node->val;
 
+        fb_console_printf("pci-> %u:%u:%u class_code:%x interrupt_line:%u interrupt_pin:%u\n",dev->bus, dev->slot, dev->func, dev->header.common_header.class_code ,dev->header.type_0.interrupt_line, dev->header.type_0.interrupt_pin);        
+        pci_list_capabilities(dev);
+
         if( dev->header.common_header.vendor_id == 0x1af4){
             virtio_register_device(dev);
-
-        }
-
-        //display controller
-        if( dev->header.common_header.class_code == 0x3){
-            fb_console_printf("Found display controller its interrupt line %u and interruptDisable :%u\n", 
-                                dev->header.type_0.interrupt_line,
-                                (dev->header.common_header.command_reg >> 10) & 1
-                                );
-
-
         }
         
+        if( dev->header.common_header.class_code == PCI_NETWORK){
+            //we should check if we have properiate driver for this device
+            if( dev->header.common_header.vendor_id == 0x8086 &&
+                dev->header.common_header.device_id == 0x100e
+                )
+            {
+                fb_console_printf("well an it seems e1000 network device: IRQ number and line -> %x\n", dev->header.type_0.interrupt_line);
 
+            }
+        }
+
+        if( dev->header.common_header.class_code == PCI_DISPLAY){
+            
+            //well check whether this display controoler is our by checking the bar0
+            if(dev->header.type_0.base_address_0){
+                fb_console_printf("Well well well isn't it our frame buffer at: /pci/%u/%u/%u\n", dev->bus, dev->slot, dev->func);
+            }
+
+            int result = bosch_vga_register_device(dev);
+            if(result != 0){
+                fb_console_put("failed to register bosch vga device\n");
+                continue;
+            }
+        }
+        
     }
 
+    
 
+    install_tty();
+    install_kernel_mem_devices();
+    ata_find_devices();
+    ps2_kbd_initialize();
     ps2_mouse_initialize();
 
-    ata_find_devices();
-    
-    //maybe implement pivot root?
-    //forcefully change the root
-    // struct vfs_entry* r =  fs_tree->root->value;
-    // r->file = NULL;
-    // vfs_mount("/", fat_node_create(drive0) );   
+
   
     device_t* console = kcalloc(1, sizeof(device_t));
     console->name = strdup("console");
     console->write = console_write;
-    console->read = console_read;
+    console->read =  console_read;
     console->dev_type = DEVICE_CHAR;
     console->unique_id = 2;
-    
     dev_register(console);
 
-    dev_register( create_uart_device(COM1));
 
+    dev_register( create_uart_device(COM1) );
+    install_basic_framebuffer(mbd->framebuffer_addr_lower, mbd->framebuffer_width, mbd->framebuffer_height, mbd->framebuffer_bpp);
 
-    device_t* fb = kcalloc(1, sizeof(device_t));
-    fb->name = strdup("fb0");
-    fb->write = fb_write;
-    fb->dev_type = DEVICE_BLOCK;
-    fb->unique_id = 6;
-    dev_register(fb);
-        
+    
+
+    install_pex();
+
     process_init();
-
-    char * init_args[] = {
-        "/bin/init",
-        NULL,
-        NULL
-    };
-
-    pcb_t * init =  create_process("/bin/init", init_args);
+    pcb_t * init =  create_process("/bin/init", (char* []){"/bin/init", NULL} );
     init->parent = NULL;
 
 
@@ -563,7 +454,7 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     jump_usermode(); //thus calling schedular
 
     
-    //we shouldn't get there
+    //we shouldn't get there //if we do.. well that's imperessive
     for(;;)
     {
     

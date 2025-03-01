@@ -39,6 +39,9 @@ void uart_write(int port, const void * src, uint32_t size, uint32_t nmemb){
     for(uint32_t i = 0; i < nmemb; ++i){
         uint8_t byte = 0;
         byte = *((uint8_t *)src + (i*size));
+        if(byte == '\n'){
+            outb(port, '\r'); //line dicipline mf
+        }
         outb(port, byte);
     }
 }
@@ -117,6 +120,7 @@ void uart_handler(struct regs *r){
                     //unblock the process
                     // pending_job->req_proc->regs.eip -= 2; //wind it back to the int 0x80 call
                     pending_job->req_proc->state = TASK_RUNNING;
+                    kfree(pending_job); //created during the read operation then deallocated
 
                 }
                 else{
@@ -147,22 +151,25 @@ static int port_addr_index(int port){
 
 
 device_t* create_uart_device(int port){
-
+    
     if( init_uart_port(port) ){ //faulty 
         return NULL;
     }
 
-
+    
     int pindex = port_addr_index(port);
     device_t* dev = kcalloc(1, sizeof(device_t));
     if(!dev)
         error("failed allocate for dev");
 
-    dev->name = kmalloc(5);
+    dev->name = strdup("ttySxxx");
     if(!dev->name)
         error("failed allocate for dev->name");
 
     sprintf(dev->name, "ttyS%u", pindex);
+
+    // alloc_print_list();
+    // halt();
 
     dev->write = uart_console_write;
     dev->read = uart_console_read;

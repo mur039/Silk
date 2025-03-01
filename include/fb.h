@@ -24,6 +24,7 @@ uint8_t framebuffer_write_wrapper(uint8_t * buffer, uint32_t offset, uint32_t le
 int framebuffer_raw_write(size_t start, void * src, size_t count);
 uint32_t init_fb_console(int cols, int rows);
 void fb_set_console_color(pixel_t fg, pixel_t bg);
+
 void fb_console_putchar(unsigned short c);
 void fb_console_write(void * src, uint32_t size, uint32_t nmemb);
 void fb_console_put(char * s);
@@ -36,6 +37,9 @@ uint8_t * get_framebuffer_address(void);
 write_type_t console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer);
 read_type_t console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
 write_type_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer);
+
+void pci_disp_irq_handler(struct regs *r);
+void install_basic_framebuffer(uint32_t* base, uint32_t width, uint32_t height, uint32_t bpp);
 
 
 #endif

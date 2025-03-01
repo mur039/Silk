@@ -20,7 +20,7 @@ typedef struct {
     u8      revision_id; u8 programming_if; u8  subclass; u8 class_code;
     u8  cache_line_size; u8  latency_timer; u8  header_type; u8 built_in_self_test;
 
-}_pci_device_common_header_t;
+}__attribute__((packed)) pci_device_common_header_t;
 
 typedef struct {
     u32 base_address_0;
@@ -36,7 +36,7 @@ typedef struct {
     u32 __reserved;
     u8  interrupt_line; u8 interrupt_pin; u8 min_grant; u8 max_latency;
 
-}_pci_device_type_0_t;
+}__attribute__((packed)) pci_device_type_0_t;
 
 
 enum pci_capability_id {
@@ -61,15 +61,34 @@ enum pci_capability_id {
     PCI_SERIAL_ATA
 };
 
+enum pci_class{
+    PCI_UNCLASSIFIED = 0,
+    PCI_MASS_STORAGE,
+    PCI_NETWORK,
+    PCI_DISPLAY,
+    PCI_MULTIMEDIA,
+    PCI_MEMORY,
+    PCI_BRIDGE,
+    PCI_SIMPLE_COMM,
+    PCI_BASE_SYSTEM,
+    PCI_INPUT_DEVICE,
+    PCI_DOCKING,
+    PCI_PROCESSOR,
+    PCI_SERIAL_BUS,
+    PCI_WIRELESS,
+    PCI_INTELLIGENT,
+    PCI_SATELLITE,
+};
+
 extern const char * pci_capability_str[];
 
 
 typedef struct {
     
-    _pci_device_common_header_t common_header;
+    pci_device_common_header_t common_header;
 
     union{
-        _pci_device_type_0_t type_0;
+        pci_device_type_0_t type_0;
     };
 
 
@@ -94,7 +113,9 @@ void * pci_read(void * dst, uint8_t bus, uint8_t slot, uint8_t func, uint8_t off
 
 void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value);
 void enumerate_pci_devices();
-int32_t get_bar_size();
+int32_t pci_get_bar_size(pci_device_t dev, unsigned int bar );
+int32_t pci_list_capabilities(pci_device_t* dev);
+
 
 
 #endif

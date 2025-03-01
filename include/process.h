@@ -97,5 +97,6 @@ pcb_t * create_kernel_process(void * stack_base, void* esp, void * eip, void* ar
 void save_current_context(pcb_t * proc);
 
 void process_release_sources(pcb_t * proc);
+void inkernelstacktrace();
 
 #endif

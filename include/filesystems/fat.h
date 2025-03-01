@@ -66,7 +66,7 @@ typedef struct{
 
 
 typedef union{
-    fat_bootsector_common_t;
+    fat_bootsector_common_t common;
     char _align[512];
 } fat_boot_sector_t;
 
@@ -95,7 +95,7 @@ typedef struct{
     int cluster_index;
     
 
-	device_t* dev;
+	fs_node_t* dev;
     fs_node_t* root_node;
 } fat_struct_t;
 
@@ -153,9 +153,10 @@ typedef struct{
 #define FAT_DIR_ATTR_DIRECTORY    0x10
 #define FAT_DIR_ATTR_ARCHIVE      0x20
 
-fs_node_t * fat_node_create(device_t* blk_device);
+fs_node_t * fat_node_create( fs_node_t* node);
 
-fat_struct_t* fat_probe_block_dev(device_t* device);
+fat_struct_t* fat_probe_block_dev(fs_node_t* device);
+
 int fat_create_ascii_from_dir(fat_directory_entry_t dir, char*  target_ascii);
 int32_t fat_read_fat_cluster(fs_node_t* node, int cluster, int fs_type);
 

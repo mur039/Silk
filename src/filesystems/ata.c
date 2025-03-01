@@ -67,26 +67,26 @@ int ata_find_devices(){
 
                     for(int i = 0; i < 4 ; ++i){
                     
-                    //first entry : 0x1be
-                    mbr_partition_entry_t entry;
-                    memcpy(&entry, &sector_buf[0x1be + 16*i], 16);
-                    if(!entry.number_of_sectors) continue; //empty entry
-                    
-                    device_t* hda_part = kcalloc(1, sizeof(device_t));
-                    ata_device_t* hda_part_priv = kmalloc(sizeof(ata_device_t));
+                        //first entry : 0x1be
+                        mbr_partition_entry_t entry;
+                        memcpy(&entry, &sector_buf[0x1be + 16*i], 16);
+                        if(!entry.number_of_sectors) continue; //empty entry
 
-                    hda_part->name = strdup("hd0p000");
-                    sprintf(hda_part->name, "hd0p%u", i + 1);
-                    hda_part->write = ata_write_fs;
-                    hda_part->read = ata_read_fs;
-                    hda_part->dev_type = DEVICE_BLOCK;
-                    hda_part->unique_id = 3;
+                        device_t* hda_part = kcalloc(1, sizeof(device_t));
+                        ata_device_t* hda_part_priv = kmalloc(sizeof(ata_device_t));
 
-                    hda_part->priv = hda_part_priv;
-                    *hda_part_priv = *priv;
-                    hda_part_priv->start_sector = entry.LBA_start_partition;
-                    hda_part_priv->end_sector = entry.LBA_start_partition + entry.number_of_sectors;
-                    dev_register(hda_part);
+                        hda_part->name = strdup("hd0p000");
+                        sprintf(hda_part->name, "hd0p%u", i + 1);
+                        hda_part->write = ata_write_fs;
+                        hda_part->read = ata_read_fs;
+                        hda_part->dev_type = DEVICE_BLOCK;
+                        hda_part->unique_id = 3;
+
+                        hda_part->priv = hda_part_priv;
+                        *hda_part_priv = *priv;
+                        hda_part_priv->start_sector = entry.LBA_start_partition;
+                        hda_part_priv->end_sector = entry.LBA_start_partition + entry.number_of_sectors;
+                        dev_register(hda_part);
                     }
                 }
             }
@@ -135,6 +135,7 @@ int ata_find_devices(){
 
 
     return;
+    
 #if 0
     uint8_t * block = kmalloc(512);
     memset(block, 0, 512);

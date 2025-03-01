@@ -129,6 +129,10 @@ static inline void idle(){
 }
 
 
+extern void io_wait();
+
+
+
 
 #define GET_BIT(value, bit) ((value >> bit) & 1)
 

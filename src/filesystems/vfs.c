@@ -363,6 +363,8 @@ void vfs_tree_traverse(tree_t* tree){
 
 
 fs_node_t *get_mount_point(char * path, unsigned int path_depth, char **outpath, unsigned int * outdepth) {
+	
+	// fb_console_printf("get_mount_point :%s\n", path);
 	size_t depth;
 
 	for (depth = 0; depth <= path_depth; ++depth) {
@@ -436,7 +438,7 @@ uint32_t write_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buff
 }
 
 unlink_type_t unlink_fs(fs_node_t* node, const char* name){
-	if(node->flags == FS_FILE && node->unlink)
+	if(node->flags & FS_DIRECTORY && node->unlink)
 	{
 		return node->unlink(node, name);
 	}
@@ -459,7 +461,9 @@ void create_fs(fs_node_t* node,  const char *name, uint16_t permissions){
 int mkdir_fs(fs_node_t* node, char *name, uint16_t permission){
     if(node->flags & FS_DIRECTORY &&  node->mkdir){
         node->mkdir(node, name, permission);
+		return 1;
     }
+	return 0;
 }
 
 
@@ -506,6 +510,7 @@ void close_fs(fs_node_t *node) {
 }
 
 #include <process.h>
+#include <syscalls.h>
 fs_node_t *kopen(char *filename, uint32_t flags) {
 	
     if (!fs_root || !filename) {
@@ -557,8 +562,10 @@ fs_node_t *kopen(char *filename, uint32_t flags) {
 
 	if (path_offset >= path+path_len) {
 		kfree(path);
+		kfree(node_ptr);
 		return mount_point;
 	}
+
 	/* Set the active directory to the mountpoint */
 	memcpy(node_ptr, mount_point, sizeof(fs_node_t));
 	fs_node_t *node_next = NULL;
@@ -574,8 +581,16 @@ fs_node_t *kopen(char *filename, uint32_t flags) {
 			return NULL;
 		} else if (depth == path_depth - 1) {
 			
-            
-			open_fs(node_ptr, 1, 0);
+            int read = 0;
+			int write = 0;
+
+			if(flags & O_RDONLY){
+				read = 1; write = 0;
+			}
+			else if(flags & O_WRONLY){ read = 0; write = 1;}
+			else if(flags & O_RDWR){ read = 1; write = 1;}
+
+			open_fs(node_ptr, read, write);
 			kfree((void *)path);
 			return node_ptr;
 		}
@@ -620,67 +635,122 @@ list_t* vfs_directory_entry_list(fs_node_t* src_node){
 }
 
 
+void vfs_copy(fs_node_t* root_node, fs_node_t* target_node, int depth){
 
-#include <filesystems/tmpfs.h>
-#include <stdarg.h>
+    
+     while(1){
 
-
-
-int32_t vfs_copy_node_to_path(fs_node_t* src_node, fs_node_t* recv_node){
-
-
-
-	list_t* tar_dir = vfs_directory_entry_list(src_node);
-    for(listnode_t* node = tar_dir->head; node ; node = node->next){
-
-
-
-        //open the node    
-        fs_node_t* fnode = finddir_fs(src_node, node->val);
-		
-		if(!fnode) continue;
-        switch(fnode->flags){
-            case FS_DIRECTORY:
-				uart_print(COM1, "found directory : %s\n", fnode->name);
-				uart_print(COM1, "recursing...\n");
-
-				if(!strcmp(src_node->name, fnode->name)){
-					return 1;
-				}
-				else{
-					mkdir_fs(recv_node, node->val, 0644);
-					fs_node_t *rnode = finddir_fs(recv_node, node->val);
-
-					vfs_copy_node_to_path( fnode, rnode);
-				}
-				break;
-
-			case FS_FILE:
-				uart_print(COM1, "found file : %s size:%u\n", fnode->name, fnode->length);
-				create_fs(recv_node, node->val, 0644);
-				fs_node_t* tnode = finddir_fs(recv_node, node->val);
-
-				struct tmpfs_internal_struct* tis = tnode->device;
-				tis->priv = kmalloc( fnode->length );
-				tis->buffer_size =  (fnode->length );
-
-				read_fs(fnode, 0, fnode->length, tis->priv);
-				tnode->length = fnode->length;
-			
-				
-				
-				break;
-
-			default:
-				break;
-                
+        unsigned int old_offset = root_node->offset;
+        struct dirent* item = readdir_fs(root_node, root_node->offset);
+        
+        for(int i = 0; i < depth; ++i){
+            fb_console_putchar(' ');
+            }
+        
+        if(old_offset > root_node->offset){
+            fb_console_putchar('\n');
+            break;
         }
-		kfree(fnode);
+
+        
+        fs_node_t* rnode;
+        fs_node_t* tnode;
+
+        if(item){
+            switch(item->type){
+                case FS_FILE:
+                    fb_console_printf("name : %s> file\n",  item->name);
+                    
+                    //open on root node
+                    rnode = finddir_fs(root_node, item->name);
+                    open_fs(rnode, 1, 0);
+                    
+                    //create on target node and open it as well
+                    create_fs(target_node, item->name, 0777);
+                    tnode = finddir_fs(target_node, item->name);
+                    open_fs(tnode, 0, 1);
+
+                    uint32_t offset = 0;
+                    uint8_t buffer;
+                    while( read_fs(rnode, offset, 1, &buffer) ){
+                        write_fs(tnode, offset, 1, &buffer);
+                        offset++;
+                    }
+
+                    break;
+                
+                case FS_DIRECTORY:
+                    fb_console_printf("name : %s> dir\n",item->name);
+                    
+                    //create folder at target filesystem as well
+                    mkdir_fs(target_node, item->name, 0777);
+                    
+                    rnode = finddir_fs(root_node, item->name);
+                    tnode = finddir_fs(target_node, item->name);
+
+                    if(!strcmp(root_node->name, rnode->name)){ return;}
+                    
+                    vfs_copy( rnode, tnode, depth + 1);
+                    break;
+
+                default:break;
+            }
+			
+        	kfree(item);
+            item = NULL;
+        }
+        else{
+            break;
+        }
     }
 
-
-
-
-	kfree(tar_dir);
-	return 0;
 }
+
+
+void vfs_traverse_node(fs_node_t* root_node, int depth){
+
+    char* spacing = kcalloc(1, depth + 1);
+    for(int i = 0; i < depth; ++i)
+        spacing[i] = ' ';
+    
+    
+    
+     while(1){
+
+        unsigned int old_offset = root_node->offset;
+        struct dirent* item = readdir_fs(root_node, root_node->offset);
+        
+        if(old_offset > root_node->offset){
+            break;
+        }
+
+        if(item){
+            switch(item->type){
+                case FS_FILE:
+                    fb_console_printf("%sname : %s> file\n",spacing,  item->name);
+                    break;
+                
+                case FS_DIRECTORY:
+                    fb_console_printf("%sname : %s> dir\n",spacing, item->name);
+                    fs_node_t* dnode = finddir_fs(root_node, item->name);
+                    
+                    
+
+                    if(!strcmp(root_node->name, dnode->name)){ return;}
+
+                    vfs_traverse_node( dnode, depth + 1);
+                    break;
+
+                default:break;
+            }
+			
+        	kfree(item);
+            item = NULL;
+        }
+        else{
+            break;
+        }
+    }
+
+}
+

@@ -9,7 +9,8 @@ typedef struct _pipe_device {
 	size_t write_ptr;
 	size_t read_ptr;
 	size_t size;
-	size_t refcount;
+	size_t writerefcount;
+	size_t readrefcount;
 	uint8_t volatile lock;
 	list_t * wait_queue;
 } pipe_device_t;

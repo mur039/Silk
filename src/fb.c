@@ -40,7 +40,26 @@ uint8_t framebuffer_write_wrapper(uint8_t * buffer, uint32_t offset, uint32_t le
 
 
 int framebuffer_raw_write(size_t start, void * src, size_t count){
-    memcpy(&framebuffer_addr[start], src, count);
+    uint32_t dword_section = count / 4;
+    uint32_t byte_section = count % 4;
+    
+    uint32_t* screen = framebuffer_addr;
+    uint32_t* dwordptr = src;
+    //fill out the byte section
+    
+    for(int i = 0; i < dword_section; ++i){
+        screen[i] = dwordptr[i];
+    }
+
+
+    for(int i = 0; i < byte_section; ++i){
+        uint8_t* bytescreen = &screen[dword_section];
+        uint8_t* bytesptr = &dwordptr[dword_section];
+
+        bytescreen[i] = bytesptr[i];
+    }
+
+    // memcpy(&framebuffer_addr[start], src, count);
     return count;
 }
 
@@ -115,6 +134,83 @@ void fb_set_console_color(pixel_t fg, pixel_t bg){
     return;
 }
 
+
+typedef enum{
+    TERM_ESCAPE_TOKEN_ALPHANUMERIC,
+    TERM_ESCAPE_TOKEN_SEPERATOR,
+    TERM_ESCAPE_TOKEN_END
+} term_escape_token_type_t;
+
+typedef struct{
+    term_escape_token_type_t type;
+    char value[8];
+} term_escape_token_t;
+
+typedef struct{
+    const char* input;
+    size_t position;
+} term_escape_tokenizer_t;
+
+
+static  int is_whitespace(char c) {
+    return c == ' ' || c == '\t' || c == '\n';
+}
+
+static  int is_special(char c) {
+    return c == ';' ;
+}
+
+static void term_escape_next_token(term_escape_tokenizer_t* tokenizer, term_escape_token_t* token){
+    
+    // Skip whitespace
+    while (is_whitespace(tokenizer->input[tokenizer->position])) {
+        tokenizer->position++;
+    }
+
+    char c = tokenizer->input[tokenizer->position];
+
+    //end of input
+    if(c == '\0'){
+        token->type = TERM_ESCAPE_TOKEN_END;
+        token->value[0] = '\0';
+        return;
+    }
+
+    if(is_special(c)){ //pass over it i don't have any use for it
+        tokenizer->position++;
+    }
+
+    //handle the rest darling
+    size_t i = 0;
+    while (tokenizer->input[tokenizer->position] && !is_whitespace(tokenizer->input[tokenizer->position]) &&
+           !is_special(tokenizer->input[tokenizer->position])) {
+        if (i < 16 - 1) {
+            token->value[i++] = tokenizer->input[tokenizer->position];
+        }
+        tokenizer->position++;
+    }
+    token->value[i] = '\0';
+    token->type = TERM_ESCAPE_TOKEN_ALPHANUMERIC;
+
+
+}
+
+static size_t term_escape_code_tokenize(char* input, term_escape_token_t* tokens, size_t max_tokens){
+    
+    term_escape_tokenizer_t tokenizer = {.input = input, .position = 0};
+    size_t token_count = 0;
+
+    while (token_count < max_tokens) {
+        term_escape_token_t token;
+        term_escape_next_token(&tokenizer, &token);
+        tokens[token_count++] = token;
+        if (token.type == TERM_ESCAPE_TOKEN_END) break;
+    }
+
+    return token_count - 1; // Exclude TOKEN_END from count
+}
+
+
 #include <g_list.h>
 static int escape_sequence = 0;
 #define TTY_CONSOLE_ESCAPE_ENCODER_BUFFER_SIZE 32
@@ -145,59 +241,28 @@ void fb_console_putchar(unsigned short c){
         if(IS_ALPHABETICAL(c)){ //supposedly on the end
             escape_sequence = 0; 
 
-            //prevent recursion 
+            tty_console_escape_encoder_buffer[--tty_console_escape_encoder_buffer_head] = '\0';
+
+            term_escape_token_t tokens[17];
+            size_t token_count = term_escape_code_tokenize(&tty_console_escape_encoder_buffer[1], tokens, 16);
 
             int opcode = c;
-            char* parse_head = tty_console_escape_encoder_buffer;
-            // fb_console_printf("well escape code buffer is : %s\n", parse_head); //recursion mf
-
-            // number1;number2opcode
-            list_t _parsed_args = list_create();
-            
-            
-            for(int i = 1, previous_head = 1, symbol_type = 0;  ; ++i){
-                
-                if(i >= (tty_console_escape_encoder_buffer_head - 1) ){
-
-            
-                    if(i - previous_head){
-                        char* buf = kcalloc(i - previous_head + 1, 1);
-                        memcpy(buf, &parse_head[previous_head], i - previous_head);
-                        list_insert_end(&_parsed_args, buf);
-                    }
-                    break;
-                }
-                
-
-
-                if(parse_head[i] == ';'){
-                    
-                    char* buf = kcalloc(i - previous_head + 1, 1);
-                    memcpy(buf, &parse_head[previous_head], i - previous_head);
-                    previous_head = i + 1;
-                    list_insert_end(&_parsed_args, buf);
-                    
-                    
-                    
-                }
-            }
-
-
+        
             //maybe convert that list into an array of pointers?
-            char** escape_code_args = kcalloc(_parsed_args.size + 1, sizeof(char*));
+            char** escape_code_args = kcalloc(token_count + 1, sizeof(char*));
             char** head = escape_code_args;
 
-            for(listnode_t * node = _parsed_args.head; node != NULL; node = node->next){
-                char * buff = node->val;
-                *(head++) = buff;
+            for(size_t i = 0; i < token_count; ++i){
+                *(head++) = tokens[i].value;
             }
+
 
             //opcodes from : https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
             switch (opcode) {
 
             case 'H': //move cursor to \x1b[{line};{col}H of \x1b[H
-                if(_parsed_args.size){
-                    if(_parsed_args.size != 2){
+                if(token_count){
+                    if(token_count != 2){
                         break;
                     }
 
@@ -218,7 +283,7 @@ void fb_console_putchar(unsigned short c){
                 break;
 
             case 'f': //move cursor to \x1b[{line};{col}f
-                if(_parsed_args.size && _parsed_args.size == 2){
+                if(token_count == 2){
 
                     int line, col;
                     line = atoi(escape_code_args[0]);
@@ -237,7 +302,7 @@ void fb_console_putchar(unsigned short c){
             case 'E':
             case 'F':
 
-                if(_parsed_args.size && _parsed_args.size == 1){
+                if(token_count == 1){
                     int number_of_lines = atoi(escape_code_args[0]);
                     int line = fb_cursor_y;
 
@@ -256,7 +321,7 @@ void fb_console_putchar(unsigned short c){
 
             case 'C': //move cursor to \x1b[{column}C
             case 'D':
-                if(_parsed_args.size && _parsed_args.size == 1){
+                if(token_count == 1){
                     int number_of_cols = atoi(escape_code_args[0]);
                     int col = fb_cursor_x;
                     col +=  (opcode == 'C' ? 1 :-1) * number_of_cols;
@@ -270,8 +335,8 @@ void fb_console_putchar(unsigned short c){
             //erase functions
             case 'J':
             case 'K':
-                if(_parsed_args.size){
-                    if(_parsed_args.size == 1){
+                if(token_count){
+                    if(token_count == 1){
                         int selector = atoi(escape_code_args[0]);
 
                         switch(selector){
@@ -316,13 +381,13 @@ void fb_console_putchar(unsigned short c){
 
             case 'm': //shapes and colours
                 
-                if(_parsed_args.size && _parsed_args.size <= 5 ){ //max 3 args min 1 argument
+                if(token_count && token_count <= 5 ){ //max 3 args min 1 argument
                     
                     int mode, foreground, background;
                     
                     {
                         int color_args[5] = {-1, -1, -1, -1, -1}; //atoi(escape_code_args[0]); //must exist
-                        for(unsigned int i = 0; i < _parsed_args.size; ++i){
+                        for(unsigned int i = 0; i < token_count; ++i){
                             color_args[i] = atoi(escape_code_args[i]); //must exist
                         }
 
@@ -396,17 +461,9 @@ void fb_console_putchar(unsigned short c){
             }
 
 
-
-            // clear everything
-            for(;;){
-                listnode_t* node = list_remove(&_parsed_args, _parsed_args.head);
-                if(!node) break;
-                kfree(node->val);
-                kfree(node);
-            }
-            // _parsed_args = list_create();
-
             kfree(escape_code_args);
+            escape_code_args = NULL;
+            
             tty_console_escape_encoder_buffer_head = 0;
             memset(tty_console_escape_encoder_buffer, 0, TTY_CONSOLE_ESCAPE_ENCODER_BUFFER_SIZE);
         }   
@@ -470,7 +527,15 @@ normal_printing:
     if(fb_cursor_y >= fb_console_rows){ 
 
         fb_cursor_x = 0; //already zero
-        memcpy(framebuffer_addr, &framebuffer_addr[4*get_glyph_size()*framebuffer_width], 4*framebuffer_width*(framebuffer_heigth));
+        
+        // faster?
+        uint32_t* screen = framebuffer_addr;
+        for(int i = 0; i < framebuffer_width*framebuffer_heigth; ++i){
+            screen[i] = screen[get_glyph_size()*framebuffer_width + i];
+        }
+
+        // memcpy(framebuffer_addr, &framebuffer_addr[4*get_glyph_size()*framebuffer_width], 4*framebuffer_width*(framebuffer_heigth));
+
         for(int x = 0; x < fb_console_cols; ++x)
             framebuffer_put_glyph(' ', x * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg );
 
@@ -568,13 +633,63 @@ read_type_t console_read(struct fs_node *node , uint32_t offset, uint32_t size, 
     return 0;
 }
 
-// int framebuffer_raw_write(size_t start, void * src, size_t count){
-//     memcpy(&framebuffer_addr[start], src, count);
-//     return count;
-// }
-
-
 write_type_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
     (void)node;
     return framebuffer_raw_write(offset, buffer, size);
 }   
+
+
+void pci_disp_irq_handler(struct regs *r){
+
+    fb_console_printf("well pci_disp_irq_handler\n");
+
+}
+
+static int framebuffer_id = 0;
+
+typedef struct{
+    uint32_t* baseaddr;
+    uint16_t  width;
+    uint16_t  height;
+    uint16_t  bpp;
+    uint16_t  misc;
+} framebuffer_t;
+
+
+
+static ioctl_type_t framebuffer_ioctl(fs_node_t* node, unsigned long request, void* argp){
+
+    device_t* dev = node->device;
+    framebuffer_t* fb = dev->priv;
+    uint16_t *lengths = (uint16_t*)argp;
+    
+    lengths[0] = fb->width;
+    lengths[1] = fb->height;
+    return 0;
+}
+
+close_type_t framebuffer_close(fs_node_t* node){
+
+    return;
+}
+
+void install_basic_framebuffer(uint32_t* base, uint32_t width, uint32_t height, uint32_t bpp){
+    device_t framebuffer;
+    framebuffer.name = strdup("fbxxx");
+    sprintf(framebuffer.name, "fb%u", framebuffer_id++);
+
+    framebuffer.write = fb_write;
+    framebuffer.ioctl = framebuffer_ioctl;
+    framebuffer.close = framebuffer_close;
+    framebuffer.dev_type = DEVICE_BLOCK;
+    framebuffer.unique_id = 32;
+
+    framebuffer_t* priv = kcalloc(1, sizeof(framebuffer_t));
+    priv->baseaddr = base;
+    priv->width = width;
+    priv->height = height;
+    priv->bpp = bpp;
+
+    framebuffer.priv = priv;
+    dev_register(&framebuffer);
+}

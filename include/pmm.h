@@ -19,6 +19,12 @@ typedef union {
     uint32_t address;
 } virt_address_t;
 
+/*
+Virtual Address = 
+0xFFC00000 + (PDE_Index * 0x1000) + (PTE_Index * 4)
+
+*/
+#define RECURSIVE_PD_INDEX 1023
 
 #define PAGE_PRESENT         0b00000001    
 #define PAGE_READ_WRITE      0b00000010    
@@ -33,7 +39,7 @@ typedef union {
 
 
 
-
+#define PAGE_NOT_MAPPED (void*)-1
 
 typedef union{
     struct{
@@ -73,11 +79,11 @@ typedef union{
 
 extern uint32_t * kdir_entry;
 extern uint8_t * kernel_heap;
-
 extern uint32_t * current_page_dir;
 
 void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags);
 void unmap_virtaddr(void * virtual_addr);
+int set_virtaddr_flags(void * virtualaddr, uint16_t flags);
 int is_virtaddr_mapped(void * virtaddr);
 int is_virtaddr_mapped_d(void * _dir, void * virtaddr);
 
@@ -92,8 +98,14 @@ void * allocate_physical_page();
 int deallocate_physical_page(void * address);
 
 
+
+#define KMALLOC_MAGIC 0xCAFEBABE
+#define KMALLOC_FREE 1
+#define KMALLOC_ALLOCATED 0
+
 struct Block
-{
+{   
+    //it is used as a boolean after all so why not use the rest as magic
     unsigned int is_free;
     unsigned int size;
     

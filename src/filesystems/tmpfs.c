@@ -1,27 +1,33 @@
 #include <filesystems/tmpfs.h>
 #include <g_tree.h> 
 
-
-
-
 typedef struct tmpfs_device{
     
     tree_t*  tree;
     tree_node_t* self;
     uint32_t ref_count;
-    uint8_t *data;
+
+    //maybe turn it into a list of pages? like fat but easier?
+    char *name;
+	int    type;
+	int    mask;
+	uint32_t    uid;
+	uint32_t    gid;
+	unsigned int atime;
+	unsigned int mtime;
+	unsigned int ctime;
+
+    //only for the files
+    list_t data_page_list;
     size_t data_size;
+    
+
 } tmpfs_device_t;
 
 
 fs_node_t * tmpfs_install(){
 
 	fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
-
-    tmpfs_device_t* tmpfs = kcalloc(1, sizeof(tmpfs_device_t));
-    
-
-    //as if i maounted something here
 
 	fnode->inode = 0;
 	strcpy(fnode->name, "tmpfs");
@@ -35,24 +41,32 @@ fs_node_t * tmpfs_install(){
 	fnode->flags   = FS_DIRECTORY;
 	fnode->read    = NULL;
 	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
+	// fnode->open    = tmpfs_open;
+	// fnode->close   = tmpfs_close;
+
     fnode->create  = tmpfs_create;
     fnode->mkdir   = tmpfs_mkdir;
+    fnode->unlink  = tmpfs_unlink;
 	fnode->readdir = tmpfs_readdir;
-	fnode->finddir =  tmpfs_finddir;
+	fnode->finddir = tmpfs_finddir;
 	fnode->ioctl   = NULL;
 
 
+    tmpfs_device_t* tmpfs = kcalloc(1, sizeof(tmpfs_device_t));
     fnode->device = tmpfs;
+
+    tmpfs->name = "/";
+    tmpfs->type = FS_DIRECTORY;
+    tmpfs->mask = 0777;
 
     tmpfs->tree = tree_create();
 
-	tree_set_root(tmpfs->tree, fnode);
+	tree_set_root(tmpfs->tree, tmpfs);
     tmpfs->self = tmpfs->tree->root;
+
     tmpfs->ref_count = 0;
     tmpfs->data_size = 0;
-    tmpfs->data = NULL;
+    tmpfs->data_page_list = list_create();
 
 	return fnode;
 }
@@ -60,7 +74,7 @@ fs_node_t * tmpfs_install(){
 
 finddir_type_t tmpfs_finddir (struct fs_node* node, char *name){    
 
-    // fb_console_printf("tmpfs_finddir: %s::%s\n", node->name, name);
+    fb_console_printf("tmpfs_finddir: %s::%s\n", node->name, name);
     
     tmpfs_device_t* tmpfs = node->device;
     if(!tmpfs){        
@@ -69,20 +83,49 @@ finddir_type_t tmpfs_finddir (struct fs_node* node, char *name){
 
 
     tree_node_t* tnode = tmpfs->self;
-    fs_node_t* fnode;
+    
 
     for(listnode_t* cnode = tnode->children->head; cnode ; cnode = cnode->next){
         tree_node_t* ctnode = cnode->val;
-        fnode = ctnode->value;
+        tmpfs_device_t* _tmpfs = ctnode->value;
             
-        if(!strcmp(fnode->name, name)){
-            // fb_console_printf("found: %s, \n", fnode->name);                
+        if(!strcmp(_tmpfs->name, name)){
+            fs_node_t* fnode = kcalloc(1, sizeof(fs_node_t));
+            fnode->inode = 5; //????
+            strcpy(fnode->name, _tmpfs->name);
+            fnode->uid = 0;
+            fnode->gid = 0;
+            fnode->impl = 9; //?
+            fnode->device = _tmpfs;
+
+            fnode->read = NULL;
+            fnode->write = NULL;
+            fnode->ioctl = NULL;
+            fnode->open = tmpfs_open;
+            fnode->close = tmpfs_close;
+
+            if(_tmpfs->type == FS_FILE){
+                
+                fnode->flags = FS_FILE;
+                fnode->length = _tmpfs->data_size;
+            }
+            else{
+                
+                fnode->flags = FS_DIRECTORY;
+                fnode->mkdir   = tmpfs_mkdir;
+                fnode->create  = tmpfs_create;
+                fnode->unlink  = tmpfs_unlink;
+                fnode->readdir = tmpfs_readdir;
+                fnode->finddir = tmpfs_finddir;
+
+            }
             return fnode;
         }
     } 
 
     return NULL;
 }
+
 
 
 struct dirent * tmpfs_readdir(fs_node_t *node, uint32_t index) {
@@ -101,7 +144,7 @@ struct dirent * tmpfs_readdir(fs_node_t *node, uint32_t index) {
     tree_node_t* tnode = tmpfs->self;
     
     if(index < tnode->children->size){
-        fs_node_t* fnode;
+        
 
         listnode_t* cnode = tnode->children->head;
 
@@ -110,211 +153,225 @@ struct dirent * tmpfs_readdir(fs_node_t *node, uint32_t index) {
         }
 
         tree_node_t* ctnode = cnode->val;
-        fnode = ctnode->value;
+        tmpfs_device_t* fnode = ctnode->value;
         
 
         struct dirent* out = kcalloc(1, sizeof(struct dirent));
         out->ino = index;
-        out->type = fnode->flags;
+        out->type = fnode->type;
         out->off = index;
         out->reclen = 0;
         strcpy(out->name, fnode->name);
 
         node->offset++;
         return out;
-
-
     }
     
     node->offset = 0;
     return NULL;
 }
 
-int tmpfs_unlink(struct fs_node *node , char *name);
 
 create_type_t tmpfs_create(fs_node_t* node, char* name, uint16_t permissions){
-    fb_console_printf("tmpfs_create: name:%s permissions:%x\n", name, permissions );
+
+
+    //create a new tmpfs entry
+    tmpfs_device_t* croot = kcalloc(1, sizeof(tmpfs_device_t));
+    croot->name = strdup(name);
+    croot->type = FS_FILE;
     
-    fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
-    tmpfs_device_t* tmpfs = kcalloc(1, sizeof(struct tmpfs_internal_struct));
-    *tmpfs = *(tmpfs_device_t*)node->device;
-
+    //get reference for all tree and parent node;
+    tmpfs_device_t* nodes = node->device;
+    tree_t *tree = nodes->tree;
+    tree_node_t *leaf = nodes->self;
     
-	fnode->inode = 0;
-	strcpy(fnode->name, name);
-    
-    fnode->impl = 4; //?
-	fnode->uid = 0;
-	fnode->gid = 0;
-
-	fnode->flags   = FS_FILE;
-	fnode->read    = tmpfs_read;
-	fnode->write   = tmpfs_write;
-    fnode->unlink  = tmpfs_unlink;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
-	fnode->readdir = NULL;
-	fnode->finddir = NULL;
-	fnode->ioctl   = NULL;
-
-    fnode->device = tmpfs;
-    tmpfs->data = NULL; //put a page here
-    tmpfs->data_size = 0; //put a page here
-    tmpfs->ref_count = 0; //put a page here
-
-    tmpfs->self = tree_node_insert_child(tmpfs->tree, tmpfs->self, fnode);
-
-	return;
+    croot->tree = tree;
+    croot->self = tree_node_insert_child(tree, leaf, croot);
+    return;
 }
 
 
 mkdir_type_t tmpfs_mkdir(fs_node_t* node, char* name, uint16_t permissions){
 
-    fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
-    tmpfs_device_t* tmpfs = kcalloc(1, sizeof(tmpfs_device_t));
-    *tmpfs = *(tmpfs_device_t*)node->device;
-
+    fb_console_printf("tmpfs_mkdir: %s, %x\n", name, permissions);
     
-	fnode->inode = 0;
-	strcpy(fnode->name, name);
+    //create a new tmpfs entry
+    tmpfs_device_t* croot = kcalloc(1, sizeof(tmpfs_device_t));
+
+    //get reference for all tree and parent node;
+    tmpfs_device_t* nodes = node->device;
+    tree_t *tree = nodes->tree;
+    tree_node_t *leaf = nodes->self;
     
-    fnode->impl = 4; //?
-	fnode->uid = 0;
-	fnode->gid = 0;
+    
+    croot->name = strdup(name);
+    croot->type = FS_DIRECTORY;
+    croot->tree = tree;
+    croot->self = tree_node_insert_child(tree, leaf, croot);
+    return;
+}
 
-	fnode->flags   = FS_DIRECTORY;
-	fnode->read    = NULL;
-	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
+open_type_t tmpfs_open(fs_node_t* node, uint8_t read, uint8_t write){
 
-    fnode->create  = tmpfs_create;
-    fnode->mkdir   = tmpfs_mkdir;
-	fnode->readdir = tmpfs_readdir;
-	fnode->finddir = tmpfs_finddir;
-	fnode->ioctl   = NULL;
+    read &= 1;
+    write &= 1;
+    node->read  = read ?  tmpfs_read  : NULL;
+    node->write = write ? tmpfs_write : NULL;
 
-    fnode->device = tmpfs;
-    tmpfs->self = tree_node_insert_child(tmpfs->tree, tmpfs->self, fnode);
+    tmpfs_device_t* n = node->device;
+    n->ref_count++;
+}
 
-	return;
+close_type_t tmpfs_close(fs_node_t* node){
+    
+    tmpfs_device_t* n = node->device;
+    n->ref_count--;
+    kfree(node);
+    return;
 }
 
 
 
 write_type_t tmpfs_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
-
-    if( node->flags == FS_DIRECTORY || node->flags == FS_MOUNTPOINT ){
-        return 0;
-    }
-
+    
+  
     tmpfs_device_t* tmpfs = node->device;
-    if(!tmpfs){        
-        return 0;
+
+    uint32_t end_offset = offset + size;
+
+    //Pad with zeros if offset is beyond current data_size
+    if (offset > tmpfs->data_size) {
+        uint32_t pad_size = offset - tmpfs->data_size;
+        uint8_t zero = 0;
+
+        for (uint32_t i = 0; i < pad_size; i++) {
+            tmpfs_write(node, tmpfs->data_size + i, 1, &zero);
+        }
     }
 
-    //need to do some allocations
-    if(!tmpfs->data){ //no allocations occured so
-        tmpfs->data = kmalloc(4*1024); //4kB buffer
-        if(!tmpfs->data)
-            error("failed allocate private storage");
-        tmpfs->data_size = 4*1024;
+    if (end_offset > tmpfs->data_size) {
+        node->length = tmpfs->data_size;
+        tmpfs->data_size = end_offset;
     }
 
-    if(offset + size > tmpfs->data_size){
-        tmpfs->data = krealloc(tmpfs->data, tmpfs->data_size + 4096);
-        tmpfs->data_size += 4096;
+    int page_index = offset / 4096;
+    int page_offset = offset % 4096;
+    // if(size > 1){
+
+    //     fb_console_printf("tmpfs_write: page_index:%u page_offset:%u\n", page_index, page_offset);
+    // }
+    listnode_t* page = tmpfs->data_page_list.head;
+
+    if (!page) {
+        
+        uint8_t* npage = kpalloc(1);
+        list_insert_end(&tmpfs->data_page_list, npage);
+        page = tmpfs->data_page_list.head;
     }
 
-    //successfull
-    uint8_t* raw_block = tmpfs->data;
-    memcpy(&raw_block[offset], buffer,  size);
-    node->offset  += size;
-    node->length += size;
-	return size;
+    for (int i = 0; i < page_index; ++i) {
+        if (!page->next) {
+
+            uint8_t* page = kpalloc(1);
+            list_insert_end(&tmpfs->data_page_list, page);
+        }
+        page = page->next;
+    }
+
+    size_t left = size;
+    while (left--) {
+        uint8_t *wp = page->val;
+        wp[page_offset++] = *(buffer++);  // Write data
+
+        if (page_offset >= 4096) {
+            page_offset = 0;
+
+            // Allocate next page if needed
+            if (!page->next) {
+
+                uint8_t* page = kpalloc(1);
+                list_insert_end(&tmpfs->data_page_list, page);
+            }
+
+            page = page->next;
+        }
+    }
+
+    return size;
 }
-
-
-
 
 read_type_t tmpfs_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
 
-    if( node->flags == FS_DIRECTORY || node->flags == FS_MOUNTPOINT ){
+    tmpfs_device_t* tmpfs =  node->device;
+
+    if(offset >= tmpfs->data_size){
         return 0;
     }
 
-    tmpfs_device_t* tmpfs = node->device;
-    if(!tmpfs){        
-        return NULL;
+    size_t data_left =  tmpfs->data_size - offset;
+    if(size > data_left){
+        size = data_left;
     }
 
-
-    uint8_t* raw_block = tmpfs->data;
-
-    size_t left_size = node->length - offset;
-
-    if(left_size == 0) //eof
-        return 0;
+    int page_index = offset / 4096;
+    int page_offset = offset % 4096;
     
-    if(size > left_size){
-        size = left_size;
-    }
+    // if(size > 1){
 
-    //still some data here
-    memcpy(buffer, &raw_block[offset], size);    
-    node->offset += size;
-	return size;
-}
+    //     fb_console_printf("tmpfs_read: page_index:%u page_offset:%u\n", page_index, page_offset);
+    // }
 
-void tmpfs_close_fs(fs_node_t *node){
+    listnode_t* page = tmpfs->data_page_list.head;
+    for(int i = 0; i < page_index; ++i) page = page->next;
 
-    return;
-    if(node->flags == FS_DIRECTORY || node->flags == FS_MOUNTPOINT)
-        return;
+    size_t left = size;
+    while(left--){
+        
+        uint8_t *rp = page->val;
+        *(buffer++) = rp[page_offset++];
 
-
-    tmpfs_device_t* tmpfs = node->device;
-    if(!tmpfs){        
-        return;
-    }
-
-    node->offset = 0;
-    if(tmpfs->ref_count) 
-        tmpfs->ref_count--;
-
-}
-
-int tmpfs_unlink(struct fs_node *_fnode , char *name){
-    
-
-     if( _fnode->flags == FS_DIRECTORY || _fnode->flags == FS_MOUNTPOINT ){
-        return 0;
-    }
-
-    tmpfs_device_t* tmpfs = _fnode->device;
-    if(!tmpfs){        
-        return -1;
-    }
-
-    fb_console_printf("node : %s - %s\n", _fnode->name, name);
-
-    //remove from the parent
-    tree_node_t* self =  tmpfs->self;
-    for(listnode_t* node = self->parent->children->head; node; node = node->next){
-        tree_node_t* tnode = node->val;
-        fs_node_t* fnode = tnode->value;
-
-        if( fnode == _fnode){
-            listnode_t* ret = list_remove(self->parent->children, node);
-            kfree(ret->val);
-            kfree(ret);
-            kfree(tmpfs->data);
-            kfree(tmpfs);
-            kfree(_fnode);
-            return 0;
+        if(page_offset >= 4096){
+            
+            page_offset = 0;
+            page_index++;
+            page = page->next;
         }
     }
-    
-    return -1;
 
+    return size;
+}
+
+unlink_type_t tmpfs_unlink(fs_node_t* node, char* name){
+
+    tmpfs_device_t* tmpfs = node->device;
+    tree_node_t* tnode = tmpfs->self;
+
+    for(listnode_t* node = tnode->children->head; node ; node = node->next){
+
+        tree_node_t* ctnode = node->val;
+        tmpfs_device_t* _tmpfs = ctnode->value;
+            
+        if(!strcmp(_tmpfs->name, name) && _tmpfs->type & FS_FILE){
+            
+            listnode_t* holdingnode = list_remove(tnode->children, node);
+            tree_node_t* holdingtnode = holdingnode->val;
+            tmpfs_device_t* tmpfs = holdingtnode->value;
+
+            //well deallocation time
+            kfree(holdingnode);
+            kfree(holdingtnode->children);
+            kfree(holdingtnode);
+
+            for(listnode_t* node = list_pop_end(&tmpfs->data_page_list);  node ; node = list_pop_end(&tmpfs->data_page_list) ){
+				
+                kpfree(node->val);
+                kfree(node);
+			}
+
+            kfree(tmpfs->name);
+            kfree(tmpfs);
+            break;
+        }
+    }
+    return 0;
 }

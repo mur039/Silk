@@ -94,19 +94,8 @@ void schedule(struct regs * r){
             break;
 
         case TASK_ZOMBIE:
-            ;
 
-            // if(current_process->regs.eflags & (1 << V86_VM_BIT)){ //v8086 proc
-            //     pcb_t * np = next_process(current_process);
-            //     current_process = np;
-            //     break;
-            // }
-
-            // pcb_t * np = next_process(current_process);
-            // terminate_process(current_process);
-            // current_process = np;
-
-
+            save_context(r, current_process);
             break;
 
         case TASK_RUNNING:
@@ -134,6 +123,7 @@ void schedule(struct regs * r){
         case TASK_INTERRUPTIBLE:
 
             if(current_process->recv_signals == 1){ //sigkill
+                r->eax  = 0x80000001;
                 current_process->state = TASK_ZOMBIE;
                 schedule(r);
             }            
@@ -166,40 +156,32 @@ pid_t allocate_pid(){
 }
 
 pcb_t * create_process(char * filename, char **_argv) {
+
     // Create and insert a process, the pcb struct is in kernel space
     pcb_t * p1 = kcalloc(1, sizeof(pcb_t));
-
 
     // //passing the arguments obv
     for(p1->argc = 0 ; _argv[p1->argc] ; p1->argc++);
     p1->argv = kcalloc( p1->argc + 1, sizeof(char *)); //must be null terminated
 
     for(int i = 0; i < p1->argc; ++i){
-        p1->argv[i] = kmalloc(strlen(_argv[i]) + 1);
-        if(!p1->argv[i]){
-            error("failed to allocate for proc argv");
-        }
-        memcpy(p1->argv[i], _argv[i], strlen(_argv[i]) + 1);
+        
+        p1->argv[i] = strdup(_argv[i]);
+        // p1->argv[i] = kmalloc(strlen(_argv[i]) + 1);
+        // if(!p1->argv[i]){
+        //     error("failed to allocate for proc argv");
+        // }
+        // memcpy(p1->argv[i], _argv[i], strlen(_argv[i]) + 1);
     }
 
 
     p1->pid = allocate_pid();
-    p1->regs.eip = 0; //schedular will do that shi
-    p1->regs.eflags = 0x206; // enable interrupt
+    p1->regs.eip = 0; //schedular will call load_process
+    p1->regs.eflags = 0x206; // enable interrupts and other flags
     memcpy(p1->filename, filename, strlen(filename));
 
     p1->self = list_insert_end(process_list, p1);
     
-
-
-#ifdef DEBUG
-    uart_print(COM1, "\r\n------------------------------\r\n");
-    for(listnode_t * node = process_list->head; node->next != NULL ; node = node->next){
-        pcb_t * proc = node->val;
-        uart_print(COM1, "%u: %s\r\n", proc->pid, proc->filename);
-    }
-
-#endif
 
     // 4kb initial stack
     p1->stack = (void*)0xC0000000;
@@ -215,17 +197,20 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     p1->mem_mapping = kcalloc(1, sizeof(list_t));
     p1->childs = kcalloc(1, sizeof(list_t));
+
+ 
     // Create an address space for the process, how ?
-    // kmalloc a page directory for the process, then copy the entire kernel page dirs and tables(the frames don't have to be copied though)
+    // allocate a page directory for the process, then copy the entire kernel page dirs and tables(the frames don't have to be copied though)
 
     p1->page_dir = kpalloc(1);//allocate_physical_page();
     p1->regs.cr3 = (u32)get_physaddr(p1->page_dir);
 
-    
     //map_virtaddr(p1->page_dir, p1->page_dir, PAGE_PRESENT | PAGE_READ_WRITE);
     memset(p1->page_dir, 0, 4096);
-    memcpy(&p1->page_dir[768], &kdir_entry[768], (1024 - 768) * 4); //mapping
-
+    memcpy(&p1->page_dir[768], &kdir_entry[768], (1023 - 768) * 4); //mapping //except last, recursion
+    
+    p1->page_dir[RECURSIVE_PD_INDEX] = p1->regs.cr3;
+    p1->page_dir[RECURSIVE_PD_INDEX] |= (PAGE_PRESENT | PAGE_READ_WRITE);
     
     p1->recv_signals = 0;
     p1->state = TASK_CREATED;
@@ -312,25 +297,18 @@ pcb_t * load_process(pcb_t * proc){
         if(phdr[i].type == ELF_PT_LOAD){
 
             //create memory mapping and loading
-
-
             int npages = (phdr[i].filesz /4096) + (phdr[i].filesz % 4096 != 0); //likeceil
             fb_console_printf("number of pages allocated for process %s:  %u : %x\n", proc->filename, i,  npages);
             
             
-            // uint8_t* data = kpalloc( npages );        
-
-            // read_fs(exec_file, phdr[i].offset, phdr[i].filesz, data);
-
             for(int j = 0 ; j < npages; ++j){
 
                 uint8_t* physical_page = allocate_physical_page();
-                map_virtaddr_d(
-                                (void *)proc->page_dir, 
+                map_virtaddr(
                                 (void *)(phdr[i].vaddr + j*0x1000),
-                                physical_page, // get_physaddr(data + j*0x1000), 
-                                PAGE_PRESENT | (PAGE_READ_WRITE * (phdr[i].flags & PF_W != 0) ) | PAGE_USER_SUPERVISOR
-                                                                                      );
+                                physical_page,
+                                ( (phdr[i].flags & PF_W) ? PAGE_READ_WRITE : 0 ) | PAGE_USER_SUPERVISOR
+                                );
 
 
                 mp.vmem = phdr[i].vaddr + j*0x1000;
@@ -352,7 +330,7 @@ pcb_t * load_process(pcb_t * proc){
     proc->regs.eip = (uint32_t)elf_header.e_entry;
 
     void * stack_page = allocate_physical_page();//kpalloc(1);//allocate_physical_page();
-    map_virtaddr_d((void *)proc->page_dir, (void *)proc->regs.esp - 0x1000, stack_page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+    map_virtaddr( (void *)proc->regs.esp - 0x1000, stack_page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
     
     mp.vmem = proc->regs.esp - 0x1000;
     mp.phymem = (u32)stack_page;
@@ -410,8 +388,9 @@ pcb_t * terminate_process(pcb_t * p){
         pcb_t * pp = parent->val;
 
         if(pp->state != TASK_RUNNING){
-            pp->regs.eax = p->pid;
-            pp->state = TASK_RUNNING; //resume the parent for now
+            pp->recv_signals = 16; //SIGCHLD !!!! TODO
+            // pp->regs.eax = p->pid;
+            // pp->state = TASK_RUNNING; //resume the parent for now
         }
     }
     
@@ -459,13 +438,14 @@ int context_switch_into_process(struct regs  *r, pcb_t * process)
     set_kernel_stack((uint32_t)(void*)process->kstack + 0xfff, &tss_entry);
     // flush_tss();
 
+    
     asm volatile ( 
         "movl %0, %%cr3"
     : 
     : "a"( process->regs.cr3) 
     :
     );
-    // current_page_dir = process->page_dir;
+    current_page_dir = process->page_dir;
     // flush_tlb();
     
 }
@@ -603,12 +583,12 @@ void process_release_sources(pcb_t * proc){
      //free the resources and allocate new ones
     
     for(int i = 0; i < proc->argc  ; ++i){
-        kfree(proc->argv[i]);
+        if(proc->argv[i]){
+
+            kfree(proc->argv[i]);
+        }
     }
     kfree(proc->argv);
-
-    memset(&proc->regs, 0, sizeof(context_t));
-    
 
 
     
@@ -619,10 +599,13 @@ void process_release_sources(pcb_t * proc){
 
         vmem_map_t * vmap = node->val;
 
-        if(vmap->attributes >> 20){
-            //gotta free the allocated pages
+        if(vmap->attributes >> 20){ //allocated ones
+            if(vmap->attributes & ~(1 << 20) == VMM_ATTR_PHYSICAL_PAGE){
+
+            //gotta free the allocated physical pages
             deallocate_physical_page(vmap->phymem);
             unmap_virtaddr_d(proc->page_dir, ((void*)vmap->vmem));
+            }
             // uart_print(COM1, "vmem: %x->%x :: %x\r\n", vmap->vmem, vmap->phymem, vmap->attributes >> 20);
         }
 
@@ -635,7 +618,8 @@ void process_release_sources(pcb_t * proc){
 
     kfree(proc->mem_mapping);
 
-    //actually somehow propogate zombie children here but anyway
+    
+    //actually somehow propogate children to their grandparents here but anyway
     kfree(proc->childs);
 
     uint32_t* p_pt_entry = (uint32_t*)proc->page_dir;
@@ -648,7 +632,6 @@ void process_release_sources(pcb_t * proc){
     deallocate_physical_page( get_physaddr(proc->kstack) );
     
     kfree(proc->cwd);
-
 }
 
 
@@ -661,7 +644,7 @@ static int kernel_thread_prologue(){
     void (*foo)(void) = ( void (*)(void)  )current_process->regs.eax;
     foo();
 
-    current_process->state = TASK_INTERRUPTIBLE;
+    current_process->state = TASK_ZOMBIE;
     
     //manualy calling timer0 interrupt?
     idle();
@@ -743,5 +726,23 @@ void save_current_context(pcb_t * proc){
     // "add $0x8, %esp\n\t"
     );
 
+
+}
+
+
+typedef struct {
+  struct stackframe* ebp;
+  uint32_t eip;
+} stackframe_t;      
+
+void inkernelstacktrace(){
+    uart_print(COM1, "inkernelstacktrace:\r\n");
+
+    stackframe_t* stk;
+    asm volatile( "mov %%ebp, %0" : "=r"(stk));
+
+    for(; stk ; stk = stk->ebp){
+        uart_print(COM1, "--> %x\r\n",stk->eip );
+    }
 
 }

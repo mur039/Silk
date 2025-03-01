@@ -47,7 +47,8 @@ void syscall_mkdir(struct regs *r );
 void syscall_sysinfo(struct regs *r );
 void syscall_mount(struct regs *r);
 void syscall_unlink(struct regs * r);
-
+void syscall_ioctl(struct regs * r);
+void syscall_pivot_root(struct regs *r);
 
 
 #include <process.h>

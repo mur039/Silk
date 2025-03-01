@@ -51,6 +51,7 @@ typedef struct {
 
 int doSDTChecksum(ACPISDTHeader_t *tableHeader);
 void *find_sdt_by_signature(void *RootSDT, const char * signature);
+int acpi_parse_madt(ACPISDTHeader_t* table);
 
 
 #endif

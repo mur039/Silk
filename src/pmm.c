@@ -39,7 +39,13 @@ void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 
 
 
+#define KMALLOC_IS_FREE(is_free) (is_free & 1)
+#define KMALLOC_GET_MAGIC(is_free) (is_free & 0xFFFFFFFE)
 
+#define KMALLOC_BLOCK_VALID(block) \
+    ( KMALLOC_GET_MAGIC(block->is_free) == KMALLOC_MAGIC)
+
+size_t k_alloc_page_usage = 0;
 block_t * kmalloc_mem_list = NULL;	  // All the memory blocks that are
 block_t * malloc_last_block = NULL;
 
@@ -64,10 +70,11 @@ void kmalloc_init(int npages){
         );
 
         kernel_heap += 0x1000;
+        k_alloc_page_usage += 1;
     }
 
-    //lets say 2 pages
-    kmalloc_mem_list->is_free = 1;
+    //lets say more than 2 pages
+    kmalloc_mem_list->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
     kmalloc_mem_list->size = 4096 * npages;
     kmalloc_mem_list->size -= sizeof(block_t);
     kmalloc_mem_list->prev = NULL;
@@ -77,17 +84,43 @@ void kmalloc_init(int npages){
 }
 
 void * kmalloc(unsigned int size){
-    // alloc_print_list();
-    
+
+    //for next k*alloc if it fails then at least we get the last callers of this function thus the corrupting function
+    // inkernelstacktrace();
     block_t* head;
+    int index = 0;
     for(head = kmalloc_mem_list ;  head  ; head = head->next){
 
-        if(head->is_free && (size + sizeof(block_t)) <= head->size  ){
+        int head_is_free = head->is_free & 1ul;
+        int head_magic = head->is_free & ~1ul;
+
+        if(!KMALLOC_BLOCK_VALID(head)){
+            error("block is corrupted")
+            uart_print(
+                        COM1,
+                        "block in question at index: %u\r\n"
+                        "magic and free?: %x\r\n"
+                        "size:            %x\r\n"
+                        "next:            %x\r\n"
+                        "prev:            %x\r\n"
+                        ,
+                        index,
+                        head->is_free,
+                        head->size,
+                        head->next,
+                        head->prev
+
+                        );
+            
+            return NULL;
+        }
+
+        if( (head->is_free & 1ul) && (size + sizeof(block_t)) <= head->size  ){
             uint8_t* placement = &head[1];
             placement += size;
 
             block_t* next_free = placement;
-            next_free->is_free = 1;
+            next_free->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
             next_free->size = head->size - size - sizeof(block_t);
             next_free->prev = head;
             next_free->next = head->next;
@@ -96,26 +129,30 @@ void * kmalloc(unsigned int size){
                 malloc_last_block = next_free;
             }
 
-            head->is_free = 0;
+            head->is_free = KMALLOC_MAGIC | KMALLOC_ALLOCATED;
             head->next = next_free;
             head->size = size;
         
             return &head[1];
         }
+        index++;
     }
     //maybe allocate page and put it at the end?
     
     error("out of memory");
     uart_print(COM1, "tried to allocate %u, allocating a page\r\n", size);
-    
+    halt();
+
     block_t* newpage = kpalloc(16);
-    
+    k_alloc_page_usage += 16;    
     newpage->size = 16*0x1000 - sizeof(block_t);
     newpage->next = NULL;
     newpage->prev = malloc_last_block;
-    newpage->is_free = 1;
+    newpage->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
+
 
     malloc_last_block->next = newpage;
+    malloc_last_block = newpage;
 
     alloc_print_list();
 
@@ -187,6 +224,9 @@ void * kpalloc(unsigned int npages){ //allocate page aligned pages.
 
 void kpfree(void * address){
     void * phy = get_physaddr(address);
+    if( phy == PAGE_NOT_MAPPED){
+        return;
+    }
     unmap_virtaddr(address);
     deallocate_physical_page(phy);
 }
@@ -194,11 +234,18 @@ void kpfree(void * address){
 
 void alloc_print_list(){
     uart_print(COM1, "*alloc list\r\n");
+    uart_print(COM1, "total number of pages used by the heap is :%u\r\n", k_alloc_page_usage);
     int i = 0;
-    for(block_t * head = kmalloc_mem_list; /*head->next != NULL &&*/ head != NULL; head = head->next){
-        
-        uart_print(COM1, "\t->%u : size->%x, isFree->%x\r\n", i, head->size, head->is_free);
+    for(block_t * head = kmalloc_mem_list; head != NULL; head = head->next){
+
+        uart_print(COM1, "\t->%u : size->%x, isFree->%x, magic:%x\r\n", i, head->size, KMALLOC_IS_FREE(head->is_free), KMALLOC_GET_MAGIC(head->is_free) );
         i++;
+
+        if(!KMALLOC_BLOCK_VALID(head)){
+            
+            char* invalid_ptr = (char*)0;
+            char c = *invalid_ptr; //get 'em john
+        }
     }
 
 }
@@ -207,49 +254,58 @@ void kfree(void * ptr){
 
     if(!ptr){
         uart_print(COM1, "kfree: ptr is NULL\r\n");
-        asm volatile("hlt");
+        char* invalid_ptr = NULL; //that's not invalid anymore :(((( it points to data table :(((( well what about NULL?
+        char c = *invalid_ptr; //get 'em john
+        return;
     }
 
     block_t * head = ptr;
-    head -= 1;  
+    head = &head[-1];
 
-
-    // uart_print(COM1, "KFREE: ptr:%x %x\r\n", ptr, head);
-    // uart_print(COM1, "%u %u %x %x\r\n", head->is_free, head->size, head->prev, head->next);
+    if( !KMALLOC_BLOCK_VALID(head)){
+        fb_console_printf("kfree: corrupted block\n");
+        return;
+    }
     
     
-    head->is_free = 1;
+    head->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
     block_t* prev = head->prev;
     block_t* next = head->next;
 
+    //pointers got corrupted somewhere which makes next and prev to point to a memory outside of the mapped memory
 
-    // if(next && next->is_free){
+    if(next){
 
-    //     head->size += next->size + sizeof(block_t);
-    //     head->next = next->next;
-    //     if(next->next){
-    //         next->next->prev = head;
-    //     }
-    // }
+        if(!is_virtaddr_mapped(next)){ //if next is not mapped than it is invalid so nullify
+            uart_print(COM1, "kfree: pointer is not mapped\r\n");
+            head->next = NULL;
+            head->prev->next = NULL;
+            return;
+        }
+        else if( !KMALLOC_IS_FREE(next->is_free) ){
+            return;
+        }
+        else{
 
+                
+            head->size += next->size + sizeof(block_t);
+            head->next = next->next;
+            if(next->next){
+                next->next->prev = head;
+            }
+        }
+    }
 
-    // if(prev && prev->is_free){
-
-    //     prev->size += head->size + sizeof(block_t);
-        
-    //     prev->next = head->next;
-    //     if(head->next){
-    //         head->next->prev = head;
-    //     }
-    // }
-
-    
-    // alloc_print_list();
-
-
-
-    //no
-    
+    if(prev){    
+        if(KMALLOC_IS_FREE(prev->is_free)){
+            
+            prev->size += head->size + sizeof(block_t);
+            prev->next = head->next;
+            if(head->next){
+                head->next->prev = prev;
+            }
+        }
+    }
 }
 
 void pmm_print_usage(){
@@ -334,25 +390,29 @@ int pmm_mark_allocated(void * address){
     return 0;
 }
 
-void *get_physaddr(void * virtualAddr){
-    virt_address_t vf = {.address = (uint32_t)virtualAddr};
-    page_directory_entry_t * directory;
-    page_table_entry_t * table;
 
-    directory = (void *)current_page_dir;
-    if(!directory[vf.directory].present) return NULL;
+
+//on failure it returns (void*)-1
+void *get_physaddr(void * virtualaddr){
+
+    unsigned long pdindex = (unsigned long)virtualaddr >> 22;
+    unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
+
+    // Here you need to check whether the PD entry is present.
+    unsigned long *pd = (unsigned long *)0xFFFFF000;
+    if( !(pd[pdindex] & PAGE_PRESENT)){
+        
+        return PAGE_NOT_MAPPED;
+    }
     
+    // Here you need to check whether the PT entry is present.
+    unsigned long *pt = ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+    if( !(pt[ptindex] & PAGE_PRESENT)){
+        
+        return PAGE_NOT_MAPPED;
+    }
 
-    //you see
-
-    table = (void *) ( (directory[vf.directory].raw& ~0xFFF));
-    map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
-    table = (page_table_entry_t *)memory_window;
-
-    if(!table[vf.table].present) return NULL;
-
-    return (void *)( vf.offset + (table[vf.table].raw & ~0xFFF) );
-
+    return (void *)((pt[ptindex] & ~0xFFF) + ((unsigned long)virtualaddr & 0xFFF));
 }
 
 int is_virtaddr_mapped(void * virtaddr){
@@ -390,7 +450,7 @@ int is_virtaddr_mapped_d(void * _dir, void * virtaddr){
 
     //if table exist then check in the table if corresponding entry exists
     table = (void *) ( (dir[v.directory].raw& ~0xFFF));
-    map_virtaddr(memory_window, table, PAGE_PRESENT);
+    map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
     table = (page_table_entry_t *)memory_window;
 
     if(!(table[v.table].raw & 1)){
@@ -403,64 +463,75 @@ int is_virtaddr_mapped_d(void * _dir, void * virtaddr){
 }
 
 
-void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags){
-    virt_address_t v, p;
-    page_directory_entry_t * directory = (void*)current_page_dir;
-    page_table_entry_t * table;
-
-    v.address = (uint32_t)virtual_addr;
-    p.address = (uint32_t)physical_addr;
-
-    if(!directory[v.directory].present){ //table doesn't exist so allocate and map one?
-        u8 * page = kpalloc(1); //maybe it will work? for sometime?
-        if(!page) return; //failed to allocate?
-        memset(page, 0, 4096);
-        directory[v.directory].raw = (uint32_t)get_physaddr(page);
-        directory[v.directory].raw |= flags;
-        table = (page_table_entry_t*)page;
+void map_virtaddr(void * virtualaddr, void * physaddr, uint16_t flags){
 
 
+    unsigned long pdindex = (unsigned long)virtualaddr >> 22;
+    unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
 
+    unsigned long *pd = (unsigned long *)0xFFFFF000;
+    unsigned long *pt = ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+
+    if(!(pd[pdindex] & PAGE_PRESENT)){ //empty directory
+        uint8_t* dirphy = allocate_physical_page();
+        pd[pdindex] = (unsigned long)dirphy;
+        pd[pdindex] |=  flags & 0xfff | PAGE_PRESENT;
+        memset(pt, 0, 4096);
     }
-    else{
-    directory[v.directory].raw |= flags;
-    table = (void*)((directory[v.directory].raw & ~(0xffful)) + 1* 0xc0000000);
-
-    // map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
-    // table = memory_window;
-
-    }
-
-
-    //check if table is mapped or not mapped to the kernel heap then unmap it
     
+    // Here you need to check whether the PT entry is present.
+    // When it is, then there is already a mapping present. What do you do now?
+    //idk
+    pt[ptindex] = ((unsigned long)physaddr) | (flags & 0xFFF) | PAGE_PRESENT; // Present
+
     
-    table[v.table].raw = (uint32_t)p.address;
-    table[v.table].raw &= ~0xFFF;
-    table[v.table].raw |=  0b111;
-    asm("invlpg (%0)" : :  "r"(virtual_addr));
-    // flush_tlb();    
-    
+    asm("invlpg (%0)" : :  "r"(virtualaddr));
     return;
-
 }
 
-void unmap_virtaddr(void * virtual_addr){
-    virt_address_t v;
-    page_directory_entry_t * directory = (void*)current_page_dir;
-    page_table_entry_t * table;
+void unmap_virtaddr(void * virtualaddr){
 
-    v.address = (uint32_t)virtual_addr;
-    table = (void*)(directory[v.directory].raw & ~(0xffful));
+    unsigned long pdindex = (unsigned long)virtualaddr >> 22;
+    unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
+
+    unsigned long *pd = (unsigned long *)0xFFFFF000;
+    unsigned long *pt = ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+
+    if(!(pd[pdindex] & PAGE_PRESENT)){ //empty directory
+        return; //nothing to do
+    }
     
-    map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE);
-    table = (void*)memory_window;
     
-    table[v.table].raw = 0;
-    
+    pt[ptindex] = 0;
+    asm("invlpg (%0)" : :  "r"(virtualaddr));
     return;
     
 }
+
+int set_virtaddr_flags(void * virtualaddr, uint16_t flags){
+
+
+    unsigned long pdindex = (unsigned long)virtualaddr >> 22;
+    unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
+
+    unsigned long *pd = (unsigned long *)0xFFFFF000;
+
+    if(!(pd[pdindex] & PAGE_PRESENT)){ //empty directory not possible at least on the kernel side
+        return 1;
+    }
+    
+    // Here you need to check whether the PT entry is present.
+    // When it is, then there is already a mapping present. What do you do now?
+    //idk
+    unsigned long *pt = ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+    uint32_t physaddr = pt[ptindex] & ~0xFFFul;
+    pt[ptindex] = physaddr | (flags & 0xFFF) | PAGE_PRESENT;
+    asm("invlpg (%0)" : :  "r"(virtualaddr));
+    return 0;
+
+}
+
+
 
 
 void *get_physaddr_d( void * _directory, void * virtualAddr){
@@ -525,10 +596,6 @@ void map_virtaddr_d(void * _directory, void * virtual_addr, void * physical_addr
         table[v.table].raw &= ~0xFFF;
         table[v.table].raw |=  0b111;
     }
-
-
-
-    
 
     return;
 
@@ -624,4 +691,7 @@ void paging_directory_list(void * dir_entry){
 
 
 }
+
+
+
 

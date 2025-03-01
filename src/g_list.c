@@ -14,7 +14,7 @@ list_t list_create(){
 
 listnode_t * list_insert_end(list_t * list, void * val){
     
-    listnode_t * t = kcalloc(sizeof(listnode_t), 1);
+    listnode_t * t = kcalloc(1, sizeof(listnode_t));
     t->val = val;
 
     if(!list->head){ //empty list

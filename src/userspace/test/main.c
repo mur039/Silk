@@ -10,6 +10,9 @@ int puts(const char *str){
     return write(0, str, strlen(str));
 }
 
+int putchar(int ch){
+    return write(FILENO_STDOUT, &ch, 1);
+}
 typedef enum{
     SEEK_SET = 0,
     SEEK_CUR = 1, 
@@ -125,10 +128,91 @@ mds_create_string(int fd, int x, int y, char * str){
 }
 
 
+typedef struct {
+    uint16_t       vendor_id; uint16_t device_id;
+    uint16_t     command_reg; uint16_t status;
+    uint8_t      revision_id; uint8_t programming_if; uint8_t  subclass; uint8_t class_code;
+    uint8_t  cache_line_size; uint8_t  latency_timer; uint8_t  header_type; uint8_t built_in_self_test;
 
+}pci_common_header_t;
+
+typedef struct {
+    uint32_t base_address_0;
+    uint32_t base_address_1;
+    uint32_t base_address_2;
+    uint32_t base_address_3;
+    uint32_t base_address_4;
+    uint32_t base_address_5;
+    uint32_t card_bus_cis_pointer;
+    uint16_t sub_system_id; uint16_t sub_system_vendor_id;
+    uint32_t expansion_rom_base_address;
+    uint8_t capabilities_pntr; uint8_t _reserved[3];
+    uint32_t __reserved;
+    uint8_t  interrupt_line; uint8_t interrupt_pin; uint8_t min_grant; uint8_t max_latency;
+
+} pci_type_0_t;
+
+
+
+
+
+
+enum port_ioctl_request{
+    PORTIO_CAPABILITY = 0, //not implemented
+    PORTIO_READ,
+    PORTIO_WRITE,
+};
+
+#define PEX_CONNECT 2
 
 int main( int argc, char* argv[]){
 
+    malloc_init(); //to get dynamic memory baby
+
+    int pexfd = open("/dev/pex0", O_RDWR);
+    if(pexfd < 0){
+        puts("Failed to open /dev/pex0\n");
+        return 1;
+    }
+
+    int result;
+
+    
+    //for now let's bind again
+    result = ioctl(pexfd, PEX_CONNECT, "desktop-manager"); //perhaps query for interfaces?
+    if(result != 0){
+        puts("Failed to connect to \"desktop-manager\"");
+        return 2;
+    }
+
+    typedef union{
+    
+        struct{
+            uint32_t sender_pid;
+            uint8_t frame_type;
+            uint8_t data_start;
+        };
+        uint8_t raw_frame[512];
+   } pex_client_frame_t;
+
+
+    // pex_client_frame_t frame2send;
+    // frame2send.frame_type = 0xc; //like text?
+    // memcpy(&frame2send.data_start, "Here's some text darling\n", 26);
+    // // write(pexfd, &frame2send, sizeof(pex_client_frame_t));
+
+    // printf("And btw my pid is %u, as client process\n", getpid());
+    pex_client_frame_t data;
+    data.frame_type = 0xc;
+    memcpy(&data.data_start, "Leave it in the lap of the gods\n", 33);
+    puts("Let's actually write to it? from it\n");
+    char buf;
+    write(pexfd, &data, sizeof(data));
+    // while( read(pexfd, &buf, 1) != 0){
+    //     putchar(buf);
+    // }
+
+    return 0;
     // this will be forked from the window manager since i don't have sockets
     // socket fd's will be given through pipe and they are going to be in arguments
     // argv[0] = program name

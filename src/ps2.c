@@ -37,3 +37,14 @@ void ps2_send_data(unsigned char data){
     outb(PS2_DATA_PORT, data);
 
 }
+
+// Wait for input buffer to be empty
+void wait_input_clear() {
+    while (inb(PS2_COMMAND_REG) & STATUS_INPUT_BUFFER);
+}
+
+// Wait for output buffer to be full
+void wait_output_full() {
+    while (!(inb(PS2_COMMAND_REG) & STATUS_OUTPUT_BUFFER));
+}
+

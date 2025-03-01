@@ -5,7 +5,7 @@
 #include <pmm.h>
 #include <fb.h>
 
-#define TTY_BUF_SIZE 1024
+#define TTY_BUF_SIZE 4096 // a page
 
 /* 0x54 is just a magic number to make these relatively uniqe ('T') */
 
@@ -210,5 +210,16 @@ struct termios {
 #define	TCSAFLUSH	2
 
 typedef int speed_t;
+
+int install_tty();
+
+typedef struct{
+	uint16_t id;
+	circular_buffer_t ib, ob;
+	struct termio termio;
+} tty_t;
+
+
+
 
 #endif

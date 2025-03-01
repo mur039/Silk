@@ -41,7 +41,7 @@ typedef struct dirent *(*readdir_type_t) (struct fs_node *, uint32_t);
 typedef struct fs_node *(*finddir_type_t) (struct fs_node *, char *name);
 typedef void (*create_type_t) (struct fs_node *, char *name, uint16_t permission);
 typedef void (*mkdir_type_t) (struct fs_node *, char *name, uint16_t permission);
-typedef int (*ioctl_type_t) (struct fs_node *, int request, void * argp);
+typedef int (*ioctl_type_t) (struct fs_node *, unsigned long request, void * argp);
 typedef int (*get_size_type_t) (struct fs_node *);
 typedef int (*unlink_type_t) (struct fs_node *, char *name);
 
@@ -55,6 +55,9 @@ typedef struct fs_node {
 	uint32_t inode;         // Inode number.
 	uint32_t length;        // Size of the file, in byte.
 	uint32_t impl;          // Used to keep track which fs it belongs to.
+	uint16_t major_number;
+	uint16_t minor_number;
+
 
 	/* times */
 	uint32_t atime;         // Accessed
@@ -66,12 +69,14 @@ typedef struct fs_node {
 	write_type_t write;
 	open_type_t open;
 	close_type_t close;
+	ioctl_type_t ioctl;
+	get_size_type_t get_size;
+
+
 	readdir_type_t readdir;
 	finddir_type_t finddir;
 	create_type_t create;
 	mkdir_type_t mkdir;
-	ioctl_type_t ioctl;
-	get_size_type_t get_size;
 	unlink_type_t unlink;
 
 	struct fs_node *ptr;   // Alias pointer, for symlinks.
@@ -144,8 +149,10 @@ char* vfs_canonicalize_path(const char* cwd, const char* rpath);
 
 
 fs_node_t *kopen(char *filename, uint32_t flags);
-int32_t vfs_copy_node_to_path(fs_node_t* src_node, fs_node_t* recv_node);
 list_t* vfs_directory_entry_list(fs_node_t* src_node);
+
+void vfs_copy(fs_node_t* root_node, fs_node_t* target_node, int depth);
+void vfs_traverse_node(fs_node_t* root_node, int depth);
 
 
 #endif
