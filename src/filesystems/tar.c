@@ -233,7 +233,7 @@ static struct dirent * tar_readdir_initrd(fs_node_t *node, uint32_t index) {
     
     head = tar_next(head);
 
-    for(int l_index = 0; l_index < index ; l_index++){
+    for(size_t l_index = 0; l_index < index ; l_index++){
 
         head = tar_next(head);
 
@@ -283,11 +283,11 @@ static struct dirent * tar_readdir_initrd(fs_node_t *node, uint32_t index) {
 
 }
 
-static read_type_t tar_read_initrd(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+static uint32_t tar_read_initrd(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
 
         tar_header_t* thead = node->device;
 
-        if(offset >= o2d(thead->size)){ //EOF
+        if(offset >= (unsigned)o2d(thead->size)){ //EOF
             return 0;
         }
         else{
@@ -303,7 +303,7 @@ static read_type_t tar_read_initrd(struct fs_node *node , uint32_t offset, uint3
 
 
 static uint32_t tar_indode = 0;
-finddir_type_t tar_finddir_initrd (struct fs_node* node, char *name){
+struct fs_node* tar_finddir_initrd (struct fs_node* node, const char *name){
     //from here name should be ../dir/
     // fb_console_printf("tar_finddir_initrd: path: %s:%s\n", node->name, name);
 
@@ -343,8 +343,8 @@ finddir_type_t tar_finddir_initrd (struct fs_node* node, char *name){
 	            fnode->write   = NULL;
 	            fnode->open    = NULL;
 	            fnode->close   = NULL;
-	            fnode->readdir = tar_readdir_initrd;
-	            fnode->finddir = tar_finddir_initrd;
+	            fnode->readdir = (readdir_type_t)tar_readdir_initrd;
+	            fnode->finddir = (finddir_type_t)tar_finddir_initrd;
 	            fnode->ioctl   = NULL;
                 break;
             
@@ -400,8 +400,8 @@ fs_node_t * tar_node_create(void * tar_begin, size_t tar_size){
 	fnode->write   = NULL;
 	fnode->open    = NULL;
 	fnode->close   = NULL;
-	fnode->readdir = tar_readdir_initrd;
-	fnode->finddir = tar_finddir_initrd;
+	fnode->readdir = (readdir_type_t)tar_readdir_initrd;
+	fnode->finddir = (finddir_type_t)tar_finddir_initrd;
 	fnode->ioctl   = NULL;
     
 	return fnode;

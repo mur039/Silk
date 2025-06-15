@@ -1,19 +1,22 @@
 #include <char.h>
+#include <syscalls.h>
 
-
-read_type_t read_null(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+uint32_t read_null(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
     return 0; //eof
 }
 
-write_type_t write_null(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+uint32_t write_null(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
     return size;
 }
 
 
-read_type_t read_zero(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
-    for(int i = 0; i < size; ++i){
-        buffer[i] = 0;
+uint32_t read_zero(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+    
+    if(!is_virtaddr_mapped(buffer)){
+        return -EFAULT;
     }
+
+    memset(buffer, 0, size);
     return size;
 }
 
@@ -30,7 +33,7 @@ typedef struct{
     uint32_t value;
 } portio_request_t;
 
-ioctl_type_t port_ioctl(fs_node_t* node, unsigned long request, void* argp){
+int port_ioctl(fs_node_t* node, unsigned long request, void* argp){
 
     portio_request_t* req = argp;
     
@@ -78,9 +81,7 @@ ioctl_type_t port_ioctl(fs_node_t* node, unsigned long request, void* argp){
 		  8 = /dev/random	Nondeterministic random number gen.
 		  9 = /dev/urandom	Faster, less secure random number gen.
 		 10 = /dev/aio		Asynchronous I/O notification interface
-		 11 = /dev/kmsg		Writes to this come out as printk's, reads
-		
-        			export the buffered printk records.
+		 11 = /dev/kmsg		Writes to this come out as printk's, reads export the buffered printk records.
 
 */
 void install_kernel_mem_devices(){
@@ -94,8 +95,8 @@ void install_kernel_mem_devices(){
     device->unique_id = 3;
     device->dev_type = DEVICE_CHAR;
 
-    device->read = read_null;
-    device->write = write_null;
+    device->read = (read_type_t)read_null;
+    device->write = (write_type_t)write_null;
     dev_register(device);
     kfree(device);
 
@@ -105,7 +106,7 @@ void install_kernel_mem_devices(){
     device->unique_id = 4;
     device->dev_type = DEVICE_CHAR;
 
-    device->ioctl = port_ioctl;
+    device->ioctl = (ioctl_type_t)port_ioctl;
     dev_register(device);
     kfree(device);
 
@@ -115,8 +116,8 @@ void install_kernel_mem_devices(){
     device->unique_id = 5;
     device->dev_type = DEVICE_CHAR;
 
-    device->write = write_null;
-    device->read = read_zero;
+    device->write = (write_type_t)write_null;
+    device->read = (read_type_t)read_zero;
     dev_register(device);
     kfree(device);
     

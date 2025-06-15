@@ -1,5 +1,6 @@
 #include <pipe.h>
 
+#include <process.h>
 uint32_t read_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 uint32_t write_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 void open_pipe(fs_node_t *node, uint8_t read, uint8_t write);
@@ -53,22 +54,29 @@ size_t pipe_available(pipe_device_t* pipe){
 	if(pipe->write_ptr > pipe->read_ptr){
 		return (pipe->write_ptr - pipe->read_ptr);
 	}
-	else{
-		return (pipe->read_ptr - pipe->write_ptr);
+	else if(pipe->write_ptr < pipe->read_ptr){
+		return ( pipe->size - (pipe->read_ptr - pipe->write_ptr) );
+	}
+	else{ //write == read
+		return pipe->size;
 	}
 
 }
 
 
 uint32_t read_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-	// fb_console_printf("read_pipe: %u %u %x\n", offset, size, buffer);
-
 
 	pipe_device_t * pipe = (pipe_device_t *)node->device;
 
-
+	
     size_t collected = 0;
-    if( size <= pipe_unread(pipe) ){
+	size_t remaining = pipe_unread(pipe);
+    
+	if(!pipe->writerefcount && !remaining){ //no writers as well as no data then
+		return 0;
+	}
+	
+	if( size <=  remaining){
 
         while(pipe_unread(pipe) > 0  && collected < size){
 
@@ -79,70 +87,39 @@ uint32_t read_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buf
         return collected;
     }
     
-    // list_insert_end(pipe->wait_queue, NULL);
+	
+    list_insert_end(pipe->wait_queue, current_process);
     return -1;
 
-
-
-
-
-
-	// size_t collected = 0;
-	// while (collected == 0) {
-	// 	spin_lock(&pipe->lock);
-	// 	while (pipe_unread(pipe) > 0 && collected < size) {
-	// 		buffer[collected] = pipe->buffer[pipe->read_ptr];
-	// 		pipe_increment_read(pipe);
-	// 		collected++;
-	// 	}
-
-	// 	spin_unlock(&pipe->lock);
-	// 	wakeup_queue(pipe->wait_queue);
-		
-	// 	/* Deschedule and switch */
-	// 	if (collected == 0) {
-	// 		sleep_on(pipe->wait_queue);
-	// 	}
-	// }
-
-	// return collected;
-    return 0;
 }
 
 #include  <process.h>
 uint32_t write_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-	// fb_console_printf("write_pipe: %u %u %x\n", offset, size, buffer);
+	
 
 	/* Retreive the pipe object associated with this file node */
 	pipe_device_t * pipe = (pipe_device_t *)node->device;
 
-	
-	size_t written = 0;
-	while (written < size) {
-	// spin_lock(&pipe->lock);
-
-		while (pipe_available(pipe) > 0 && written < size) {
-			pipe->buffer[pipe->write_ptr] = buffer[written];
-			pipe_increment_write(pipe);
-			written++;
-		}
-
-	// 	spin_unlock(&pipe->lock);
-	// 	wakeup_queue(pipe->wait_queue);
-
-	//well not good innit
-	listnode_t* node = list_pop_end(pipe->wait_queue);
-	pcb_t* proc = node->val;
-	kfree(node);
-	proc->state = TASK_RUNNING;
-
-	// 	if (written < size) {
-	// 		sleep_on(pipe->wait_queue);
-	// 	}
+	//if there's no reader what's the point of writing?
+	if(!pipe->readrefcount){
+		//as well as send SIGPIPE!!
+		return -6;
 	}
 
-	return written;
-    return 0;
+	size_t avaliable = pipe_available(pipe);
+
+	if( size <= avaliable){
+		for(size_t i = 0; i < size; ++i){
+			pipe->buffer[pipe->write_ptr] = buffer[i];
+			pipe_increment_write(pipe);
+		}
+		//wake up the waiters
+		process_wakeup_list(pipe->wait_queue);
+		return size;
+	}
+
+	//if there's no size left then 
+	return -1;
 }
 
 
@@ -158,6 +135,7 @@ void open_pipe(fs_node_t * node, uint8_t read, uint8_t write) {
 	pipe_device_t * pipe = (pipe_device_t *)node->device;
 
 	//well assumption that only one of them is 1 at a time so
+
 	if(read){
 		node->write = NULL;
 		node->read = read_pipe;
@@ -192,19 +170,11 @@ void close_pipe(fs_node_t * node) {
 
 	/* Check the reference count number */
 	if (pipe->readrefcount == 0 && pipe->writerefcount == 0) { //deallocate pipe
+
 		kfree(pipe->wait_queue);
 		kfree(pipe->buffer);
 		kfree(pipe);
 
-#if 0
-		/* No other references exist, free the pipe (but not its buffer) */
-		free(pipe->buffer);
-		list_free(pipe->wait_queue);
-		free(pipe->wait_queue);
-		free(pipe);
-		/* And let the creator know there are no more references */
-		node->device = 0;
-#endif
 	}
 
 	return;
@@ -212,13 +182,11 @@ void close_pipe(fs_node_t * node) {
 
 fs_node_t* create_pipe(size_t size){
 
-    fs_node_t* fnode = kmalloc(sizeof(fs_node_t));
-    pipe_device_t* pipe = kmalloc(sizeof(pipe_device_t));
-    fnode->device = NULL;
+    fs_node_t* fnode = kcalloc(1, sizeof(fs_node_t));
+    pipe_device_t* pipe = kcalloc(1, sizeof(pipe_device_t));
+    
+	fnode->device = NULL;
 
-    fnode->device = 0;
-	fnode->name[0] = '\0';
-	sprintf(fnode->name, ""); //unnamed pipe?
 	fnode->uid   = 0;
 	fnode->gid   = 0;
 	fnode->flags = FS_PIPE;
@@ -232,7 +200,7 @@ fs_node_t* create_pipe(size_t size){
 	fnode->ioctl   = NULL; /* TODO ioctls for pipes? maybe */
 	fnode->get_size = pipe_size;
 
-	fnode->atime = 0;
+	fnode->atime = (uint32_t)get_ticks();
 	fnode->mtime = fnode->atime;
 	fnode->ctime = fnode->atime;
 

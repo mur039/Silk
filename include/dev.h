@@ -29,6 +29,7 @@ typedef struct __device_t {
 	mkdir_type_t mkdir;
 	ioctl_type_t ioctl;
 	get_size_type_t get_size;
+	mmap_type_t mmap;
 	void *priv;
 } device_t;
 
@@ -40,10 +41,10 @@ void list_devices();
 
 //test
 fs_node_t * devfs_create();
-read_type_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
-write_type_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+uint32_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+uint32_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
 
-finddir_type_t devfs_finddir(struct fs_node* node, char *name);
+struct fs_node* devfs_finddir(struct fs_node* node, const char *name);
 static struct dirent * devfs_readdir(fs_node_t *node, uint32_t index);
 
 

@@ -23,6 +23,7 @@ listnode_t * list_insert_end(list_t * list, void * val);
 listnode_t * list_remove(list_t * list, listnode_t * node);
 
 listnode_t* list_pop_end(list_t* list);
+int list_sort(list_t* list,  int (*comparefunc)(void*, void*) );
 // listnode_t * list_insert_front(list_t * list, void * val);
 // listnode_t * list_insert_start(list_t * list, void * val);
 // void list_delete_list(list_t * list);

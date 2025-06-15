@@ -5,15 +5,15 @@
 #include <fb.h>
 #include <gdt.h>
 #include <queue.h>
-
+#include <syscalls.h>
 queue_t ready_queue;
 queue_t blocked_queue;
 
 list_t * process_list;
-pid_t curr_pid;
+pid_t curr_pid ;
 pcb_t * current_process;
 
-
+pcb_t* task0;
 
 static inline pcb_t* next_process(pcb_t * cp){
     pcb_t * ret_val;
@@ -31,6 +31,7 @@ static inline pcb_t* next_process(pcb_t * cp){
     return ret_val;
 }   
 
+pcb_t* create_idle_task();
 void process_init() {
     //is just a double linked list bu its gonna be circular
     process_list = kcalloc(sizeof(list_t), 1);
@@ -38,17 +39,19 @@ void process_init() {
     process_list->head = 0;
     process_list->tail = 0;
     current_process = NULL;
-    curr_pid = 0;
+    curr_pid = 1;
 
     ready_queue = queue_create(-1); //no limit
     blocked_queue = queue_create(-1); //no limit
-
-    // register_timer_callback(schedule);
+    timer_register(10, 10, ( void (*)(void*))schedule, NULL);
+    
+    task0 = create_idle_task();
     return;
 }
 
 
 int newschedule(struct regs * r){
+    fb_console_printf("How the fuck i get here?\n");
     if(!current_process){
         current_process = queue_dequeue_item(&ready_queue);   
     }
@@ -68,9 +71,10 @@ int newschedule(struct regs * r){
 }
 
 extern void ktty();
-int is_first_time = 0;
 void schedule(struct regs * r){
     
+    // fb_console_put("Inside the shcedule\n");
+
     if(process_list->size == 0){
         fb_console_printf("No processes, kernel panics :(\n");
         uart_print(COM1, "No processes, kernel panics :(\r\n");
@@ -78,11 +82,12 @@ void schedule(struct regs * r){
         halt();
     }
         
-    if(current_process == NULL) current_process = process_list->head->val;
+    if(current_process == NULL) 
+        current_process = process_list->head->val;
 
 
     switch(current_process->state){
-        case TASK_CREATED: //create the process then bitch
+        case TASK_CREATED:
             ;
             //hacky but
             if(current_process->regs.eflags & (1 << V86_VM_BIT)){ //v8086 proc
@@ -93,59 +98,72 @@ void schedule(struct regs * r){
             load_process(current_process);
             break;
 
-        case TASK_ZOMBIE:
-
-            save_context(r, current_process);
-            break;
-
         case TASK_RUNNING:
-            //save context?
-
-            if(current_process->recv_signals == 1){ //sigkill
-                
-                current_process->state = TASK_ZOMBIE;
-                schedule(r);
-            }else if(current_process->recv_signals == 2){ //sigstop
-
-                current_process->state = TASK_INTERRUPTIBLE;
-                schedule(r);
-            }
-
             save_context(r, current_process);
-            // print_current_process();
             break;
         
         case TASK_LOADING:
-            current_process->state = TASK_RUNNING;
-            // save_context(r, current_process);
             break;
         
-        case TASK_INTERRUPTIBLE:
-
-            if(current_process->recv_signals == 1){ //sigkill
-                r->eax  = 0x80000001;
-                current_process->state = TASK_ZOMBIE;
-                schedule(r);
-            }            
+        case TASK_INTERRUPTIBLE: 
             break;
 
     }
-   
-    
-    current_process = next_process(current_process);
 
-    //bad design
-    if( !(current_process->state == TASK_RUNNING ) ){
-        //if its the only process this causes stack to overflow and overwrite the data it seems
-        if(process_list->size == 1){ //only process left so
-            current_process->state = TASK_RUNNING;
+    // current_process = next_process(current_process);
+
+    pcb_t* candinate = NULL;
+    for(unsigned int i = 0; i < process_list->size; ++i){
+        current_process = next_process(current_process);
+        if(current_process->state == TASK_RUNNING){
+            candinate = current_process;
+            break;
         }
-        
-        schedule(r);
+    
+    }
+
+    if(!candinate){
+
+        if(current_process == task0) return;
+        current_process = task0;
     }
 
 
     context_switch_into_process(r, current_process);
+
+    if(current_process->recv_signals){
+        
+        //well i should only one bit set so...
+        unsigned int sig_num = 0;
+        
+        for(unsigned int i = current_process->recv_signals; i > 1 ; i >>= 1){
+            sig_num++;
+        }
+        
+        current_process->recv_signals = 0;
+
+
+        uart_print(COM1, "signal number that is : %u\n", sig_num);
+        //run the signal handler somehow
+
+        if(current_process->syscall_state == SYSCALL_STATE_PENDING) {
+            current_process->syscall_state = SYSCALL_STATE_NONE;
+            r->eax = -EINTR;
+            return;
+        }
+    }
+
+    //now if syscall_state is pending then
+    if(current_process->syscall_state == SYSCALL_STATE_PENDING){
+
+        current_process->syscall_state = SYSCALL_STATE_NONE;
+        syscall_handlers[current_process->syscall_number](r);
+        
+        
+        //if it still pending then, i hope this won't come around and bite me in the ass :/
+        if(current_process->syscall_state == SYSCALL_STATE_PENDING)
+            schedule(r); //schedule again
+    }
     return;
 }
 
@@ -159,6 +177,10 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     // Create and insert a process, the pcb struct is in kernel space
     pcb_t * p1 = kcalloc(1, sizeof(pcb_t));
+    if(!p1){
+        fb_console_printf("failed to allocate mem\n");
+        return NULL;
+    }
 
     // //passing the arguments obv
     for(p1->argc = 0 ; _argv[p1->argc] ; p1->argc++);
@@ -167,11 +189,6 @@ pcb_t * create_process(char * filename, char **_argv) {
     for(int i = 0; i < p1->argc; ++i){
         
         p1->argv[i] = strdup(_argv[i]);
-        // p1->argv[i] = kmalloc(strlen(_argv[i]) + 1);
-        // if(!p1->argv[i]){
-        //     error("failed to allocate for proc argv");
-        // }
-        // memcpy(p1->argv[i], _argv[i], strlen(_argv[i]) + 1);
     }
 
 
@@ -184,7 +201,8 @@ pcb_t * create_process(char * filename, char **_argv) {
     
 
     // 4kb initial stack
-    p1->stack = (void*)0xC0000000;
+    p1->stack_top = (void*)0xC0000000;
+    p1->stack_bottom = p1->stack_top - 4096;
     p1->regs.esp = (0xC0000000);
     p1->regs.ebp = 0; //for stack trace
 
@@ -223,7 +241,7 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     
     vmem_map_t* empty_pages = kcalloc(1, sizeof(vmem_map_t));
-    empty_pages->vmem = 0;
+    empty_pages->vmem = 0x10000;
     empty_pages->phymem = 0xc0000000;
     empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); //3G -> 786432 pages
     list_insert_end(p1->mem_mapping, empty_pages);
@@ -234,6 +252,9 @@ pcb_t * create_process(char * filename, char **_argv) {
     if(!p1->cwd)
         error("failed to allocate for cwd");
     memcpy(p1->cwd, "/", 2);
+
+    p1->syscall_state =  SYSCALL_STATE_NONE;
+    p1->syscall_number = 0;
     return p1;
 
 }
@@ -297,28 +318,31 @@ pcb_t * load_process(pcb_t * proc){
         if(phdr[i].type == ELF_PT_LOAD){
 
             //create memory mapping and loading
-            int npages = (phdr[i].filesz /4096) + (phdr[i].filesz % 4096 != 0); //likeceil
-            fb_console_printf("number of pages allocated for process %s:  %u : %x\n", proc->filename, i,  npages);
+            
+            //for page alloc memsize!!!! for reading from file file size!!!
+            int npages = (phdr[i].memsz /4096) + (phdr[i].memsz % 4096 != 0); //likeceil 
+            // fb_console_printf("number of pages allocated for process %s:  %u : %x\n", proc->filename, i,  npages);
             
             
             for(int j = 0 ; j < npages; ++j){
 
                 uint8_t* physical_page = allocate_physical_page();
                 map_virtaddr(
-                                (void *)(phdr[i].vaddr + j*0x1000),
+                                (void *)((phdr[i].vaddr & ~0xffful) + j*0x1000),
                                 physical_page,
                                 ( (phdr[i].flags & PF_W) ? PAGE_READ_WRITE : 0 ) | PAGE_USER_SUPERVISOR
                                 );
 
 
-                mp.vmem = phdr[i].vaddr + j*0x1000;
+                mp.vmem = (phdr[i].vaddr & ~0xffful) + j*0x1000;
                 mp.phymem = (u32)physical_page;
                 mp.attributes = (1 << 20);
                 vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
 
             }
 
-            memset( (void *)(phdr[i].vaddr ), 0, 0x1000 * npages);
+            // vaddr might not be aligned
+            memset( (void *)(phdr[i].vaddr & ~0xffful), 0, 0x1000 * npages);
             read_fs(exec_file, phdr[i].offset, phdr[i].filesz, (void *)(phdr[i].vaddr));
 
 
@@ -342,7 +366,10 @@ pcb_t * load_process(pcb_t * proc){
 
     //since we are on 32 bit, right? oh wait doesn't matte
     uint32_t * esp = (void *)proc->regs.esp;
-            
+           
+    esp -= 1;
+    *esp = 0;
+
     esp -= proc->argc;
     char **argv = (char **)esp;
     memset(esp , 0, sizeof(char*) * proc->argc);
@@ -372,40 +399,65 @@ pcb_t * load_process(pcb_t * proc){
 
 
     //switch back the address space
+    
     set_cr3(oldcr3);
     flush_tlb();
-
     current_process->state = TASK_RUNNING;
     return proc;
 }
 
-
+#include <tty.h>
 #include <syscalls.h>
 pcb_t * terminate_process(pcb_t * p){
 
-    listnode_t * parent = p->parent;
-    if(parent){
-        pcb_t * pp = parent->val;
+    //tty sessioning
+    tty_t* ctty = p->ctty;
+    if(ctty){
 
-        if(pp->state != TASK_RUNNING){
-            pp->recv_signals = 16; //SIGCHLD !!!! TODO
-            // pp->regs.eax = p->pid;
-            // pp->state = TASK_RUNNING; //resume the parent for now
+        if(p->sid == p->pid){ //if process is a session leader
+
+            if(ctty->session == p->pid){
+                ctty->session = 0;
+                ctty->fg_pgrp = 0;
+            }
+
+            //send some sort of signal to the processes?
+
+            ctty = NULL;
         }
     }
-    
-    list_remove(process_list, p->self);
 
-    
     //close open files
     for(int i = 0; i < MAX_OPEN_FILES; ++i){
         close_for_process(p, i);
     }
+    
+    list_remove(process_list, p->self);
+    p->state = TASK_ZOMBIE;
 
-    // process_release_sources(p);
-     
+    //also orphan the children and signal the parent as well
+    listnode_t * parent = p->parent;
+    if(parent){
+        
+        //move children to the parent process
+        listnode_t* lnode;
+        pcb_t* pproc = ((pcb_t*)parent->val);
+        while( (lnode = list_pop_end(p->childs) ) ){
+            pcb_t* child = lnode->val;
+            child->parent = pproc->self;
+            list_insert_end(pproc->childs, child);
+            kfree(lnode);
+        }
+
+        
+        pid_t ppid = pproc->pid;
+        process_send_signal(ppid, SIGCHLD);
+        kfree(p->childs);
+
+    }
+
+    
     return NULL;
-
 }
 
 int context_switch_into_process(struct regs  *r, pcb_t * process)
@@ -419,34 +471,60 @@ int context_switch_into_process(struct regs  *r, pcb_t * process)
     r->esi = process->regs.esi;
 
     r->ebp = process->regs.ebp;
-    r->useresp = process->regs.esp;
-    // r->esp = process->regs.esp;
-
-    r->eflags = process->regs.eflags;
     r->eip = process->regs.eip;
+    r->eflags = process->regs.eflags;
+    
+
 
     r->cs = process->regs.cs;
     r->ds = process->regs.ds;
     r->es = process->regs.es;
-    r->ss = process->regs.ss;
     r->fs = process->regs.fs;
     r->gs = process->regs.gs;
+    r->ss = process->regs.ss;
 
-    //change pde
-    //this fucks up everything
-    
-    set_kernel_stack((uint32_t)(void*)process->kstack + 0xfff, &tss_entry);
-    // flush_tss();
+    r->useresp = process->regs.esp;
 
-    
+    set_kernel_stack((uint32_t)(void*)process->kstack + 0x1000, &tss_entry);
     asm volatile ( 
         "movl %0, %%cr3"
     : 
     : "a"( process->regs.cr3) 
     :
     );
-    current_page_dir = process->page_dir;
-    // flush_tlb();
+    
+    current_page_dir = (uint32_t *)process->page_dir;
+
+    //well well well otherwise only works for ring3 tasks
+    if( (process->regs.cs & 0x3) == 3){ //ring3 task
+
+        //update kernel stack for the process
+        return 0;
+    }
+    else{
+        
+        r->esp = process->regs.esp;
+
+        return 0;
+        struct regs* newstack_r = (void*)r->esp;
+        newstack_r -= 1;
+        *newstack_r = *r; //copy it over
+        r->esp = (uint32_t)newstack_r;
+
+        asm volatile(
+            "mov %0, %%esp\n"
+            "pop %%gs\n"
+            "pop %%fs\n"
+            "pop %%es\n"
+            "pop %%ds\n"
+            "popa\n"
+            "add $8, %%esp\n"
+            "iret\n"
+            :
+            : "r"(r->esp)
+            : "memory"
+        );       
+    }
     
 }
 
@@ -511,7 +589,15 @@ void save_context(struct regs * r, pcb_t * process){
     process->regs.edi = r->edi;
 
     process->regs.ebp = r->ebp;
-    process->regs.esp = r->useresp;
+
+    if((process->regs.cs & 3) == 0){ //ring0 task
+        process->regs.esp = r->esp;
+    }
+    else{ //ring3
+
+        process->regs.esp = r->useresp;
+    }
+
 
     process->regs.eip = r->eip;
 
@@ -603,7 +689,7 @@ void process_release_sources(pcb_t * proc){
             if(vmap->attributes & ~(1 << 20) == VMM_ATTR_PHYSICAL_PAGE){
 
             //gotta free the allocated physical pages
-            deallocate_physical_page(vmap->phymem);
+            deallocate_physical_page((void*)vmap->phymem);
             unmap_virtaddr_d(proc->page_dir, ((void*)vmap->vmem));
             }
             // uart_print(COM1, "vmem: %x->%x :: %x\r\n", vmap->vmem, vmap->phymem, vmap->attributes >> 20);
@@ -618,13 +704,13 @@ void process_release_sources(pcb_t * proc){
 
     kfree(proc->mem_mapping);
 
-    
-    //actually somehow propogate children to their grandparents here but anyway
-    kfree(proc->childs);
 
     uint32_t* p_pt_entry = (uint32_t*)proc->page_dir;
     for(int i = 0; i < 768; ++i){
-        deallocate_physical_page( (void*) (proc->page_dir[i] & ~0xffful) );
+        if(proc->page_dir[i] & 1){ //if present
+
+            deallocate_physical_page( (void*) (proc->page_dir[i] & ~0xffful) );
+        }
     }
     // kfree(proc->page_dir);
     deallocate_physical_page( get_physaddr(proc->page_dir) );
@@ -643,36 +729,122 @@ static int kernel_thread_prologue(){
     
     void (*foo)(void) = ( void (*)(void)  )current_process->regs.eax;
     foo();
+    for(; ;) idle();
 
-    current_process->state = TASK_ZOMBIE;
-    
-    //manualy calling timer0 interrupt?
-    idle();
     return 0;
 }
 
 static int kernel_tid = -1;
-pcb_t * create_kernel_process(void * stack_base, void* _esp, void * _eip, void* arg){
-    char * args[] = {NULL};
-    pcb_t * kt = create_process("", args);
-    kt->state = TASK_LOADING;
-    // kt->stack = stack_base;
-    kt->argc = 0;
-    kt->regs.cs = (1 * 8) | 0;
-    kt->regs.ds = (2 * 8) | 0;
-    kt->regs.ss = (2 * 8) | 0;
-    kt->regs.ds = (2 * 8) | 0;
-    kt->regs.fs = (2 * 8) | 0;
-    kt->regs.es = 0 | 0;
-    kt->pid = kernel_tid--;
 
-    kt->regs.eip = (u32)kernel_thread_prologue;
-    kt->regs.ebp = 0;
-    kt->regs.esp = ((u32)stack_base) + 0x1000;
-    kt->regs.eax = (u32)_eip;
-    return kt;
+pcb_t * create_kernel_process(void (*entry)(void) ){
 
+    pcb_t *task = kcalloc(1, sizeof(pcb_t));
+
+    // Set up process details
+    task->pid = kernel_tid--;
+    task->state = TASK_LOADING;
+    
+    task->self = list_insert_end(process_list, task);
+
+
+
+    //setting up the page directory
+    task->page_dir = kpalloc(1);
+    task->regs.cr3 = (uint32_t)get_physaddr(task->page_dir);
+    memset(task->page_dir, 0, 4096);
+    memcpy(&task->page_dir[768], &kdir_entry[768], (1023 - 768) * 4); //mapping //except last, recursion
+    
+    //set recursive paging as well
+    task->page_dir[RECURSIVE_PD_INDEX] = task->regs.cr3;
+    task->page_dir[RECURSIVE_PD_INDEX] |= (PAGE_PRESENT | PAGE_READ_WRITE);
+
+    task->stack_top = (void*)0xD0001000;
+
+    // Allocate a separate kernel stack for IRQs
+    void *kstack = kpalloc(1);
+    task->kstack = kstack;
+
+
+    // Set up registers
+    task->regs.eflags = 0x206;
+    task->regs.cs = (1 * 8) | 0;
+    task->regs.ds = (2 * 8) | 0;
+    task->regs.ss = (2 * 8) | 0;
+    task->regs.es = (2 * 8) | 0;
+    task->regs.fs = (2 * 8) | 0;
+    task->regs.gs = (2 * 8) | 0;
+
+    // **Use the mapped function stack**
+    task->regs.esp = 0xD0001000;
+    task->regs.ebp = 0xD0001000;
+
+    task->regs.eip = (uint32_t)kernel_thread_prologue;
+    task->regs.eax = (uint32_t)entry; // Pass function pointer
+
+    // **Use kstack for IRQs**
+    // set_kernel_stack((uint32_t)kstack + 0x1000, &tss_entry);
+
+    // Allocate stack for the function
+    void *stack = allocate_physical_page();
+    map_virtaddr((void*)0xD0000000, stack, PAGE_PRESENT | PAGE_READ_WRITE);
+    memset((void*)0xd0000000, 0, 4096);
+
+
+    return task;
 }
+
+
+static void idle_task(){
+
+    while(1){
+        
+        asm volatile("hlt\n\t");
+    }
+}
+
+pcb_t* create_idle_task(){
+    
+    pcb_t *task = kcalloc(1, sizeof(pcb_t));
+
+    // Set up process details
+    task->pid = 0;
+    task->state = TASK_RUNNING;
+    task->self = NULL;
+
+    //setting up the page directory
+    task->page_dir = kpalloc(1);
+    task->regs.cr3 = (uint32_t)get_physaddr(task->page_dir);
+    memset(task->page_dir, 0, 4096);
+    memcpy(&task->page_dir[768], &kdir_entry[768], (1023 - 768) * 4); //mapping //except last, recursion
+    
+    //set recursive paging as well
+    task->page_dir[RECURSIVE_PD_INDEX] = task->regs.cr3;
+    task->page_dir[RECURSIVE_PD_INDEX] |= (PAGE_PRESENT | PAGE_READ_WRITE);
+
+    task->stack_top = (void*)0xD0001000;
+
+    // Allocate a separate kernel stack for IRQs
+    void *kstack = kpalloc(1);
+    task->kstack = kstack;
+
+    // Set up registers
+    task->regs.eflags = 0x206;
+    task->regs.cs = (1 * 8) | 0;
+    task->regs.ds = (2 * 8) | 0;
+    task->regs.ss = (2 * 8) | 0;
+    task->regs.es = (2 * 8) | 0;
+    task->regs.fs = (2 * 8) | 0;
+    task->regs.gs = (2 * 8) | 0;
+
+    // **Use the mapped function stack**
+    task->regs.esp = (uint32_t)(task->kstack + 0x1000);
+    task->regs.ebp = 0;
+
+    task->regs.eip = (uint32_t)idle_task;
+    
+    return task;
+}
+
 
 
 static int _save_current_context_helper (int edi ,int esi,  int ebp,  int old_esp ,
@@ -730,7 +902,7 @@ void save_current_context(pcb_t * proc){
 }
 
 
-typedef struct {
+typedef struct stackframe {
   struct stackframe* ebp;
   uint32_t eip;
 } stackframe_t;      
@@ -738,7 +910,7 @@ typedef struct {
 void inkernelstacktrace(){
     uart_print(COM1, "inkernelstacktrace:\r\n");
 
-    stackframe_t* stk;
+    struct stackframe* stk;
     asm volatile( "mov %%ebp, %0" : "=r"(stk));
 
     for(; stk ; stk = stk->ebp){
@@ -746,3 +918,102 @@ void inkernelstacktrace(){
     }
 
 }
+
+
+void process_wakeup_list(list_t* wakeuplist){
+
+    //i will assume poping a process from the list
+    //effectively clearaing out the list so
+    for(listnode_t* node = list_pop_end(wakeuplist);  node ; node = list_pop_end(wakeuplist) ){
+        pcb_t* proc = node->val;
+        kfree(node);
+
+        //i mean it should be interruptiable or somethin so
+        if(proc->state == TASK_INTERRUPTIBLE)
+            proc->state = TASK_RUNNING;
+    }
+
+
+}
+
+int process_get_empty_fd(pcb_t* proc){
+
+    for(int i = 0; i < MAX_OPEN_FILES; ++i){
+        if(!proc->open_descriptors[i].f_inode){
+            //temporaly
+            proc->open_descriptors[i].f_inode = (void*)1;
+            return i; //empty
+        }
+    }
+
+    // no fd?
+    return -1;
+}
+
+int process_send_signal(pid_t pid, unsigned int signum){
+
+    if(signum >= 32)
+        return -EINVAL;
+
+    if( pid <= 0) return -2; //don't have process gorups so and pid 1
+
+
+    pcb_t *proc = process_get_by_pid(pid);
+    if( !proc ) 
+        return -2;
+
+    //if a signal can be sent
+    if ( ((proc->state & ( TASK_INTERRUPTIBLE )))  ){
+        
+        proc->state = TASK_RUNNING;
+    }
+
+    
+    switch(signum){
+        
+        case SIGILL:         __attribute__ ((fallthrough));
+        case SIGSEGV:         __attribute__ ((fallthrough));
+        case SIGINT:         __attribute__ ((fallthrough));
+        case SIGKILL:
+        if(pid <= 1){
+
+            return -ENOPERM; //ENOPERM
+        }
+
+        proc->regs.eax = signum; //killed by signal
+        terminate_process(proc);
+        break;
+        
+        case SIGSTOP:
+            ;
+            //notify the parent as well
+            pid_t ppid = ((pcb_t*)proc->parent->val)->pid;
+            process_send_signal(ppid, SIGCHLD);
+            
+            proc->state = TASK_STOPPED;
+        break;
+        
+        default: //do nothing about it
+            proc->recv_signals = 1 << signum;
+        break;
+    }
+    
+    return 0;
+}
+
+
+int process_send_signal_pgrp(pid_t pgrp, unsigned int signum){
+
+    int err = 0;
+    for(listnode_t* node = process_list->head; node; node = node->next){
+
+        pcb_t* proc = node->val;
+        if(proc->pgid == pgrp){
+            process_send_signal(proc->pid, signum);
+            err++;
+        }
+
+    }
+
+    return 0;
+}   

@@ -2,7 +2,7 @@
 #include <uart.h>
 #define MAX_DEVICE 64
 device_t devices[ MAX_DEVICE ];
-static int lastid = 0;
+static size_t lastid = 0;
 
 
 void dev_init(){
@@ -23,7 +23,7 @@ int dev_register(device_t* dev)
 }
 
 void list_devices(){
-    for(int i = 0; i < 64 && i < lastid; ++i){
+    for(size_t i = 0; i < 64 && i < lastid; ++i){
         fb_console_printf("%u -> name:%s unique_id:%u dev_type:%s\n", 
         i,
         devices[i].name, 
@@ -33,7 +33,7 @@ void list_devices(){
     }
 }
 
-device_t * dev_get_by_index(int index){
+device_t * dev_get_by_index(size_t index){
 	if(index < MAX_DEVICE && index < lastid){
 		return &devices[index];
 	}
@@ -41,7 +41,7 @@ device_t * dev_get_by_index(int index){
 }
 
 device_t * dev_get_by_name(const char* devname){
-	for(int i = 0; i < MAX_DEVICE && i < lastid; ++i){
+	for(size_t i = 0; i < MAX_DEVICE && i < lastid; ++i){
 
 		if(!strcmp(devices[i].name, devname)){
 			return &devices[i];
@@ -69,14 +69,14 @@ fs_node_t * devfs_create() {
 	fnode->write   = NULL;
 	fnode->open    = NULL;
 	fnode->close   = NULL;
-	fnode->readdir = devfs_readdir;
-	fnode->finddir = devfs_finddir;
+	fnode->readdir = (readdir_type_t)devfs_readdir;
+	fnode->finddir = (finddir_type_t)devfs_finddir;
 	fnode->ioctl   = NULL;
 	return fnode;
 }
 
 
-read_type_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+uint32_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
 
 	device_t * dev = node->device;
 	if(dev->dev_type == DEVICE_CHAR){
@@ -99,7 +99,7 @@ read_type_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t 
 
 
 
-write_type_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+uint32_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
 
 	device_t * dev = node->device;
 	if(dev->dev_type == DEVICE_CHAR){
@@ -128,7 +128,7 @@ write_type_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_
 
 
 
-finddir_type_t devfs_finddir(struct fs_node* node, char *name){
+struct fs_node* devfs_finddir(struct fs_node* node, const char *name){
     //from here name should be ../dir/
     fb_console_printf("devfs: path:%s\n", name);
 
@@ -154,6 +154,8 @@ finddir_type_t devfs_finddir(struct fs_node* node, char *name){
 	    fnode->readdir = dev->readdir;
 	    fnode->finddir = dev->finddir;
 	    fnode->ioctl   = dev->ioctl;
+		fnode->mmap    = dev->mmap;
+		
         return fnode;
         
     }

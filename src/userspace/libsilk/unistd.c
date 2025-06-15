@@ -113,9 +113,8 @@ int ioctl(int fd, unsigned long request, void* argp){
 }
 
 
-
-
-
-
+int pause(void){
+    return syscall(SYSCALL_PAUSE);
+}
 
 

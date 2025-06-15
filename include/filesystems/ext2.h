@@ -160,9 +160,9 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode);
 
 
 
-readdir_type_t ext2_readdir( fs_node_t* node, uint32_t index);
-finddir_type_t ext2_finddir( fs_node_t* node, char* name);
-read_type_t ext2_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
+struct dirent* ext2_readdir( fs_node_t* node, uint32_t index);
+struct fs_node* ext2_finddir( fs_node_t* node, char* name);
+uint32_t ext2_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 
 mkdir_type_t ext2_mkdir(fs_node_t* node, const char* name, uint16_t permission);
 

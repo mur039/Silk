@@ -1,10 +1,16 @@
 #include <virtio.h>
 
-
+#include <irq.h>
 
 #define align2_2_byte(val) (((uint32_t)val + 2) & ~2)
 
 static list_t *virtio_devices = NULL;
+
+
+void virtio_gpu_handler(struct regs *r){    
+    fb_console_printf("Inside the virtIO handler\n");
+    return;
+}
 
 
 i32 virtio_gpu_register(pci_device_t *dev){
@@ -17,6 +23,8 @@ i32 virtio_gpu_register(pci_device_t *dev){
     u32 notify_multiplier = 0, notify_offset = 0;
     int capability_pntr = dev->header.type_0.capabilities_pntr & ~0b11;
     fb_console_printf("capacility_pntr: %x\n", capability_pntr);
+
+    
 
     for( ; capability_pntr != 0 ; ){ //linked list
 
@@ -48,16 +56,16 @@ i32 virtio_gpu_register(pci_device_t *dev){
                 );
 
 
-            virtio_pci_common_cfg_t * c_conf = (void*)(  (((u32*)&dev->header.type_0.base_address_0)[virtio_cap.bar] & ~0b1111) + virtio_cap.offset);
-            vdev->common_cfg = c_conf;
+            volatile virtio_pci_common_cfg_t * c_conf = (void*)(  (((u32*)&dev->header.type_0.base_address_0)[virtio_cap.bar] & ~0b1111) + virtio_cap.offset);
+            vdev->common_cfg = (void*)c_conf;
 
             fb_console_printf(" well address:%x is not mapped so nect line will cause pagefault\n", c_conf);    
             //this will cause a page fault but anyway;
-            if(!is_virtaddr_mapped(c_conf)){
-                // fb_console_printf(" well address:%x is not mapped so nect line will cause pagefault\n", c_conf);    
-                map_virtaddr(c_conf, c_conf, PAGE_PRESENT | PAGE_READ_WRITE);
+            int32_t size =  pci_get_bar_size(*dev, virtio_cap.bar);
+            for(int i = 0; i < size; i += 4096){
+                uint32_t *address = (uint32_t*)((uint32_t)c_conf + i*4096);
+                map_virtaddr(address, address, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_WRITE_THROUGH);
             }
-            
             c_conf->device_status = 0; //reset the device
             c_conf->device_status |= DEVICE_ACKNOWLEDGED;
 
@@ -83,7 +91,7 @@ i32 virtio_gpu_register(pci_device_t *dev){
                 fb_console_printf("\tQueue %u: size: %u\n", i, c_conf->queue_size);
             }
 
-            halt();
+            // halt();
             break;
 
         case VIRTIO_PCI_CAP_NOTIFY_CFG:
@@ -102,7 +110,9 @@ i32 virtio_gpu_register(pci_device_t *dev){
             vdev->queue_notify =  cf;
             
             vdev->notify_base_offset_addr = (void *)((((u32*)&dev->header.type_0.base_address_0)[virtio_cap.bar] & ~0b1111) +  virtio_cap.offset);
-            
+            if( !is_virtaddr_mapped(vdev->notify_base_offset_addr)){
+                map_virtaddr(vdev->notify_base_offset_addr, vdev->notify_base_offset_addr, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_WRITE_THROUGH);
+            }
 
 
             break;
@@ -203,8 +213,8 @@ i32 virtio_gpu_register(pci_device_t *dev){
     msg->flags    = 0;
     msg->padding  = 0;
 
-    //for virtual queue 0
-    // vdev->notify_base_offset_addr[1] = 0;
+    // for virtual queue 0
+    vdev->notify_base_offset_addr[1] = 0;
 
     for(int i = 0; i < 0xfffff; ++i); //just wail
 
@@ -214,9 +224,12 @@ i32 virtio_gpu_register(pci_device_t *dev){
     //         (&vdev->vq.device_area->ring)[i].id,
     //         (&vdev->vq.device_area->ring)[i].len
     //         );
-
+    
     // }
 
+    fb_console_printf(" interrupt line/pin => %x :: %x\n", dev->header.type_0.interrupt_line, dev->header.type_0.interrupt_pin);
+    //here let's register our interrupt?
+    irq_install_handler(dev->header.type_0.interrupt_line , virtio_gpu_handler);
 
     return 0;
 }
@@ -232,7 +245,7 @@ i32 virtio_register_device( pci_device_t *dev){
     int device_type = dev->header.common_header.device_id - 0x1040;
     switch (device_type){
 
-    case VIRTIO_GPU_DEVICE:
+    case VIRTIO_GPU_DEVICE: 
         return virtio_gpu_register(dev);
         
         break;

@@ -10,21 +10,22 @@ void lkmain(multiboot_info_t* mbd, unsigned int magic){
     uint32_t * PTE1 = (uint32_t *)((uint32_t)bootstrap_pte1 - 0xC0000000);
     uint32_t * PTE2 = (uint32_t *)((uint32_t)bootstrap_pte2 - 0xC0000000);
 
-    unsigned int framebuffer_addr = mbd->framebuffer_addr_lower;
-    unsigned int framebuffer_page_dir_index = framebuffer_addr >> 22;
 
     PDE[0]    = (uint32_t)PTE1 | 0b00000011;
     PDE[768]  = (uint32_t)PTE1 | 0b00000011;
-    PDE[framebuffer_page_dir_index] = (uint32_t)PTE2 | 0b00000011;
+    // PDE[framebuffer_page_dir_index] = (uint32_t)PTE2 | 0b00000011;
 
     for(unsigned int i = 0; i <  1024; i++){  //whole 4MB
         PTE1[i] = (i * 0x1000) | 3; 
     }
 
-    for(unsigned int i = 0; i < 1024; ++i){ // 800*600*4 / 4096 //mapping for vbe
-        PTE2[i] = (framebuffer_addr + (i * 0x1000)) | 3;
-    }
+    
+    // for(unsigned int i = 0; i < 1024 ; ++i){ // 800*600*4 / 4096 //mapping for vbe
+    //     PTE2[i] = (framebuffer_addr + (i * 0x1000)) | 3;
+    // }
 
+    //recursive paging 
+    PDE[1023] = (uint32_t)PDE | 3;
     enablePaging(PDE);
     _changeSP(kernel_stack, (int (*)(multiboot_info_t * mbd))kmain  , mbd);
     return;

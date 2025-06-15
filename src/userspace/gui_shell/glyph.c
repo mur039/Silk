@@ -37,7 +37,7 @@ int32_t glyph_load_font(const char* font_path){
         glyph_addr = ((uint8_t*)font_addr) + sizeof(PSF1_Header);
         return 1;
     }
-    else if(*(uint32_t*)magic_1 == PSF_FONT_MAGIC){
+    else if(*(uint32_t*)magic_1 == PSF2_FONT_MAGIC){
         return 2;
     }
     else{

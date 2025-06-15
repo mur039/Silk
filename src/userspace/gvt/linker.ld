@@ -2,7 +2,7 @@ ENTRY(_start)
 
 MEMORY {
 
-  ram (rwx) : ORIGIN = 0x1000, LENGTH = 0x3000 
+  ram (rwx) : ORIGIN = 0x10000, LENGTH = 0x2FFF 
 }
 
 
@@ -25,8 +25,13 @@ SECTIONS {
 
 	.bss :
 	{
+		_bss_start = .;
+
 		*(COMMON)                               /* all COMMON sections from all files */
-		*(.bss)                                 /* all bss sections from all files */
+		*(.bss)
+
+		_bss_end = .;                         /* all bss sections from all files */
 	} >ram
+	
 	
 }

@@ -10,6 +10,7 @@
 #include <token.h>
 #include <arena.h>
 
+
 typedef enum{
     SEEK_SET = 0,
     SEEK_CUR = 1, 
@@ -30,7 +31,12 @@ int putchar(int c){
 int getchar(){
     uint8_t ch = 0;
     int ret = read(FILENO_STDIN, &ch, 1);
-    return ret ?  ch : -1;
+
+    if(ret < 0) return -1;
+    else return ch;
+
+    if(ret == -EAGAIN) return -1;
+    else if(ret > 0) return ch;
 }
 
 //both arguments are NULL terminated
@@ -78,6 +84,7 @@ void colour_test(){
 
         for(int i = 0; i < 8; ++i){
             printf("\x1b[1;%um", 30 + i);
+            // puts(U"███");
             putchar(219);putchar(219);putchar(219);
         }
         putchar('\n');
@@ -103,33 +110,30 @@ enum command_ids {
     USAGE,
     RM,
     MKDIR,
+    DISOWN,
+    READ
 
    
 };
 
 const char *commands[] = {
-     [EXIT] = "exit",
-     [ECHO] = "echo",
-     [EXEC] = "exec",
-     [HELP] = "help",
-       [LS] = "ls",
+    [EXIT] = "exit",
+    [ECHO] = "echo",
+    [EXEC] = "exec",
+    [HELP] = "help",
+    [LS] = "ls",
     [CLEAR] = "clear",
-      [KILL] = "kill",    
-       [CD] = "cd",    
-      [PWD] = "pwd",    
-      [USAGE] = "free",
-      [RM] = "rm",
-      [MKDIR] = "mkdir",
-
-
-
-    
+    [KILL] = "kill",
+    [CD] = "cd",
+    [PWD] = "pwd",
+    [USAGE] = "free",
+    [RM] = "rm",
+    [MKDIR] = "mkdir",
+    [DISOWN] = "disown",
+    [READ] = "read",
     NULL
 
 };
-
-
-
 
 typedef struct{
     char * src;
@@ -140,11 +144,6 @@ typedef struct{
 int is_delimeter(const char c){
     return (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\0');
 }
-
-
-
-
-
 
 
 typedef struct listnode{
@@ -171,7 +170,7 @@ int list_initalize(list_t* list){
 
 listnode_t* list_insert_end(list_t* list, void* val){
     
-    listnode_t* node = calloc(1, sizeof(listnode_t));
+    listnode_t* node = malloc(sizeof(listnode_t));
     node->val = val;
     node->next = NULL;
 
@@ -254,7 +253,6 @@ int list_directory(const char** argv){
 
             case FS_SYMLINK:
                 printf( "<sym>\t\x1b[1;34m%s\x1b[0m\n", dir.d_name );
-                // printf( "<sym>\t%s\n", dir.d_name );
                 break;
 
             case FS_BLOCKDEVICE:
@@ -294,6 +292,10 @@ int _kill(char** argv){
     int result = kill(pid, SIGKILL);
     if(result == -1){
         puts("No such pid\n");
+        return -1;
+    }
+    else if(result == -2){
+        printf("Insufficient permission to kill pid %u\n", pid);
         return -1;
     }
 
@@ -424,7 +426,7 @@ int _exec(char **argv){
         return 1;
     }
 
-    int pipefd[2];
+    int pipefd[2]; //read:write
     if(pipe(pipefd) == -1){
         puts("Failed to create a pipe\n");
         return 1;
@@ -440,6 +442,7 @@ int _exec(char **argv){
         
         //parent will only write so there's no point on reading
         close(pipefd[0]);
+
         shell_state = 1;
         child_write_fd = pipefd[1];
         child_pid = pid;
@@ -447,9 +450,9 @@ int _exec(char **argv){
     }
     else{
 
+        close(pipefd[1]);    
         dup2( pipefd[0], FILENO_STDIN);
         //and child will only read so so there's no point writing back
-        close(pipefd[1]);
         
         int result = execve(
                             argv[0],
@@ -492,21 +495,87 @@ int _rm(char **argv){
 }
 
 
+int _disown(char **argv){
+
+    if(!argv[0]){
+        puts("Expected executable path\n");
+        return 1;
+    }
+
+    int pid = fork();
+    if(pid == -1){
+        puts("Failed to fork\n");
+        return 1;
+    }
+
+    if(pid != 0){
+        
+        //parent will only write so there's no point on reading
+        
+        shell_state = 0;
+        child_write_fd = -1;
+        child_pid = -1;
+        return 0;
+    }
+    else{
+
+        int result = execve(
+                            argv[0],
+                            argv
+                            );
+        
+        if(result == -1){
+            puts("Failed to execute\n");
+            exit(1);
+        }
+
+    }
+
+    return 0;
+}
+
+
+int _read(char **argv){
+
+    if(!argv[0]){
+        puts("Expected file path\n");
+        return 1;
+    }
+
+    
+    int filefd = open(argv[0], O_RDONLY);
+    if(filefd < 0){
+        puts("Failed to open file for reading\n");
+        return 1;
+    }
+
+
+    int ch;
+    while( read(filefd, &ch, 1) > 0) putchar(ch); //read until eof or other error
+    return 0;
+}
+
+
 int execute_command(char *command_buffer){
     
+    printf("the buffer i received is: %s\n", command_buffer);
     list_t list;
     list_initalize(&list);
 
     Token tokens[17];
     size_t token_count = tokenize(command_buffer, tokens, 16);
 
+    
 
+    
+    if(token_count == 0){
+        return 0;
+    }
+    
     //well for now it'll work like single command no piping no redirection
-
     for(size_t i = 0; i <= token_count; ++i){
         Token *tok = &tokens[i];
-        switch (tok->type)
-        {
+        switch (tok->type){
         case TOKEN_WORD: 
             printf("%u -> { TOKEN_WORD: \"%s\"}\n", i, tok->value); 
             list_insert_end(&list, tok->value);
@@ -515,10 +584,8 @@ int execute_command(char *command_buffer){
             i = token_count; //to kill the loop :/
             break;
         }
-
         
     }
-
 
     listnode_t* cnode = list.head;
     list.head = list.head->next;
@@ -588,6 +655,8 @@ int execute_command(char *command_buffer){
         case EXEC:  return          _exec(argv); break;
         case MKDIR: return         _mkdir(argv); break;
         case RM:    return            _rm(argv); break;
+        case DISOWN:return         _disown(argv);break;
+        case READ:return             _read(argv);break;
 
         default:break;
     }
@@ -603,27 +672,53 @@ int execute_command(char *command_buffer){
     return 0;
 }
 
+int did_child_exited(){
+    int err, wstat;
+    err = wait4(-1, &wstat, WNOHANG, NULL); //WHONOHANG
+    if(err != 0){
+        
+        int child_exit_code = wstat & 0xff;
+        
+        
+        if( WTERMSIG(wstat) ){
+            printf("\nChild killed with signal: %u\n", child_exit_code);
+            close(child_write_fd);
+            child_write_fd = -1;
+            return 1;
+
+        }
+        else{
+
+            printf("\nchild exited with code: %u\n", child_exit_code);
+            return 1;
+        }
+
+    }
+
+    return 0;
+}
+
 int pass_key_to_child(c){
+    int err;
+
     switch(c){
         case 3: //ctrl + c
             
             kill(child_pid, SIGKILL);
-            // shell_state = 0;
-            // child_pid = -1;
             break;
 
         case 26: //ctrl+z
-            kill(child_pid, SIGSTOP);
-            shell_state = 0;
+            kill(child_pid, SIGUSR1);
             break;
             
         default : 
-            ;
-            if( write(child_write_fd, &c, 1) == -1){
+            err = write(child_write_fd, &c, 1);
+            if(!err){
+
                 puts("child somehow exited?\n");
+                close(child_write_fd);
                 shell_state = 0;
                 child_pid = 0;
-
             }
             break;
     }
@@ -700,10 +795,11 @@ int main(int argc, char **argv){
 
     malloc_init();
     char cwd_buf[32];
+    char pb[64];
     //discard the err
     getcwd(cwd_buf, 32);
 
-    prompt_buf = malloc(32);
+    prompt_buf = pb;//malloc(32);
     sprintf(prompt_buf, "\x1b[1;32m[%s]>\x1b[0m", cwd_buf);
     // printf("current working directory: %s\n", cwd_buf);
     
@@ -712,34 +808,17 @@ int main(int argc, char **argv){
     
     printf("%s ", prompt_buf);
 
+
     memset(command_buffer, 0, COMMAND_BUFFER_MAXSIZE);
     while(shouldRun){
         
-        if(shell_state){
-            int wstat;
-            int err = wait4(-1, &wstat, 0x1, NULL); //WHONOHANG
-
-            if(err){ //child exited
-
-                int child_exit_code = wstat & 0xff;
-
-                if(wstat < 0){
-                    printf("\nChild killed with signal: %u\n", child_exit_code);
-                }
-                else{
-
-                    printf("\nchild exited with code: %u\n", child_exit_code);
-                }
-
-                shell_state = 0;
-                close(child_write_fd);
-                child_write_fd = -1;
-                printf("%s ", prompt_buf);
-            }
+        c = getchar();
+        
+        if(shell_state && did_child_exited()){
+            shell_state = 0;
+            printf("\n%s ", prompt_buf);
         }
 
-
-       c = getchar();
         if(c != -1){             //i succesfully read something
 
             if(!shell_state){

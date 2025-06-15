@@ -83,13 +83,23 @@ extern uint32_t * current_page_dir;
 
 void map_virtaddr(void * virtual_addr, void * physical_addr, uint16_t flags);
 void unmap_virtaddr(void * virtual_addr);
+
 int set_virtaddr_flags(void * virtualaddr, uint16_t flags);
+int get_virtaddr_flags(void * virtualaddr);
+
 int is_virtaddr_mapped(void * virtaddr);
 int is_virtaddr_mapped_d(void * _dir, void * virtaddr);
-
-
 void *get_physaddr(void * virtualAddr);
 void unmap_everything();
+
+
+typedef struct{
+    uint8_t* baseaddr;
+    uint8_t* endaddr;
+    uint8_t* bitmap;
+    uint32_t bitmap_size;
+} page_bitmap_t;
+
 void pmm_init(uint32_t mem_start, uint32_t mem_size);
 void pmm_print_usage();
 int pmm_mark_allocated(void * address);
@@ -130,6 +140,7 @@ void map_virtaddr_d(void *directory, void * virtual_addr, void * physical_addr, 
 void unmap_virtaddr_d( void * directory, void * virtual_addr);
 
 void paging_directory_list(void * dir_entry);
+int pmm_alloc_is_chain_corrupted();
 
 
 

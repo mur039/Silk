@@ -91,6 +91,8 @@ listnode_t* list_pop_end(list_t* list){
 
 listnode_t * list_remove(list_t * list, listnode_t * node){
 
+
+    //somehow i nwwd to verify that the node is in this list??
     if(list->size == 0)
         return NULL;
 
@@ -127,3 +129,56 @@ listnode_t * list_remove(list_t * list, listnode_t * node){
 //     }
 
 // }
+
+
+
+
+//compare func will return 0 or 1, if one given pairs will be switched in place
+int list_sort(list_t* list, int (*comparefunc)(void*, void*)) {
+    if (!list || !list->head) return 0;
+
+    int switches_occurred = 0;
+    int did_swap;
+
+    do {
+        did_swap = 0;
+        listnode_t* node = list->head;
+
+        while (node && node->next) {
+            listnode_t* a = node;
+            listnode_t* b = node->next;
+
+            if (comparefunc(a->val, b->val)) {
+                // Swap a and b
+
+                listnode_t* a_prev = a->prev;
+                listnode_t* b_next = b->next;
+
+                // Adjust head/tail
+                if (list->head == a) list->head = b;
+                if (list->tail == b) list->tail = a;
+
+                // Re-link neighbors
+                if (a_prev) a_prev->next = b;
+                b->prev = a_prev;
+
+                b->next = a;
+                a->prev = b;
+
+                a->next = b_next;
+                if (b_next) b_next->prev = a;
+
+                did_swap = 1;
+                switches_occurred++;
+
+                // Move node back to new 'b' (which is before a)
+                node = b;
+            }
+
+            node = node->next;
+        }
+
+    } while (did_swap);
+
+    return switches_occurred;
+}

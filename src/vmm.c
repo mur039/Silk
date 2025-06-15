@@ -65,9 +65,7 @@ void * vmm_mark_allocated(list_t * map, u32 va, u32 pa, int attributes){
 
 
 
-    
-
-            
+            list_sort(map, vmm_compare_function);
             return map;
             // fb_console_printf("--> vmem:%x pmem:%x attributes:%x\n", nmap->vmem, nmap->phymem, nmap->attributes);
             break;
@@ -171,4 +169,13 @@ void* vmm_get_empty_kernel_page(int n_continous_page, void* hint_addr){
     }
 
     return NULL;
+}
+
+int vmm_compare_function(void* val1, void* val2){
+
+    vmem_map_t *addr1 = val1;
+    vmem_map_t *addr2 = val2;
+
+    return addr2->vmem < addr1->vmem ? 1: 0;
+
 }

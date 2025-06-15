@@ -1,5 +1,7 @@
 #include <kb.h>
 #include <sys.h>
+#include <tty.h>
+#include <vt.h>
 /* KBDUS means US Keyboard Layout. This is a scancode table
 *  used to layout a standard US keyboard. I have left some
 *  comments in to give you an idea of what key is what, even
@@ -7,15 +9,14 @@
 *  whatever you want using a macro, if you wish! */
 unsigned char kbdus[128] =
 {
-    0,  27, '1', '2', '3', '4', '5', '6', '7', '8',	/* 9 */
-  '9', '0', '-', '=', '\b',	/* Backspace */
+    0,  27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '*', '-', 127 ,	/* Backspace */
   '\t',			/* Tab */
   'q', 'w', 'e', 'r',	't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',	/* Enter key */
     0,			/* 29   - Control */
   'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',	/* 39 */
- '\'', '`',   0,		/* Left shift */
+  '\'', '"',   0,		/* Left shift */
  '\\', 'z', 'x', 'c', 'v', 'b', 'n',			/* 49 */
-  'm', ',', '.', '/',   0,				/* Right shift */
+  'm', ',', '.', '.',   0,				/* Right shift */
   '*',
     0,	/* Alt */
   ' ',	/* Space bar */
@@ -44,23 +45,149 @@ unsigned char kbdus[128] =
     0,	/* All other keys are undefined */
 };		
 
+
+
+unsigned char kbdus_shifted[128] =
+{
+    0,  27, '!', '\'', '^', '+', '%', '&', '/', '(', ')', '=', '?', '_', 127,	/* Backspace */
+  '\t',			/* Tab */
+  'Q', 'W', 'E', 'R',	'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\n',	/* ENTER KEY */
+    0,			/* 29   - Control */
+  'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';',	/* 39 */
+ '\'', '`',   0,		/* Left shift */
+ '\\', 'Z', 'X', 'C', 'V', 'B', 'N',			/* 49 */
+  'M', ',', '.', ':',   0,				/* Right shift */
+  '*',
+    0,	/* Alt */
+  ' ',	/* Space bar */
+    0,	/* Caps lock */
+    0,	/* 59 - F1 key ... > */
+    0,   0,   0,   0,   0,   0,   0,   0,
+    0,	/* < ... F10 */
+    0,	/* 69 - Num lock*/
+    0,	/* Scroll Lock */
+    0,	/* Home key */
+    224/*0*/,	/* Up Arrow */
+    0,	/* Page Up */
+  '-',
+    225/*0*/,	/* Left Arrow */
+    0,
+    226/*0*/,	/* Right Arrow */
+  '+',
+    0,	/* 79 - End key*/
+    227/*0*/,	/* Down Arrow */
+    0,	/* Page Down */
+    0,	/* Insert Key */
+    0,	/* Delete Key */
+    0,  0,  '>',
+    0,	/* F11 Key */
+    0,	/* F12 Key */
+    0,	/* All other keys are undefined */
+};		
+
+
+unsigned char kbdus_altgr[128] =
+{
+    0,  27, '>', 0 , '#', '$', 0 , 0, '{', '[', ']', '}', '\\', '|', 127,	/* Backspace */
+  '\t',			/* Tab */
+  '@', 'w', 'e', 'r',	't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',	/* Enter key */
+    0,			/* 29   - Control */
+  'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',	/* 39 */
+  '\'', '"',   0,		/* Left shift */
+ '\\', 'z', 'x', 'c', 'v', 'b', 'n',			/* 49 */
+  'm', ',', '.', '.',   0,				/* Right shift */
+  '*',
+    0,	/* Alt */
+  ' ',	/* Space bar */
+    0,	/* Caps lock */
+    0,	/* 59 - F1 key ... > */
+    0,   0,   0,   0,   0,   0,   0,   0,
+    0,	/* < ... F10 */
+    0,	/* 69 - Num lock*/
+    0,	/* Scroll Lock */
+    0,	/* Home key */
+    224/*0*/,	/* Up Arrow */
+    0,	/* Page Up */
+  '-',
+    225/*0*/,	/* Left Arrow */
+    0,
+    226/*0*/,	/* Right Arrow */
+  '+',
+    0,	/* 79 - End key*/
+    227/*0*/,	/* Down Arrow */
+    0,	/* Page Down */
+    0,	/* Insert Key */
+    0,	/* Delete Key */
+    0,  0,  '|',
+    0,	/* F11 Key */
+    0,	/* F12 Key */
+    0,	/* All other keys are undefined */
+};		
+
+
+
+/*
+unsigned char kbdus[] = {
+  0,    27,   '1',  '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',
+  '-',  '=',  0,    9,    'q',  'w',  'e',  'r',  't',  'y',  'u',  'i',
+  'o',  'p',  '[',  ']',  0,    0,    'a',  's',  'd',  'f',  'g',  'h',
+  'j',  'k',  'l',  ';',  '\'', '`',  0,    '\\', 'z',  'x',  'c',  'v',
+  'b',  'n',  'm',  ',',  '.',  '/',  0,    '*',  0,    ' ',  0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0,    0x1B, 0,    0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0x0E, 0x1C, 0,    0,    0,
+  0,    0,    0,    0,    0,    '/',  0,    0,    0,    0,    0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+  0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0,
+  0,    0,    0,    0,    0,    0,    0,    0x2C,
+};
+
+unsigned char kbdus_shifted[] = {
+  0,    27,   '!',  '@',  '#',  '$',  '%',  '^',  '&',  '*',  '(',  ')',
+  '_',  '+',  0,    9,    'Q',  'W',  'E',  'R',  'T',  'Y',  'U',  'I',
+  'O',  'P',  '{',  '}',  0,    0,    'A',  'S',  'D',  'F',  'G',  'H',
+  'J',  'K',  'L',  ':',  '"',  '~',  0,    '|',  'Z',  'X',  'C',  'V',
+  'B',  'N',  'M',  '<',  '>',  '?',  0,    '*',  0,    ' ',  0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0,    0x1B, 0,    0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0x0E, 0x1C, 0,    0,    0,
+  0,    0,    0,    0,    0,    '?',  0,    0,    0,    0,    0,    0,
+  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+  0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0,
+  0,    0,    0,    0,    0,    0,    0,    0x2C,
+};
+
+*/
+
+
+
 #include <ps2.h>
+
+static circular_buffer_t kb_buffer;
+static list_t waiting_list;
+
 void ps2_kbd_initialize(){
+
+  kb_buffer = circular_buffer_create(32);
+  waiting_list = list_create();
 
   ps2_controller_status_t status;
   ps2_send_command(PS2_DISABLE_FIRST_PORT);
     
-  // //flush the output  
-  // if(inb(PS2_COMMAND_REG) & STATUS_OUTPUT_BUFFER){
-  //    inb(PS2_DATA_PORT);
-  // }
+  //flush the output  
+  if(inb(PS2_COMMAND_REG) & STATUS_OUTPUT_BUFFER){
+     inb(PS2_DATA_PORT);
+  }
     
 
   // // //wait until input is ready
   // ps2_send_command(PS2_CMD_TEST_FIRST_PORT);
 
-  // //awit for output buffer to fill
+  // // //awit for output buffer to fill
+  // io_wait();
   // wait_output_full();
+
+
   // uint8_t test_result = inb(PS2_DATA_PORT);
   // if (test_result != 0x00) {
   //     uart_print(COM1, "ps/2 kbd test: failed\r\n");
@@ -69,8 +196,8 @@ void ps2_kbd_initialize(){
   // }
 
 
-
   // ps2_send_command(PS2_CMD_RESET_DEVICE);
+  // io_wait();
   // wait_output_full();
   // uint8_t ack = inb(PS2_DATA_PORT);
   // if (ack != 0xFA){ // Check ACK
@@ -79,7 +206,7 @@ void ps2_kbd_initialize(){
   // }
 
   // // Check Self-Test Pass (0xAA)
-  // // while (!(inb(PS2_COMMAND_REG) & STATUS_OUTPUT_BUFFER));
+  // io_wait();
   // wait_output_full();
   // uint8_t self_test = inb(PS2_DATA_PORT);
   // if (self_test != 0xAA){ // Self-test failed
@@ -87,8 +214,7 @@ void ps2_kbd_initialize(){
   //   halt();
   // }
 
-  ps2_send_command(PS2_ENABLE_FIRST_PORT);
-    
+  ps2_send_command(PS2_ENABLE_FIRST_PORT);  
 }
 
 
@@ -112,11 +238,9 @@ char kb_ch;
 uint8_t kbd_scancode;
 
 
-void keyboard_handler(struct regs *r)
-{
+void keyboard_handler(struct regs *r){
     
-  if(r->err_code == 0){;}
-    unsigned char scancode = inb(0x60);
+  unsigned char scancode = inb(0x60);
     
 
     /* If the top bit of the byte we read from the keyboard is
@@ -126,107 +250,75 @@ void keyboard_handler(struct regs *r)
     alt 0x38
     left shift 0x2a
     right shift 0x36
-
     */
-   uart_print(0x3f8, "kbd_driver: %s scancode: %u\r\n", scancode & 0x80 ? "released" : "pressed", scancode & 0x7f );
 
     if (scancode & 0x80) //released
     {
         if((scancode &  0x7f) == 0x1d){ //if ctrl is released
-            ctrl_flag = 0;
-
+          ctrl_flag = 0;
         }else if((scancode &  0x7f) == 0x2a || (scancode &  0x7f) == 0x36 ){ //shift modifier
-            shift_flag = 0;
-
+          shift_flag = 0;
         }
         else if( ( scancode & 0x7f) == 0x38 ){ //alt_gr
-            alt_gr_flag = 0;
-
+          alt_gr_flag = 0;
         }
         
     }
-    else //pressed
-    {
-        kbd_scancode = scancode & 0x7f;
-        switch(scancode & 0x7f){
+    else{  //pressed
+
+      // uart_print(COM1, "kbd_driver : scancode:%u character :%c\r\n", scancode, kbdus[scancode]);
+      kbd_scancode = scancode & 0x7f;
+      switch(scancode & 0x7f){
             
-            //ctrl
-            case 0x1d: 
-                ctrl_flag = 1; 
-                break;
-
-            //both rshift and lshift
-            case 0x2a:
-            case 0x36:
-                shift_flag = 1;
-                break;
-            
-            //alt_gr
-            case 0x38:
-                alt_gr_flag = 1;
-                break;
-
-            case 59: //F1
-              if(alt_gr_flag){
-
-                //well very specific thing that print the fs_tree
-                vfs_tree_traverse(fs_tree);
-              }
-              break;
-            case 75: //sol yön tuşu
-            case 77: //sağ yön tuşu
-              
-              //switching vt's
-              if(alt_gr_flag){
-                int vt_increment = scancode - 76;
-                
-
-              }
-              break;
-            //rest of the keys
-            default:
-                is_kbd_pressed = 1;
-                kb_ch = kbdus[scancode & 0x7f];
-
-                // fb_console_printf("kbd_driver : %x ->  %x/%c\n", scancode & 0x7f, kb_ch, kb_ch);
-
-                if(ctrl_flag) 
-                    kb_ch &= 0x1f;
-                
-                if(shift_flag){
-                    
-                    if(kb_ch == '<'){
-                        
-                        kb_ch += 2;
-                    }
-                    else if(kb_ch >= 'a' && kb_ch <= 'z')
-                    {
-
-                        kb_ch -= 32;
-                    }else if(kb_ch >= 'A' && kb_ch <= 'Z')
-                    {
-
-                        kb_ch += 32;
-                    }
-                    else if(kb_ch == '/'){
-                        kb_ch = ':';
-                    }
-
-                }
-
-                if(alt_gr_flag){
-
-                    if(kb_ch == '<'){
-                        kb_ch = '|';
-                    }
-                }
-
-            
-                break;
+      
+      case 0x1d: ctrl_flag = 1; break; //ctrl
+      case 0x2a: case 0x36: shift_flag = 1; break; //both rshift and lshift
+      case 0x38: alt_gr_flag = 1; break; //alt_gr
+        
+      default: //rest of the keys
+        is_kbd_pressed = 1;
+        kb_ch = kbdus[scancode & 0x7f];
+        if(ctrl_flag) 
+            kb_ch &= 0x1f;
+        
+        if(shift_flag){
+          
+            kb_ch = kbdus_shifted[scancode & 0x7f];
         }
 
+        if(alt_gr_flag){
+          kb_ch = kbdus_altgr[ scancode & 0x7F];
+        }
+      
+      break;
+      }
+        
+    }
+
+    if(is_kbd_pressed){
+      is_kbd_pressed = 0;
+      ctrl_flag &= 1;
+      shift_flag &= 1;
+      alt_gr_flag &= 1;
+
+      vt_tty_send( kb_ch | (scancode << 8) | ( (ctrl_flag  | (shift_flag << 1) | (alt_gr_flag << 2) ) << 16) );
+      
+      circular_buffer_putc(&kb_buffer, kb_ch);
+      process_wakeup_list(&waiting_list);
     }
 }
 
 
 
+
+int kbd_read(){
+
+  int val = circular_buffer_getc(&kb_buffer);
+  if(val >= 0){
+      return val;
+  }
+
+  //if there's no data in the buffer then
+  list_insert_end(&waiting_list, current_process);
+
+}

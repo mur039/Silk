@@ -13,10 +13,16 @@ int strcmp ( const char * str1, const char * str2 ){
     h1 = (unsigned char *)str1;
     h2 = (unsigned char *)str2;
 
-    for(size_t i = 0;  ; ++i){
+    for(size_t i = 0; ; ++i){
 
         if(h1[i] != h2[i] ){
             return ( h1[i] - h2[i]);
+        }
+
+        //how the fuck i didn't see that :/
+        //if they are not same they upper if would fail
+        if(h1[i] == 0 || h2[i] == 0){ 
+            break;
         }
 
     }

@@ -1,5 +1,13 @@
 #include <filesystems/proc.h>
 
+//since these entries are readonly i can set them with length as well as linked list or well a buffer 
+//where i allocate on open and deallocate on close?
+// tho i could use a null terminated string, tho in cmdline, each argc is seperated by '\0'
+
+struct filestr{
+    char* str_data;
+    size_t strlen;
+};
 
 
 static struct dirent * proc_readdir(fs_node_t *node, uint32_t index) {
@@ -82,6 +90,7 @@ static struct dirent * proc_readdir(fs_node_t *node, uint32_t index) {
 
 enum process_attributes_enum{
     CMD_LINE = 0,
+    CMD_MMAP,
 
 
     PROCESS_ATTRIBUTES_ENUM__EOL
@@ -89,6 +98,7 @@ enum process_attributes_enum{
 
 const char * process_attribute[] = {
     [CMD_LINE] = "cmdline",
+    [CMD_MMAP] = "maps",
     
     
     
@@ -96,11 +106,11 @@ const char * process_attribute[] = {
 };
 
 
-static read_type_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
-static open_type_t proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write);
-static close_type_t proc_pid_close(struct fs_node *node);
+static uint32_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write);
+static void proc_pid_close(struct fs_node *node);
 
-static finddir_type_t proc_pid_finddir(struct fs_node* node, char *name){
+static struct fs_node* proc_pid_finddir(struct fs_node* node, char *name){
 
     fb_console_printf("proc_pid_finddir: %s::%s\n", node->name, name);
 
@@ -125,10 +135,10 @@ static finddir_type_t proc_pid_finddir(struct fs_node* node, char *name){
 
     fnode->impl = node->impl;
     fnode->flags   = FS_FILE;
-	fnode->read    = proc_pid_read;
+	fnode->read    = (read_type_t) proc_pid_read;
 	fnode->write   = NULL;
-	fnode->open    = proc_pid_open;
-	fnode->close   = proc_pid_close;
+	fnode->open    = (open_type_t)proc_pid_open;
+	fnode->close   = (close_type_t)proc_pid_close;
 	fnode->readdir = NULL;
 	fnode->finddir = NULL;
 	fnode->ioctl   = NULL;
@@ -139,11 +149,10 @@ static finddir_type_t proc_pid_finddir(struct fs_node* node, char *name){
 
 
 
-
 static struct dirent * proc_pid_readdir(fs_node_t *node, uint32_t index) {
 	// fb_console_printf("pid_readdir: index:%u::%s\n", index, node->name);
 
-	if(node->flags != FS_DIRECTORY){
+	if( !(node->flags  & (FS_DIRECTORY | FS_SYMLINK)) ){
         node->offset = 0;
 		return NULL;
 	}
@@ -151,9 +160,16 @@ static struct dirent * proc_pid_readdir(fs_node_t *node, uint32_t index) {
 
     //we are going to list attributes of process
     uint32_t l_index;
+
+    if(index >= PROCESS_ATTRIBUTES_ENUM__EOL){
+        node->offset = 0;
+        return NULL;
+    }
+
+
     for(l_index = 0 ; l_index < index; l_index++){
         
-        if(l_index != PROCESS_ATTRIBUTES_ENUM__EOL){    
+        if(l_index == PROCESS_ATTRIBUTES_ENUM__EOL){    
             node->offset = 0;
             return NULL;
         }
@@ -173,42 +189,102 @@ static struct dirent * proc_pid_readdir(fs_node_t *node, uint32_t index) {
 
 
 
-static read_type_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+static uint32_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
         
     pcb_t * proc = process_get_by_pid(node->impl);
     int property_index = node->inode;
     
+    struct filestr *file = node->device;
 
-    if(node->offset > strlen(proc->filename) )
-        return 0; //eof;
+    if(!file)
+        return 0;
 
-    
-    size_t left_size = strlen(proc->filename) - node->offset;
+    if(node->offset > file->strlen) 
+        return 0;
 
+
+    size_t left_size = file->strlen - offset;
     if(size > left_size){
-        memcpy(buffer, &proc->filename[node->offset], left_size);
-        node->offset += left_size;
-        return left_size;
+        size = left_size; 
     }
 
-    memcpy(buffer, &proc->filename[node->offset], size);
+    memcpy(buffer, &file->str_data[offset], size);
     node->offset += size;
     return size;
 
 }
  
-static open_type_t proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
+static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
     //impl contains pid, inode contains the file index which specifies the data
     pid_t proc_pid = node->impl;
     uint32_t attr_index = node->inode;
-
     
+    struct filestr* file = kcalloc(1, sizeof(struct filestr));
+
     //should exist. this is what happens when you blindly copy paste :/
     pcb_t* proc = process_get_by_pid(proc_pid);
-
+    uint8_t *byteptr;
     switch(attr_index){
         case CMD_LINE:
+            node->device = file;
+            for(int i = 0; i < proc->argc; ++i){
+                file->strlen += strlen(proc->argv[i]) + 1;
+            }
+
+            file->str_data = kcalloc(file->strlen, 1);
+
+            byteptr = file->str_data;
+            for(int i = 0; i < proc->argc; ++i){
+                
+                strcpy(byteptr, proc->argv[i]);
+                byteptr += strlen(proc->argv[i]) + 1;
+                
+            }
+
+        pmm_alloc_is_chain_corrupted();
+        break;
+
+        case CMD_MMAP:
+        node->device = file;
+        file->strlen = 0;
+        char localbuffer[128];
         
+        for(listnode_t* lnode = proc->mem_mapping->head; lnode ; lnode = lnode->next){
+            vmem_map_t* vmem = lnode->val;
+            if(vmem->attributes >> 20){
+
+                int attribute = vmem->attributes & 0xFF;
+                int page_flags = get_virtaddr_flags((void*)vmem->vmem);
+                file->strlen += sprintf(
+                                    localbuffer, "%x-%x r%cx%c\n", 
+                                    vmem->vmem,  vmem->vmem + 0x1000, 
+                                    page_flags & PAGE_READ_WRITE ? 'w' : '-' ,
+                                    attribute & VMM_ATTR_PHYSICAL_SHARED ? 's' : 'p'
+                                );
+            }
+        }
+        
+        file->str_data = kcalloc(file->strlen + 1, 1);
+        byteptr = file->str_data;
+        for(listnode_t* lnode = proc->mem_mapping->head; lnode ; lnode = lnode->next){
+            vmem_map_t* vmem = lnode->val;
+            
+            if(vmem->attributes >> 20){
+                    
+                int attribute = vmem->attributes & 0xFF;
+                int page_flags = get_virtaddr_flags((void*)vmem->vmem);
+                byteptr += sprintf(
+                    byteptr, "%x-%x r%cx%c\n", 
+                    vmem->vmem,  vmem->vmem + 0x1000, 
+                    page_flags & PAGE_READ_WRITE ? 'w' : '-' ,
+                    attribute & VMM_ATTR_PHYSICAL_SHARED ? 's' : 'p'
+                );
+                
+            }
+        }
+
+        pmm_alloc_is_chain_corrupted();
+
         break;
 
         default:break;
@@ -216,7 +292,16 @@ static open_type_t proc_pid_open(struct fs_node *node , uint8_t read, uint8_t wr
     return;
 }
 
-static close_type_t proc_pid_close(struct fs_node *node){
+static void proc_pid_close(struct fs_node *node){
+
+    struct filestr* file = node->device;
+    if(file){
+
+        kfree(file->str_data);
+        kfree(file);
+    }
+
+    kfree(node); //?
     return;
 }
 
@@ -225,7 +310,7 @@ static close_type_t proc_pid_close(struct fs_node *node){
 
 
 
-finddir_type_t proc_finddir(struct fs_node* node, char *name){
+struct fs_node* proc_finddir(struct fs_node* node, char *name){
 
     char* nname;
     nname = kcalloc(strlen(node->name) + strlen(name) + 1, 1);
@@ -260,8 +345,8 @@ finddir_type_t proc_finddir(struct fs_node* node, char *name){
 	        fnode->write   = NULL;
 	        fnode->open    = NULL;
 	        fnode->close   = NULL;
-	        fnode->readdir = proc_pid_readdir;
-	        fnode->finddir = proc_pid_finddir;
+	        fnode->readdir = (readdir_type_t)proc_pid_readdir;
+	        fnode->finddir = (finddir_type_t)proc_pid_finddir;
 	        fnode->ioctl   = NULL;
             return fnode;
         }
@@ -279,13 +364,13 @@ finddir_type_t proc_finddir(struct fs_node* node, char *name){
             fnode->uid = 0;
 	        fnode->gid = 0;
             fnode->impl = current_process->pid;
-            fnode->flags   = FS_SYMLINK;
+            fnode->flags   = FS_DIRECTORY;
 	        fnode->read    = NULL;
 	        fnode->write   = NULL;
 	        fnode->open    = NULL;
 	        fnode->close   = NULL;
-	        fnode->readdir = proc_pid_readdir;
-	        fnode->finddir = proc_pid_finddir;
+	        fnode->readdir = (readdir_type_t)proc_pid_readdir;
+	        fnode->finddir = (finddir_type_t)proc_pid_finddir;
 	        fnode->ioctl   = NULL;
             return fnode;
 
@@ -316,8 +401,8 @@ fs_node_t * proc_create(){
 	fnode->write   = NULL;
 	fnode->open    = NULL;
 	fnode->close   = NULL;
-	fnode->readdir = proc_readdir;
-	fnode->finddir = proc_finddir;
+	fnode->readdir = (readdir_type_t)proc_readdir;
+	fnode->finddir = (finddir_type_t)proc_finddir;
 	fnode->ioctl   = NULL;
 	return fnode;
     

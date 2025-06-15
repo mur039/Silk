@@ -113,6 +113,25 @@ void dump_registers(struct regs *r){
          r->cs, r->ds, r->es,
          r->fs, r->gs
          );
+
+        
+    if(!(r->cs & 3))
+        fb_console_printf(
+            "\r\n"
+            "eax : %x | ebx : %x | ecx : %x\r\n"
+            "edx : %x | edi : %x | esi : %x\r\n"
+            "eip : %x |uesp : %x | ebp : %x\r\n"
+            "esp : %x  \r\n"
+            " cs : %x |  ds : %x |  es : %x\r\n"
+            " fs : %x |  gs : %x \r\n"
+            ,r->eax, r->ebx, r->ecx
+            ,r->edx, r->edi, r->esi
+            ,r->eip, r->useresp, r->ebp,
+            r->esp,
+            r->cs, r->ds, r->es,
+            r->fs, r->gs
+            );
+    
  }
 
 struct stackframe {
@@ -125,11 +144,14 @@ void print_stack_trace(int max_frame, struct regs *r){
     struct stackframe *stk;
     
     uart_print(COM1, "Stack Trace:\r\n");    
+    fb_console_printf("Stack Trace:\r\n");    
     if(r->cs & 3){ //user mode
         uart_print(COM1, "User mode stack Trace:\r\n");    
+        fb_console_printf("User mode stack Trace:\r\n");    
     } 
     else{ //kernel
         uart_print(COM1, "Kernel mode stack trace:\r\n");    
+        fb_console_printf("Kernel mode stack trace:\r\n");    
     }
     
     stk = (struct stackframe* )r->ebp;
@@ -138,9 +160,11 @@ void print_stack_trace(int max_frame, struct regs *r){
         // Unwind to previous stack frame
         if(!is_virtaddr_mapped_d( current_process->page_dir, stk)){
             uart_print(COM1, "ebp:%x not mapped\r\n", stk);
+            fb_console_printf("ebp:%x not mapped\r\n", stk);
             break;
         }
         uart_print(COM1, "%u ->%x\r\n",frame, stk->eip );
+        fb_console_printf("%u ->%x\r\n",frame, stk->eip );
         stk = stk->ebp;
     }
 }
@@ -184,13 +208,13 @@ static const char *exception_messages[] =
 
 static const char *pagefault_messages[] =
 {
-"Supervisor tried to access a non-present page entry.",
-"Supervisory process tried to read a page and caused a protection fault.",
-"Supervisory process tried to write to a non-present page entry.",
-"Supervisory process tried to write a page and caused a protection fault.",
-"User process tried to read a non-present page entry.",
-"User process tried to read a page and caused a protection fault.",
-"User process tried to write to a non-present page entry.",
+"Supervisor tried to access a non-present page entry",
+"Supervisory process tried to read a page and caused a protection fault",
+"Supervisory process tried to write to a non-present page entry",
+"Supervisory process tried to write a page and caused a protection fault",
+"User process tried to read a non-present page entry",
+"User process tried to read a page and caused a protection fault",
+"User process tried to write to a non-present page entry",
 "User process tried to write a page and caused a protection fault"
 };
 
@@ -209,11 +233,14 @@ void fault_handler(struct regs *r)
     /* Is this a fault whose number is from 0 to 31? */
     if (r->int_no < 32)
     {
+
+        if(r->cs & 3) save_context(r, current_process);
 	    dump_registers(r);
         uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
+        fb_console_printf( "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
         if(!(r->eflags & ( 1 << V86_VM_BIT)) ){ //if not a v86 task
             print_stack_trace(10, r);
-    }
+        }
 
     
 
@@ -227,8 +254,7 @@ void fault_handler(struct regs *r)
             if( r->cs & 3) //happened in user mode
             {
                 print_current_process();
-                // list_vmem_mapping(current_process);
-                terminate_process(current_process);
+                process_send_signal(current_process->pid, SIGILL);
                 schedule(r);
                 return;
             }
@@ -247,11 +273,46 @@ void fault_handler(struct regs *r)
             break;
 
        case 14: //Page Fault
+            ;
             
-            uart_print(0x3f8, "%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
-
             uint32_t cr2_reg;
             asm volatile ( "mov %%cr2, %0" : "=r"(cr2_reg) );
+
+            if(r->err_code & 4){
+
+                uint8_t* faulting_address = (uint8_t*)cr2_reg;
+
+                //check if faulting address is below stack bottom and its maz 1 page size far
+                if(faulting_address < current_process->stack_bottom && faulting_address > (current_process->stack_bottom - 0x1000)  ){
+                    
+                    size_t stack_npages = (size_t)(current_process->stack_top - current_process->stack_bottom)/0x1000;
+
+                    if( stack_npages  < 2048 ){ //what could happen right?
+
+                        current_process->stack_bottom -= 4096;
+                        void* phypage = allocate_physical_page();
+                        if(!phypage){
+                            goto out_stack_demand_page;
+                        }
+                        map_virtaddr(current_process->stack_bottom, phypage, PAGE_READ_WRITE | PAGE_USER_SUPERVISOR | PAGE_PRESENT);
+                        vmm_mark_allocated(current_process->mem_mapping, (uint32_t)current_process->stack_bottom, (uint32_t)phypage, VMM_ATTR_PHYSICAL_PAGE);
+                        return;
+                    }
+                    //it's max page reached billions must segfault
+
+                }
+            }
+
+out_stack_demand_page:
+            fb_set_console_color((pixel_t){.blue = 0xFF, .green = 0xff, .red = 0xff}, (pixel_t){.blue = 0x69});
+            // fb_console_put("\x1b[H\x1b[J");            
+            
+            dump_registers(r);
+            uart_print(0x3f8, "%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
+            fb_console_printf("%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
+
+
+            
             virt_address_t va = {.address = cr2_reg};
             int dir, table, offset;
             dir=va.directory;
@@ -260,20 +321,31 @@ void fault_handler(struct regs *r)
             uart_print(0x3f8, "Pagefault due to %s\r\n", (r->err_code & 16) ? "instruction access": "data access");
             uart_print(0x3f8, "\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", dir, table , cr2_reg);
 
-                if(r->err_code & 4){ //fault happened in usermode
-                    print_current_process();
-                    paging_directory_list(current_process->page_dir );   
-                    uart_print(COM1, "------------------------------------------------------");
-                    list_vmem_mapping(current_process);
-                    r->eax = 0x80000000; // a negative
-                    r->eax |= 0; //SIGSEGV? 
-                    current_process->state = TASK_ZOMBIE;
-                    schedule(r);
-                    return;
-                    
-            }
+
+            fb_console_printf("Pagefault due to %s\r\n", (r->err_code & 16) ? "instruction access": "data access");
+            fb_console_printf("\nCR2 : [PDE] %x : [PTE] %x -> 0x%x\r\n", dir, table , cr2_reg);
+
+
             uint32_t * ip = (void *)r->eip;
-            uart_print(COM1, "IP : %x instruction :%x\r\n", r->eip, ip[0]);
+            if(is_virtaddr_mapped(ip)){
+                
+                uart_print(COM1, "IP : %x instruction :%x\r\n", r->eip, ip[0]);    
+                fb_console_printf("IP : %x instruction :%x\r\n", r->eip, ip[0]);
+            }
+            
+            if(r->err_code & 4){ //fault happened in usermode
+
+                print_current_process();
+                // paging_directory_list(current_process->page_dir );   
+                // uart_print(COM1, "------------------------------------------------------");
+                // list_vmem_mapping(current_process);
+                process_send_signal(current_process->pid, SIGSEGV);
+                schedule(r);
+                return;
+                
+            }
+            
+            
             halt();
 
             

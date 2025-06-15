@@ -38,7 +38,19 @@
         "fs.h": "c",
         "isr.h": "c",
         "ps2.h": "c",
-        "idt.h": "c"
+        "idt.h": "c",
+        "multiboot.h": "c",
+        "socket.h": "c",
+        "g_list.h": "c",
+        "e1000.h": "c",
+        "ipv4.h": "c",
+        "arp.h": "c",
+        "fcntl.h": "c",
+        "setjmp.h": "c",
+        "types.h": "c",
+        "inttypes.h": "c",
+        "stddef.h": "c",
+        "netif.h": "c"
     }
     
 }

@@ -5,12 +5,30 @@
 #include <string.h>
 #include <unistd.h>
 #include "glyph.h"
+#include <sys/socket.h>
 
 
 int puts(const char *str){
     return write(0, str, strlen(str));
 }
 
+void* memcpy4(void* dst, void* src, size_t dword_count ){
+
+    uint32_t *_dst = dst, *_src = src;
+    for(size_t i = 0 ; i < dword_count; ++i){
+        _dst[i] = _src[i];
+    }
+    return dst;
+}
+
+void* memset4(void* dst, uint32_t value, size_t dword_count ){
+
+    uint32_t *_dst = dst;
+    for(size_t i = 0 ; i < dword_count; ++i){
+        _dst[i] = value;
+    }
+    return dst;
+}
 
 typedef enum{
     SEEK_SET = 0,
@@ -20,12 +38,14 @@ typedef enum{
 } whence_t;
 
 
+
 uint32_t frame_buffer_width = 0;
 uint32_t frame_buffer_height = 0;
 
 
 pixel_t * framebuffer_addr = NULL;
 pixel_t * backbuffer_addr = NULL;
+
 typedef struct{
     uint32_t x, y;
     uint32_t width, height;
@@ -81,11 +101,11 @@ void redraw_buffer(int fd){
             // pixel_t bg = {.red = 0x00, .green = 0x00, .blue = 0x00};
             // pixel_t fg = {.red = 0x00, .green = 0xff, .blue = 0xff};
 
-            // // char str[] = "a window";
-            // // for(int j  = 0; j < strlen(str); ++j){
+            // char str[] = "a window";
+            // for(int j  = 0; j < strlen(str); ++j){
                 
-            // //     glyph_put_in(windows[i].bitmap, windows[i].width , str[j], 8*j, 0, bg, fg);
-            // // }
+            //     glyph_put_in(windows[i].bitmap, windows[i].width , str[j], 8*j, 0, bg, fg);
+            // }
 
 
 
@@ -202,7 +222,44 @@ const char* client_request_str[] = {
 
 };
 
+typedef struct{
 
+    uint32_t* fb_base;
+    uint32_t  fb_height;
+    uint32_t  fb_width;
+
+} framebuffer_t;
+
+
+void draw_rect_on_fb(framebuffer_t fb, uint32_t x, uint32_t y, uint32_t width, uint32_t height, pixel_t colour){
+
+    x =  x % fb.fb_width;
+    y =  y % fb.fb_height;
+
+
+    if(width > (x + fb.fb_width)){
+        width = fb.fb_width - x;
+        
+    }
+
+    if(height > (y + fb.fb_height)){
+        height = fb.fb_height - y;
+        
+    }
+
+    for(int i = 0; i < height; ++i){ //by row
+
+        pixel_t* pixelptr = (pixel_t*)fb.fb_base;
+        pixelptr += (i + y)*fb.fb_width;
+
+
+        for(int j = 0; j < width; ++j){ //by col
+            pixelptr[x + j] = colour;
+        } 
+    }
+
+
+}
 
 
 struct ds_packet{
@@ -229,49 +286,20 @@ struct ds_packet{
 int process_request(struct ds_packet package){
     
     uint8_t request_type = package.opt0;
-    printf("%s\n", client_request_str[request_type]);
+    printf("request id %u:%s\n", request_type, client_request_str[request_type]);
     switch (request_type){
 
     case CLIENT_CREATE_WINDOW:
         windows[0].exist = 1;
         windows[0].bg_color = (pixel_t){.red = 0x69, .green = 0x69, .blue = 0x69};
+        windows[0].height = 200;
+        windows[0].width = 200;
         windows[0].x = 0;
         windows[0].y = 0;
         windows[0].bitmap = NULL;
-
+        change = 1;
         break;
     
-    case CLIENT_SET_WINDOW_SIZE:
-        ;
-        int width = package.opt1, height = package.opt2;
-        printf(":%ux%u\n", width, height);
-        windows[0].width = width;
-        windows[0].height = height;
-        change = 1;
-        
-        int pagesize = (4 * width * height / 4096) + ( (4 * width * height) % 4096 != 0);
-        for(int i = 0; i < pagesize; ++i ){
-
-            
-            void * ptr = mmap(0, 0, 0, MAP_ANONYMOUS, -1, 0);
-            memset(ptr, 0, 4096);
-            printf("mmapd %u: %p\n",i,  ptr);
-
-            if(i == 0){
-                windows[0].bitmap = ptr;
-            }
-        
-        }
-        
-        pixel_t bg = {.red = 0x69, .green = 0x69, .blue = 0x69};
-        printf("windows[0].bitmap : %p\n", windows[0].bitmap);
-        for(int i = 0; i < (width * height); ++i){
-            windows[0].bitmap[i] = bg;
-        
-        }
-        
-        
-        break;
     
     case CLIENT_DESTROY_WINDOW:
         windows[0].exist = 0;
@@ -309,12 +337,25 @@ int process_request(struct ds_packet package){
 }
 
 
+void wait_mf(){
+    for(int i = 0; i < 0xFFFFF; ++i){
+        asm volatile("nop\n\t");
+    }
+}
+
+#define GRPH_RED (pixel_t){.red = 0xFF, .green = 0x00, .blue = 0x00}
+#define GRPH_GREEN (pixel_t){.red = 0x00, .green = 0xFF, .blue = 0x00}
+#define GRPH_BLUE (pixel_t){.red = 0x00, .green = 0x00, .blue = 0xFF}
+
 int main( int argc, char* argv[]){
 
-    //asuumption screen is 800*600*4 size
     // i will fork and paint one side to ue and other to red
     malloc_init();
-    
+
+    //closing stdin would release it from parent shell?
+    //bad but it is what it is
+
+    close(FILENO_STDIN);
     int display_fd = open("/dev/fb0", O_WRONLY);    
     if(display_fd == -1){
         puts("failed to open /dev/fb0, exitting...");
@@ -326,221 +367,156 @@ int main( int argc, char* argv[]){
 
     frame_buffer_width = screenproportions[0];
     frame_buffer_height = screenproportions[1];
+    printf("framebuffer width:height -> %u:%u\n", frame_buffer_width, frame_buffer_height);
 
     framebuffer_addr = mmap(NULL, frame_buffer_width*frame_buffer_height*4, 0, 0, display_fd, 0); //mapping framebuffer
     if(framebuffer_addr == (void*)-1){
-        puts("failed to map display_fd, will use  write function");
+        puts("failed to map framebuffer");
         framebuffer_addr = NULL;
-        // return 1;
+        return 1;
     }
 
-    //hopefully it's gonna be linear
-    backbuffer_addr = mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
-    for(int i = 1; i < 1 + (frame_buffer_width*frame_buffer_height*4 / 4096) ; ++i){
-        mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
-    }
 
+
+    //hopefully it's allocated
+    backbuffer_addr = mmap(NULL, frame_buffer_width*frame_buffer_height*4 , 0, MAP_ANONYMOUS, -1, 0);
+    if(backbuffer_addr == (void*)-1){
+        
+        puts("failed to allocate memory for backbuffer exiting");
+        return 1;
+    }
 
     printf("framebuffer:%x\n", framebuffer_addr);
     printf("backbuffer:%x\n", backbuffer_addr);
 
-    for(int i = 0; i < frame_buffer_height * frame_buffer_width; ++i){
-        ((uint32_t*)backbuffer_addr)[i] = 0x00FFFFFF;
+    framebuffer_t bf = {.fb_base = backbuffer_addr, .fb_height = frame_buffer_height, .fb_width = frame_buffer_width};
+
+
+    //now let's create the server here
+    int err;
+    int servfd = socket(AF_UNIX, SOCK_RAW, 0);
+    if(servfd < 0){
+        puts("Failed to bind a socket :(");
+        return 1;
     }
-    
-    write(display_fd, backbuffer_addr, frame_buffer_height * frame_buffer_width * 4);
-    return 0;
+
+    struct sockaddr_un nix;    
+    nix.sun_family = AF_UNIX;
+    sprintf(nix.sun_path, "mds");
+
+    err = bind(servfd, (struct sockaddr*)&nix, sizeof(nix));
+    if(err < 0){
+        puts("Failed to bind addr\n");
+        return 1;
+    }
+
+    //i can only have one client at a time
+    err = listen(servfd, 1);
+    if(err < 0){
+        puts("Error on the listen\n");
+        return 1;
+    }
+
+    err = fcntl(servfd, F_GETFL, 0);
+    fcntl(servfd, F_SETFL, err | O_NONBLOCK);
+
+
+    int clientfd = -1;
+
+    int x = 0, y = 0;
     while(1){
-    }
-
-
-    // int mouse_fd = open("/dev/mouse", O_RDONLY);
-    // int kbd_fd = open("/dev/kbd", O_RDONLY);
-
-    int kbd_fd = -1;
-    int mouse_fd = -1;
-    if (glyph_load_font("/share/screenfonts/consolefont.psf") == -1){
         
-        puts("Failed to parse consolefont.psf\n");
-    }    
-    
-    change = 1;
-
-
-    //well before that lets bind the manager here
-    int pexfd = open("/dev/pex0", O_RDWR);
-    if(pexfd < 0){
-        puts("Failed to open /dev/pex0\n");
-        return 1;
-    }
-
-    int result;
-    result = ioctl(pexfd, 1, "desktop-manager"); //bind
-    if(result != 0){
-        puts("binding \"desktop-manager\" failed\n");
-        return 1;
-    }
-
-    puts("binded \"desktop-manager\" service.\n"); //hopefully
-    
-
-    
-
-    /*
-    fuck that shit here how it goes, server process binds, client process connect
-    it write to file, client side is responsible of converting raw data to data frames
-    and send write them to file desriptor. At kernel side, by looking at the fields,
-    adds some field like send time, who sent it etc
-    */
-
-   typedef union{
-    
-    struct{
-        uint32_t sender_pid;
-        uint8_t frame_type;
-        uint8_t data_start;
-    };
-    
-    uint8_t raw_frame[512];
-   } pex_server_frame_t;
-
-    
-    cursor.exist = 1;
-    cursor.height = 10;
-    cursor.width = 10;
-    cursor.bg_color.blue = 0xff;
-    cursor.bg_color.red = 0xff;
-    cursor.bg_color.green = 0xff;
-
-    int x = 0;
-    int y = 0;
-
-    for(int i = 0; i < MAX_NUMBER_OF_WINDOWS; ++i)
-        windows[i].exist = 0;
-
-    int client_sock[2]; // [0]=r [1]=w
-    if(pipe(client_sock) == -1){
-        puts("failed to create pipe.");
-        return 1;
-    }
-
-    int pid = fork();
-
-    if(pid == -1){
-        puts("Failed to fork, exiting...");
-        return 1;
-    }
-
-    if(pid == 0){ //child process   
-        uint32_t args[4];
-        const char ** _argv = (const char**)&args;
-        const char * executable_path = "/bin/test";
-        
-        printf("pipe r/w: %u %u\n", client_sock[0],client_sock[1]);
-        
-        char fd_0[2] = " ";
-        char fd_1[2] = " ";
-        sprintf(fd_0, "%u", client_sock[0]);
-        sprintf(fd_1, "%u", client_sock[1]);
-
-        args[0] = (uint32_t)executable_path;
-        args[1] = (uint32_t)fd_0;
-        args[2] = (uint32_t)fd_1;
-        args[3] = (uint32_t)0;
-
-        int result = execve(
-                            executable_path,
-                            _argv
-                            );
-
-        if(result == -1){
-            puts("execve failed.");
-            return 1;
+        //get a new client unblocking
+        err = accept(servfd, NULL, NULL);
+        if(clientfd == -1 && err > 0){
+            puts("new client connected\n");
+            clientfd = err; //and make it nonblocking as well
+            err = fcntl(clientfd, F_GETFL, 0);
+            fcntl(clientfd, F_SETFL, err | O_NONBLOCK);
         }
 
-    }
-
-    
-    change = 1;
-    while(1){
         
-        // pex_server_frame_t frame;
-        // if(read(pexfd, &frame, sizeof(frame))){
+        memset4(backbuffer_addr, 0, frame_buffer_height * frame_buffer_width);
 
-        //     printf("frame sender pid: %u, frame_type:%x\n", frame.sender_pid, frame.frame_type);
+        if(clientfd < 0){ //we don''t have a client
+            memcpy4(framebuffer_addr, backbuffer_addr, frame_buffer_height*frame_buffer_width);    
+            continue;
+        }
 
-        //     if(frame.frame_type == 0xc){
-
-        //         puts(&frame.data_start);
-        //     }
-        // }
-        // else{
-        //     return 0;
-        // }
-
-    }
-
-
-    while (1){
-        
+        //we have an client then
         int ch;        
-        if( read(client_sock[0], &ch, 1) != -1){
-            
-            if(ch == SERV_HEADER){ //incoming data
+        err = read(clientfd, &ch, 1);
+        if(err == 0){
+            change = 1;
+            clientfd = -1;
+            continue;
+        }
+        else if(err == -EAGAIN){
+            continue;
+        }
+     
+        if(ch == SERV_HEADER){ //incoming data
                 
-                struct ds_packet package;
-                uint8_t * phead = &package;
+            struct ds_packet package;
+            uint8_t * phead = &package;
+            phead++;
+
+            for(int i = 0; i < 2; ++i){
+                read(clientfd, phead, 1);
                 phead++;
-
-                for(int i = 0; i < 2; ++i){
-                    read(client_sock[0], phead, 1);
-                    phead++;
-                }
-
-                int type = package.type;
-                int length = package.length;
-
-                for(int i = 0; i < (length - 3); ++i){
-                    read(client_sock[0], phead, 1);
-                    phead++;
-                }
-
-                switch (type){
-
-                case SERV_REQUEST:
-                    printf(
-                        "received request %s length:%u\n", 
-                        server_bytecodes_str[type],
-                        length
-                        );
-
-                    process_request(package);
-
-                    break;
-                
-                case SERV_REPLY:
-                    puts("do we need SERV_REPLY in the server?\n");
-                    break;
-                
-                case SERV_EVENT:
-                    puts("do we need SERV_EVENT in the server?\n");
-                    break;
-
-                default:
-                    printf("unknown packet type %x\n", type);
-                    break;
-                }
-
             }
 
+            int type = package.type;
+            int length = package.length;
+
+            for(int i = 0; i < (length - 3); ++i){
+                read(clientfd, phead, 1);
+                phead++;
+            }
+
+            switch (type){
+
+            case SERV_REQUEST:
+                printf(
+                    "received request %s length:%u\n", 
+                    server_bytecodes_str[type],
+                    length
+                    );
+
+                process_request(package);
+
+                break;
             
+            case SERV_REPLY:
+                puts("do we need SERV_REPLY in the server?\n");
+                break;
+            
+            case SERV_EVENT:
+                puts("do we need SERV_EVENT in the server?\n");
+                break;
 
-        
+            default:
+                printf("unknown packet type %x\n", type);
+                break;
+            }
+
         }
-    
-    }
-    
 
+        if(change){
+            memset4(backbuffer_addr, 0, frame_buffer_height * frame_buffer_width);
+            change = 0;
+
+        }
+
+        if (windows[0].exist)
+        {
+            window_t *win = &windows[0];
+            draw_rect_on_fb(bf, win->x, win->y, win->width, win->height, win->bg_color);
+        }
+
+        memcpy4(framebuffer_addr, backbuffer_addr, frame_buffer_height*frame_buffer_width);    
+
+    }
 
 
         

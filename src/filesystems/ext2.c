@@ -80,8 +80,8 @@ fs_node_t * ext2_node_create(fs_node_t* node){
     kfree(superblock);
     fnode->device = priv;
 
-    fnode->readdir = ext2_readdir;
-    fnode->finddir = ext2_finddir;
+    fnode->readdir = (readdir_type_t)ext2_readdir;
+    fnode->finddir = (finddir_type_t)ext2_finddir;
 
 
 
@@ -118,7 +118,7 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode) {
     // Read the Block Group Descriptor Table entry for this group
     ext2_block_group_descriptor_table_t bgdt;
     read_fs(node, block_size + (block_group * sizeof(ext2_block_group_descriptor_table_t)), 
-            sizeof(ext2_block_group_descriptor_table_t), &bgdt);
+            sizeof(ext2_block_group_descriptor_table_t), (uint8_t*)&bgdt);
 
     // Retrieve the inode bitmap and check if the inode is allocated
     uint8_t sub_bitmap;
@@ -130,7 +130,7 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode) {
     if (GET_BIT(sub_bitmap, local_bit_index)) { // If the inode is allocated
         // Retrieve the correct inode
         uint32_t inode_offset = (bgdt.bg_inode_table * block_size) + (local_inode_index * superblockptr->s_inode_size ); //it has variable
-        read_fs(node, inode_offset, sizeof(ext2_inode_t), outinode);
+        read_fs(node, inode_offset, sizeof(ext2_inode_t), (uint8_t*)outinode);
         result = 0;
     } else {
         result = 1; // Inode is not allocated
@@ -142,7 +142,7 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode) {
 
 
 
-readdir_type_t ext2_readdir( fs_node_t* node, uint32_t index){
+struct dirent* ext2_readdir( fs_node_t* node, uint32_t index){
 
     ext2_data_struct_t* ext2 = node->device;
     
@@ -155,7 +155,7 @@ readdir_type_t ext2_readdir( fs_node_t* node, uint32_t index){
     for(size_t offset = 0, i = 0; offset < root_inode.i_size; i++){
         
         ext2_directory_linked_list_t idirent;
-        read_fs(ext2->device, (ext2->block_size * root_inode.i_block[0]) + offset, sizeof(ext2_directory_linked_list_t), &idirent);
+        read_fs(ext2->device, (ext2->block_size * root_inode.i_block[0]) + offset, sizeof(ext2_directory_linked_list_t), (uint8_t*)&idirent);
         offset += idirent.rec_len; 
 
         if( idirent.inode == 0){
@@ -181,7 +181,7 @@ readdir_type_t ext2_readdir( fs_node_t* node, uint32_t index){
     return NULL;
 }
 
-finddir_type_t ext2_finddir( fs_node_t* node, char* name){
+struct fs_node* ext2_finddir( fs_node_t* node, char* name){
 
     ext2_data_struct_t* ext2 = node->device;
     ext2_inode_t root_inode;
@@ -196,7 +196,7 @@ finddir_type_t ext2_finddir( fs_node_t* node, char* name){
     for(size_t offset = 0, i = 0; offset < root_inode.i_size; i++){
         
         ext2_directory_linked_list_t idirent;
-        read_fs(ext2->device, (ext2->block_size * root_inode.i_block[0]) + offset, sizeof(ext2_directory_linked_list_t), &idirent);
+        read_fs(ext2->device, (ext2->block_size * root_inode.i_block[0]) + offset, sizeof(ext2_directory_linked_list_t), (uint8_t*)&idirent);
         offset += idirent.rec_len; 
 
         if(idirent.inode == 0){
@@ -215,14 +215,15 @@ finddir_type_t ext2_finddir( fs_node_t* node, char* name){
             fnode->flags = ext2_vfs[idirent.file_type];
 
             if(fnode->flags == FS_DIRECTORY){
-                fnode->readdir = ext2_readdir;
-                fnode->finddir = ext2_finddir;
+                
+                fnode->readdir = (readdir_type_t)ext2_readdir;
+                fnode->finddir = (finddir_type_t)ext2_finddir;
             }
             else if(fnode->flags == FS_FILE){
-                fnode->read = ext2_read;
-
-
+                
+                fnode->read = (read_type_t)ext2_read;
             }
+            
 
             return fnode;
             
@@ -235,7 +236,7 @@ finddir_type_t ext2_finddir( fs_node_t* node, char* name){
 
 }
 
-read_type_t ext2_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer){
+uint32_t ext2_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer){
 
     ext2_data_struct_t* ext2 = node->device;
     ext2_inode_t inode;

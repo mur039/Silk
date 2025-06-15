@@ -5,9 +5,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/socket.h>
 
 int puts(const char *str){
-    return write(0, str, strlen(str));
+    return write(FILENO_STDOUT, str, strlen(str));
 }
 
 int putchar(int ch){
@@ -66,14 +67,11 @@ struct ds_packet{
     uint8_t opt10;
     uint8_t opt11;
     uint8_t opt12;
-
 };
 
 void send_server_message(int sock, const struct ds_packet packet){
-  for(int i = 0; i < packet.length; ++i){
-    uint8_t * head = &packet;
-    write(sock, &head[i], 1);
-  }
+  
+    write(sock, &packet, packet.length);
 }
 
 void mds_create_window(int fd){
@@ -154,101 +152,118 @@ typedef struct {
 
 
 
+int getchar(){
+    uint8_t ch = 0;
+    int ret = read(FILENO_STDIN, &ch, 1);
 
+    if(ret == -EAGAIN) return -1;
+    else if(ret > 0) return ch;
+}
 
-
-enum port_ioctl_request{
-    PORTIO_CAPABILITY = 0, //not implemented
-    PORTIO_READ,
-    PORTIO_WRITE,
-};
-
-#define PEX_CONNECT 2
 
 int main( int argc, char* argv[]){
 
     malloc_init(); //to get dynamic memory baby
+    
 
-    int pexfd = open("/dev/pex0", O_RDWR);
-    if(pexfd < 0){
-        puts("Failed to open /dev/pex0\n");
+    int err;
+
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(fd < 0){
+        puts("Failed to allocate a socket\n");
         return 1;
-    }
+        }    
+        puts("[+]Created a socket\n");
 
-    int result;
-
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0x80);
     
-    //for now let's bind again
-    result = ioctl(pexfd, PEX_CONNECT, "desktop-manager"); //perhaps query for interfaces?
-    if(result != 0){
-        puts("Failed to connect to \"desktop-manager\"");
-        return 2;
-    }
-
-    typedef union{
+    addr.sin_addr = 0; // listen at all interfaces ,we don't have many but one, anyway
+    uint8_t* byteptr = &addr.sin_addr;
+    byteptr[0] = 192;
+    byteptr[1] = 168;
+    byteptr[2] = 100;
+    byteptr[3] = 3;
+    addr.sin_addr = ntohl(addr.sin_addr);
+    //no listen on our localaddr
+    socklen_t socklen = sizeof(addr);
     
-        struct{
-            uint32_t sender_pid;
-            uint8_t frame_type;
-            uint8_t data_start;
-        };
-        uint8_t raw_frame[512];
-   } pex_client_frame_t;
 
-
-    // pex_client_frame_t frame2send;
-    // frame2send.frame_type = 0xc; //like text?
-    // memcpy(&frame2send.data_start, "Here's some text darling\n", 26);
-    // // write(pexfd, &frame2send, sizeof(pex_client_frame_t));
-
-    // printf("And btw my pid is %u, as client process\n", getpid());
-    pex_client_frame_t data;
-    data.frame_type = 0xc;
-    memcpy(&data.data_start, "Leave it in the lap of the gods\n", 33);
-    puts("Let's actually write to it? from it\n");
-    char buf;
-    write(pexfd, &data, sizeof(data));
-    // while( read(pexfd, &buf, 1) != 0){
-    //     putchar(buf);
-    // }
-
-    return 0;
-    // this will be forked from the window manager since i don't have sockets
-    // socket fd's will be given through pipe and they are going to be in arguments
-    // argv[0] = program name
-    // argv[1] =  client read 
-    // argv[2] = client write
-    //let's try to write  aclient for our window manager
-
-    if(argc != 3){
-        printf("Usage test fd0 fd1\n");
+    err = bind(fd, (struct sockaddr*)&addr, sizeof(addr));
+    if(err < 0){
+        printf("Failed to bind socket\n");
         return 1;
-    }
-
-    int server_read =  atoi(argv[1]);
-    int server_write = atoi(argv[2]);
-
-    mds_create_window(server_write);
-    mds_set_window_size(server_write, 200, 200);
-    mds_create_string(server_write, 0, 0, "liar");
-    mds_create_string(server_write, 0, 1 , "i have");
-    // mds_create_string(server_write, 0, 2, "sailed");
-    // mds_create_string(server_write, 0, 3, "the seas");
-    
-    
-    
-    while(1){
-        int ch;
-        
-        if(read(server_read, &ch, 1) != -1){
-            char line_buffer[42];
-            sprintf(line_buffer, "received character %c:%x\r\n", ch, ch);
-            write(2, line_buffer, strlen(line_buffer));
         }
-
-
-
-    }
+        puts("[+]Binded\n");
     
+        
+    char characters[128];
+    while (1){
+
+        //basically udp echo server
+        err = recvfrom(fd, characters, 128, 0, &addr, &socklen);//read(fd, &character, 1);
+        if (err){
+            characters[err] = '\0';
+            uint8_t* byteptr = &addr.sin_addr;
+            uint16_t port = ntohs(addr.sin_port);
+            printf(
+                "from %u.%u.%u.%u:%u received: %s%c",
+                byteptr[0], byteptr[1], byteptr[2], byteptr[3],
+                port,
+                characters,
+                characters[strlen(characters) - 1] == '\n' ? '\0' : '\n'
+            );
+            //echo it back
+            sendto(fd, characters, err, 0, &addr, sizeof(addr));
+        }
+        else if (err == 0){ //??
+            return 0;
+        }
+        else{
+            printf("returned error: %u\n", err);
+            return 1;
+        }
+    }
     return 0;
+
+    /*
+
+int servfd = socket(AF_UNIX, SOCK_RAW, 0);
+if(servfd < 0){
+puts("Failed to allocate a socket\n");
+return 1;
+}
+
+struct sockaddr_un nix;
+nix.sun_family = AF_UNIX;
+sprintf(nix.sun_path, "mds");
+
+
+printf("[client] created and socket\n");
+
+err = connect(servfd, (struct sockaddr*)&nix, sizeof(nix));
+if(err < 0){
+printf("[client]Failed connect addr, err=%x\n", err);
+return 1;
+}
+
+puts("[client] connected to server\n");
+
+mds_create_window(servfd);
+
+puts("[client] sent \"created a window\" to server\n");
+puts("[client] waiting for keypress to destroy and close the connection\n");
+
+int ch;
+ch = getchar();
+printf("return value of getchar %x:%c\n", ch, ch);
+
+
+mds_destroy_window(servfd);
+puts("[client] sent \"destroy the window\" to server\n");
+
+close(servfd);
+return 0;
+*/
 }

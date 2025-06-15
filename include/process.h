@@ -10,6 +10,7 @@
 #include <timer.h>
 #include <fb.h>
 #include <filesystems/tar.h>
+// #include <tty.h>
 #define MAX_OPEN_FILES  32
 
 
@@ -47,16 +48,22 @@ typedef struct context {
 }context_t;
 
 
+typedef enum { 
+    SYSCALL_STATE_NONE,
+    SYSCALL_STATE_PENDING,
+} syscall_state_t;
+
+
 typedef struct {
     char filename[512];
     int argc;
     char **argv;
     context_t regs;
-    void * stack;
+    uint8_t *stack_top, *stack_bottom;
     file_t open_descriptors[MAX_OPEN_FILES]; //max opened files
     u32 state;
 
-
+    
     //identifiying info, different between childs and parents
     pid_t pid;
     listnode_t * self;
@@ -64,12 +71,19 @@ typedef struct {
     u32 * page_dir;
     listnode_t* parent;
     list_t* childs;
-
     char * cwd;
     list_t * mem_mapping;
     int recv_signals;
     u8 * kstack;
+    void* ctty;
 
+    pid_t sid;
+    pid_t pgid;
+    
+    //syscall states no kthread no fancy things for you
+    syscall_state_t syscall_state;
+    unsigned long syscall_number;
+    
 }pcb_t;
 
 
@@ -93,10 +107,45 @@ pcb_t * load_process(pcb_t * proc);
 
 void list_vmem_mapping(pcb_t * process);
 
-pcb_t * create_kernel_process(void * stack_base, void* esp, void * eip, void* arg);
+pcb_t * create_kernel_process(void (*entry)(void) );
 void save_current_context(pcb_t * proc);
 
 void process_release_sources(pcb_t * proc);
 void inkernelstacktrace();
+
+void process_wakeup_list(list_t* wakeuplist);
+int process_get_empty_fd(pcb_t* proc);
+
+int process_send_signal(pid_t pid, unsigned int signum);
+int process_send_signal_pgrp(pid_t pgrp, unsigned int signum);
+
+//signals
+
+#define SIGHUP 1
+#define SIGINT 2
+
+#define SIGILL 4
+#define SIGTRAP 5 
+#define SIGABORT 6
+
+#define SIGKILL 9
+#define SIGUSR1 10
+#define SIGSEGV 11
+#define SIGUSR2 12
+#define SIGPIPE 13
+#define SIGALRM 14
+#define SIGTERM 15
+
+#define SIGCHLD 17
+#define SIGCONT 18
+#define SIGSTOP 19
+
+#define SIGTTIN 21
+#define SIGTTOU 22
+#define SIGURG  23
+
+
+#define SIGEMT 5
+#define SIGPOLL 11
 
 #endif

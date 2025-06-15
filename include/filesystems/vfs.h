@@ -38,12 +38,13 @@ typedef uint32_t (*write_type_t) (struct fs_node *, uint32_t, uint32_t, uint8_t 
 typedef void (*open_type_t) (struct fs_node *, uint8_t read, uint8_t write);
 typedef void (*close_type_t) (struct fs_node *);
 typedef struct dirent *(*readdir_type_t) (struct fs_node *, uint32_t);
-typedef struct fs_node *(*finddir_type_t) (struct fs_node *, char *name);
-typedef void (*create_type_t) (struct fs_node *, char *name, uint16_t permission);
-typedef void (*mkdir_type_t) (struct fs_node *, char *name, uint16_t permission);
+typedef struct fs_node *(*finddir_type_t) (struct fs_node *, const char *name);
+typedef void (*create_type_t) (struct fs_node *, const char *name, uint16_t permission);
+typedef void (*mkdir_type_t) (struct fs_node *, const char *name, uint16_t permission);
 typedef int (*ioctl_type_t) (struct fs_node *, unsigned long request, void * argp);
 typedef int (*get_size_type_t) (struct fs_node *);
-typedef int (*unlink_type_t) (struct fs_node *, char *name);
+typedef int (*unlink_type_t) (struct fs_node *, const char *name);
+typedef void* (*mmap_type_t) (struct fs_node *, size_t length, int prot, size_t offset);
 
 typedef struct fs_node {
 	char name[256];         // The filename.
@@ -70,6 +71,7 @@ typedef struct fs_node {
 	open_type_t open;
 	close_type_t close;
 	ioctl_type_t ioctl;
+	mmap_type_t mmap;
 	get_size_type_t get_size;
 
 
@@ -133,6 +135,8 @@ char** _vfs_parse_path(const char * path);
 void vfs_install();
 int vfs_mount(char * path, fs_node_t * local_root);
 
+
+
 void open_fs(fs_node_t *node, uint8_t read, uint8_t write);
 void close_fs(fs_node_t *node);
 void create_fs(fs_node_t* node,  const char *name, uint16_t permissions);
@@ -141,7 +145,7 @@ uint32_t write_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buff
 uint32_t read_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 fs_node_t *finddir_fs(fs_node_t *node, char *name);
 struct dirent *readdir_fs(fs_node_t *node, uint32_t index);
-unlink_type_t unlink_fs(fs_node_t* node, const char* name);
+int unlink_fs(fs_node_t* node, const char* name);
 
 void vfs_tree_traverse(tree_t* tree);
 fs_node_t *get_mount_point(char * path, unsigned int path_depth, char **outpath, unsigned int * outdepth);

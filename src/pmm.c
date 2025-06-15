@@ -7,21 +7,38 @@ extern uint32_t bootstrap_pte2[1024];
 extern uint32_t kernel_phy_start;
 
 uint32_t * kdir_entry = bootstrap_pde;
-uint8_t * bitmap_start = (uint8_t *)&kernel_end;
+
 uint8_t * kernel_heap = (uint8_t *)&kernel_end;;
-uint8_t * memstart;
-uint32_t bitmap_size;
 
 uint32_t * memory_window = (uint32_t *)(0xC0100000 - 0x1000);
-
 uint32_t total_block_size;
-
 uint32_t * current_page_dir;
 
 
+#if 1
+page_bitmap_t highmemory, lowmemory;
+#else
+uint8_t * bitmap_start = (uint8_t *)&kernel_end;
+uint8_t * memstart;
+uint32_t bitmap_size;
+#endif
 
 void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 
+    #if 1
+    highmemory.baseaddr = (void*)mem_start;
+    highmemory.endaddr = highmemory.baseaddr + mem_size;
+    highmemory.bitmap_size = mem_size / (8*4096);
+    highmemory.bitmap = kernel_heap;
+    
+    kernel_heap += highmemory.bitmap_size;
+    memset(highmemory.bitmap, 0, highmemory.bitmap_size);
+    
+    uart_print(COM1, "kernel_heap :%x\r\n", kernel_heap);
+    uart_print(COM1, "bitmap_size :%x\r\n", highmemory.bitmap_size);
+
+
+    #else
     memstart = (void *)mem_start;
     bitmap_size = mem_size / (8 * 4 * 1024); //total blocks as bitss
     bitmap_start = kernel_heap;
@@ -33,9 +50,148 @@ void pmm_init(uint32_t mem_start, uint32_t mem_size){ //problematic af
 
     memset(bitmap_start, 0, bitmap_size);
     // kdir_entry = get_physaddr(kdir_entry);
+    #endif
     current_page_dir = kdir_entry;
- 
 }
+
+
+void pmm_print_usage(){
+    unsigned int used_pages = 0;
+    unsigned int free_pages = 0;
+    unsigned int start_addr;
+    unsigned int end_addr;
+    
+    int state = 0;
+    
+    for(unsigned int i = 0; i < highmemory.bitmap_size + 1; ++i){
+        for(int bit = 0; bit < 8 ; ++bit){
+            int is_found = GET_BIT(highmemory.bitmap[i], bit);
+
+            if(!state){ // no found
+                if(is_found){
+                    start_addr = (unsigned int)highmemory.baseaddr;
+                    start_addr += 0x1000*(8*i + bit);
+                    state = 1;
+                    // bit--;
+                }else{
+                    free_pages++;
+                }
+            }
+            else{ //found
+            if(!is_found){
+                    end_addr = (unsigned int)highmemory.baseaddr;
+                    end_addr = start_addr;
+                    end_addr += 0x1000*(8*i + bit);
+                    state = 0;
+                    uart_print(COM1, "[%x...%x]: Allocated size -> %x\r\n", start_addr, end_addr, end_addr - start_addr);
+                }
+                else{
+                    used_pages++;
+                }
+            }
+        }
+    }
+    uart_print(COM1, "used_pages = %x, free_pages = %x\r\n", used_pages, free_pages);
+
+}
+
+
+void * allocate_physical_page(){ //broken af
+
+    #if 1
+    for(unsigned int i = 0; i < highmemory.bitmap_size; ++i){
+        for(int bit = 0; bit < 8 ; ++bit){
+            if(GET_BIT(highmemory.bitmap[i], bit) == 0){ //empty page
+                highmemory.bitmap[i] |= 1 << bit;
+                // pmm_print_usage();
+                return highmemory.baseaddr + (8*i + bit)*4096;
+            }
+        }
+    }
+    #else
+    for(unsigned int i = 0; i < bitmap_size; ++i){
+        for(int bit = 0; bit < 8 ; ++bit){
+            if(GET_BIT(bitmap_start[i], bit) == 0){ //empty page
+            bitmap_start[i] |= 1 << bit;
+                // pmm_print_usage();
+                return memstart + (8*i + bit)*4096;
+            }
+        }
+    }
+    #endif
+    
+    return NULL;
+}
+
+
+int deallocate_physical_page(void * address){ //broken af
+
+    
+    uint32_t addr = (uint32_t)address;
+    
+    #if 1
+        if(addr < (uint32_t)highmemory.baseaddr || addr > (uint32_t)highmemory.endaddr){
+            fb_console_printf("Not in the managed memory range");
+            return 1;
+        }
+
+        unsigned int bits = addr - (uint32_t)highmemory.baseaddr;
+        bits /= 4096; //number of bits
+        int bit_index = bits % 8; //(8*byte_index + bit_index)
+        int byte_index = bits / 8;
+
+        if( GET_BIT(highmemory.bitmap[byte_index], bit_index) ){
+            uint8_t mask = 0xFF ^ (1 << bit_index);
+            highmemory.bitmap[byte_index] &= mask;
+        }
+        else{
+
+            fb_console_printf("Double physical page free!!\n");
+            halt();
+        }
+    #else
+    if(addr < memstart ){
+        fb_console_printf("Not in the manages memory range");
+        return 1;
+    }
+    
+    unsigned int bits = addr - (uint32_t)memstart;
+    bits /= 4096; //number of bits
+    int bit_index = bits % 8; //(8*byte_index + bit_index)
+    int byte_index = (bits - bit_index)/8;
+
+    bitmap_start[byte_index] &= ~(1 << bit_index);
+    #endif
+    return 0;
+}
+
+
+int pmm_mark_allocated(void * address){
+    uint32_t addr = (uint32_t)address;
+
+    #if 1
+    // uart_print(COM1, "%x marked as allocated\r\n", address);
+    unsigned int bits = addr - (uint32_t)highmemory.baseaddr;
+    bits /= 4096; //number of bits
+    int bit_index = bits % 8; //(8*byte_index + bit_index)
+    int byte_index = (bits - bit_index)/8;
+    
+    highmemory.bitmap[byte_index] |= (1 << bit_index);
+    #else
+    // uart_print(COM1, "%x marked as allocated\r\n", address);
+    unsigned int bits = addr - (uint32_t)memstart;
+    bits /= 4096; //number of bits
+    int bit_index = bits % 8; //(8*byte_index + bit_index)
+    int byte_index = (bits - bit_index)/8;
+    
+    bitmap_start[byte_index] |= (1 << bit_index);
+    #endif
+    return 0;
+}
+
+
+
+
 
 
 
@@ -83,10 +239,49 @@ void kmalloc_init(int npages){
     return;
 }
 
+
+int pmm_alloc_is_chain_corrupted(){
+
+    int index = 0;
+    for(block_t* head = kmalloc_mem_list ;  head  ; head = head->next){
+
+        int head_is_free = head->is_free & 1ul;
+        int head_magic = head->is_free & ~1ul;
+
+        if(!KMALLOC_BLOCK_VALID(head)){
+            error("block is corrupted");
+            uart_print(
+                        COM1,
+                        "block in question at index: %u\r\n"
+                        "magic and free?: %x\r\n"
+                        "size:            %x\r\n"
+                        "next:            %x\r\n"
+                        "prev:            %x\r\n"
+                        ,
+                        index,
+                        head->is_free,
+                        head->size,
+                        head->next,
+                        head->prev
+
+                        );
+            
+            return 1;
+        }
+
+        index++;
+    }
+    return 0;
+}
+
 void * kmalloc(unsigned int size){
 
     //for next k*alloc if it fails then at least we get the last callers of this function thus the corrupting function
     // inkernelstacktrace();
+    // alloc_print_list();
+    if(pmm_alloc_is_chain_corrupted()){
+        halt();
+    }
     block_t* head;
     int index = 0;
     for(head = kmalloc_mem_list ;  head  ; head = head->next){
@@ -115,11 +310,11 @@ void * kmalloc(unsigned int size){
             return NULL;
         }
 
-        if( (head->is_free & 1ul) && (size + sizeof(block_t)) <= head->size  ){
-            uint8_t* placement = &head[1];
+        if( (head->is_free & 1ul) && (size + sizeof(block_t) ) <= head->size  ){
+            uint8_t* placement = (uint8_t*)&head[1];
             placement += size;
 
-            block_t* next_free = placement;
+            block_t* next_free = (block_t*)placement;
             next_free->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
             next_free->size = head->size - size - sizeof(block_t);
             next_free->prev = head;
@@ -135,6 +330,7 @@ void * kmalloc(unsigned int size){
         
             return &head[1];
         }
+        
         index++;
     }
     //maybe allocate page and put it at the end?
@@ -152,7 +348,7 @@ void * kmalloc(unsigned int size){
 
 
     malloc_last_block->next = newpage;
-    malloc_last_block = newpage;
+    malloc_last_block = newpage; //???
 
     alloc_print_list();
 
@@ -186,27 +382,21 @@ void * kcalloc(uint32_t nmemb, uint32_t size){
 }
 
 
-void * kpalloc(unsigned int npages){ //allocate page aligned pages.
-    //for simpilicity npages is assigned to 1;
-    // npages = 1;
-
-    // return NULL;
-
+void * kpalloc(unsigned int npages){ //allocate page then map it to the heap.
+    
     u8 * ret = NULL;
 
     for(unsigned int i = 0; i < npages; ++i){
 
     u8 * page = allocate_physical_page();
     if(!page){
+        //nigger release the allocated ones!!!
         return NULL;
     }
 
     map_virtaddr(kernel_heap, page, PAGE_PRESENT | PAGE_READ_WRITE);
-    page = kernel_heap;
-
-    if(!ret) ret = page;
-
-    kernel_heap += 0x1000; // does it need tho?
+    ret = kernel_heap;
+    kernel_heap += 0x1000; // does it need tho? //yes
 
     }
     
@@ -216,10 +406,8 @@ void * kpalloc(unsigned int npages){ //allocate page aligned pages.
     well since these pages are mapped on to the heap for n = 1
     i can just unmap it but for n!= 1 i need to know the amount i allocated
 
-    
 */
-    return ret;
-    
+    return ret;    
 };
 
 void kpfree(void * address){
@@ -308,87 +496,6 @@ void kfree(void * ptr){
     }
 }
 
-void pmm_print_usage(){
-    unsigned int used_pages = 0;
-    unsigned int free_pages = 0;
-    unsigned int start_addr;
-    unsigned int end_addr;
-
-    int state = 0;
-    for(unsigned int i = 0; i < bitmap_size + 1; ++i){
-        for(int bit = 0; bit < 8 ; ++bit){
-            int is_found = GET_BIT(bitmap_start[i], bit);
-
-            if(!state){ // no found
-                if(is_found){
-                    start_addr = (unsigned int)memstart;
-                    start_addr += 0x1000*(8*i + bit);
-                    state = 1;
-                    // bit--;
-                }else{
-                    free_pages++;
-                }
-            }
-            else{ //found
-                if(!is_found){
-                    end_addr = (unsigned int)memstart;
-                    end_addr = start_addr;
-                    end_addr += 0x1000*(8*i + bit);
-                    state = 0;
-                    uart_print(COM1, "[%x...%x]: Allocated size -> %x\r\n", start_addr, end_addr, end_addr - start_addr);
-                }
-                else{
-                    used_pages++;
-                }
-            }
-        }
-    }
-    uart_print(COM1, "used_pages = %x, free_pages = %x\r\n", used_pages, free_pages);
-
-}
-
-
-void * allocate_physical_page(){ //broken af
-
-    for(unsigned int i = 0; i < bitmap_size; ++i){
-        for(int bit = 0; bit < 8 ; ++bit){
-            if(GET_BIT(bitmap_start[i], bit) == 0){ //empty page
-                bitmap_start[i] |= 1 << bit;
-                // pmm_print_usage();
-                return memstart + (8*i + bit)*4096;
-            }
-        }
-    }
-    
-    return NULL;
-}
-
-
-int deallocate_physical_page(void * address){ //broken af
-
-    uint32_t addr = (uint32_t)address;
-    // uart_print(COM1, "%x marked as free\r\n", address);
-    unsigned int bits = addr - (uint32_t)memstart;
-    bits /= 4096; //number of bits
-    int bit_index = bits % 8; //(8*byte_index + bit_index)
-    int byte_index = (bits - bit_index)/8;
-
-    bitmap_start[byte_index] &= ~(1 << bit_index);
-    return 0;
-}
-
-
-int pmm_mark_allocated(void * address){
-    uint32_t addr = (uint32_t)address;
-    // uart_print(COM1, "%x marked as allocated\r\n", address);
-    unsigned int bits = addr - (uint32_t)memstart;
-    bits /= 4096; //number of bits
-    int bit_index = bits % 8; //(8*byte_index + bit_index)
-    int byte_index = (bits - bit_index)/8;
-
-    bitmap_start[byte_index] |= (1 << bit_index);
-    return 0;
-}
 
 
 
@@ -416,24 +523,25 @@ void *get_physaddr(void * virtualaddr){
 }
 
 int is_virtaddr_mapped(void * virtaddr){
-    virt_address_t v;
-    page_directory_entry_t * dir = (void *)current_page_dir;
-    page_table_entry_t * table;
-    v.address = (u32)virtaddr;
-    //first check if that table is mapped
-    if( !(dir[v.directory].raw & 1) ){ //not present
+    
+    unsigned long virtualaddr = (unsigned long)virtaddr;
+    unsigned long pdindex = (unsigned long)virtualaddr >> 22;
+    unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
+
+    // Here you need to check whether the PD entry is present.
+    unsigned long *pd = (unsigned long *)0xFFFFF000;
+    if( !(pd[pdindex] & PAGE_PRESENT)){
+        
+        return 0;
+    }
+    
+    // Here you need to check whether the PT entry is present.
+    unsigned long *pt = ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+    if( !(pt[ptindex] & PAGE_PRESENT)){
+        
         return 0;
     }
 
-    //if table exist then check in the table if corresponding entry exists
-    table = (void *) ( (dir[v.directory].raw& ~0xFFF) + 0xc0000000 );
-
-    if(!(table[v.table].raw & 1)){
-        return 0;
-
-    }
-
-    //well it should exist
     return 1;
 }
 
@@ -465,7 +573,7 @@ int is_virtaddr_mapped_d(void * _dir, void * virtaddr){
 
 void map_virtaddr(void * virtualaddr, void * physaddr, uint16_t flags){
 
-
+    flags &= 0xffful;
     unsigned long pdindex = (unsigned long)virtualaddr >> 22;
     unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
 
@@ -475,14 +583,14 @@ void map_virtaddr(void * virtualaddr, void * physaddr, uint16_t flags){
     if(!(pd[pdindex] & PAGE_PRESENT)){ //empty directory
         uint8_t* dirphy = allocate_physical_page();
         pd[pdindex] = (unsigned long)dirphy;
-        pd[pdindex] |=  flags & 0xfff | PAGE_PRESENT;
+        pd[pdindex] |=   flags |PAGE_READ_WRITE | PAGE_PRESENT;
         memset(pt, 0, 4096);
     }
     
     // Here you need to check whether the PT entry is present.
     // When it is, then there is already a mapping present. What do you do now?
     //idk
-    pt[ptindex] = ((unsigned long)physaddr) | (flags & 0xFFF) | PAGE_PRESENT; // Present
+    pt[ptindex] = ((unsigned long)physaddr) | flags | PAGE_PRESENT; // Present
 
     
     asm("invlpg (%0)" : :  "r"(virtualaddr));
@@ -531,6 +639,24 @@ int set_virtaddr_flags(void * virtualaddr, uint16_t flags){
 
 }
 
+int get_virtaddr_flags(void * virtualaddr){
+
+
+    unsigned long pdindex = (unsigned long)virtualaddr >> 22;
+    unsigned long ptindex = (unsigned long)virtualaddr >> 12 & 0x03FF;
+    
+    unsigned long *pd = (unsigned long *)0xFFFFF000;
+    
+    if(!(pd[pdindex] & PAGE_PRESENT)){ //empty directory not possible at least on the kernel side
+        return -1;
+    }
+        
+    // Here you need to check whether the PT entry is present.
+    // When it is, then there is already a mapping present. What do you do now?
+    //idk
+    unsigned long *pt = ((unsigned long *)0xFFC00000) + (0x400 * pdindex);
+    return pt[ptindex] & 0xFFFul;    
+}
 
 
 
@@ -557,44 +683,43 @@ void map_virtaddr_d(void * _directory, void * virtual_addr, void * physical_addr
     v.address = (uint32_t)virtual_addr;
     p.address = (uint32_t)physical_addr;
 
-    //check if directory has table
+    //check if directory has table entry;
     if(!directory[v.directory].present){ //yok yeni sayfa al
-        page_table_entry_t * t = kpalloc(1);
-        memset(t, 0, 4096);
 
-        // for(int i = 0; i < 4096 ; ++i){
-        //     char * phead = (void*)t;
-        //     uart_print(COM1, "%x ", phead[i]);
-        //     if( i && !(i%16)) uart_print(COM1, "\r\n");
-        // }
-
-        directory[v.directory].raw = (uint32_t)get_physaddr(t);
         
-        kernel_heap -= 0x1000;
-        unmap_virtaddr_d(directory, kernel_heap);
+        //temporary unmap what is mapped to the memorywindow
+        void* oldwindow = get_physaddr(memory_window);
+        table = allocate_physical_page();
 
+        map_virtaddr(memory_window, table, PAGE_READ_WRITE | PAGE_PRESENT);
+        memset(memory_window, 0, 4096);
+        
+        directory[v.directory].raw = (uint32_t)table;
         directory[v.directory].raw |= flags;
-        // uart_print(COM1, "directory[v.directory]: %x\r\n", directory[v.directory].raw);
 
-        // uart_print(COM1, "a page is allocated for table\r\n");
-        // paging_directory_list(_directory); halt();
-
-        t[v.table].raw = (uint32_t)p.address;
-        t[v.table].raw &= ~0xFFF;
-        t[v.table].raw |=  flags;
-
+        table = (void*)memory_window;
+        
+        table[v.table].raw = (uint32_t)p.address;
+        table[v.table].raw &= ~0xFFF;
+        table[v.table].raw |=  flags;
+        
+        map_virtaddr(memory_window, oldwindow, PAGE_READ_WRITE | PAGE_PRESENT);
 
     }
     else{
         directory[v.directory].raw |= flags;
     
         table = (void*)((directory[v.directory].raw & ~(0xffful)));
+
+        void* oldwindow = get_physaddr(memory_window);
         map_virtaddr(memory_window, table, PAGE_PRESENT | PAGE_READ_WRITE); //only read darling
         table = (page_table_entry_t*)memory_window;
 
         table[v.table].raw = (uint32_t)p.address;
         table[v.table].raw &= ~0xFFF;
-        table[v.table].raw |=  0b111;
+        table[v.table].raw |=  flags;
+
+        map_virtaddr(memory_window, oldwindow, PAGE_READ_WRITE | PAGE_PRESENT);
     }
 
     return;

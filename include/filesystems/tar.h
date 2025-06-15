@@ -53,7 +53,7 @@ int tar_get_minor_number(tar_header_t * t);
 int32_t tar_read_dir(file_t * dir, tar_header_t ** out);
 
 
-finddir_type_t tar_finddir_initrd (struct fs_node* node, char *name);
+struct fs_node* tar_finddir_initrd (struct fs_node* node, const char *name);
 fs_node_t * tar_node_create(void * tar_begin, size_t tar_size);
 fs_node_t* tar_convert_tmpfs(void* tar_begin, uint32_t binary_size);
 

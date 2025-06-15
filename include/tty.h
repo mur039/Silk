@@ -4,11 +4,11 @@
 #include <sys.h>
 #include <pmm.h>
 #include <fb.h>
+#include <process.h>
 
 #define TTY_BUF_SIZE 4096 // a page
 
 /* 0x54 is just a magic number to make these relatively uniqe ('T') */
-
 #define TCGETS		0x5401
 #define TCSETS		0x5402
 #define TCSETSW		0x5403
@@ -213,13 +213,48 @@ typedef int speed_t;
 
 int install_tty();
 
-typedef struct{
-	uint16_t id;
-	circular_buffer_t ib, ob;
-	struct termio termio;
-} tty_t;
 
+struct tty;
 
+struct tty_driver{
+	const char *name;
+    int num;
+    // struct tty **ttys;      // Array of ttys handled by this driver
 
+    int (*open)(struct tty*);
+    void (*close)(struct tty*);
+    void (*write)(struct tty*, const char *buf, size_t len);
+    void (*put_char)(struct tty*, char c);
+    void (*flush_chars)(struct tty*);
+};
+
+struct tty{
+	struct winsize size;
+	struct termios termio;
+	struct tty_driver * driver;
+	int index;
+	int refcount;
+	circular_buffer_t linebuffer;
+	circular_buffer_t read_buffer;
+	circular_buffer_t write_buffer;
+
+	int eof_pending;
+	pid_t session;
+	pid_t fg_pgrp;
+
+	list_t read_wait_queue;
+};
+
+typedef struct tty tty_t;
+
+int tty_ld_write(tty_t* tty, const char* str, size_t nbytes);
+
+void tty_open(struct fs_node* fnode, int read, int write);
+void tty_close(struct fs_node* fnode);
+uint32_t tty_write(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t* buffer);
+uint32_t tty_read(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t* buffer);
+int tty_ioctl(fs_node_t* fnode, unsigned long op, void* argp);
+
+#define CTRL(ch) (ch & 0x1F)
 
 #endif

@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <signals.h>
 #include <dirent.h>
-
+#include <sys/socket.h>
 
 typedef enum{
     SEEK_SET = 0,
@@ -16,20 +16,6 @@ typedef enum{
 } whence_t;
 
 
-int puts(const char * dst){
-    write( FILENO_STDOUT, dst, strlen(dst));
-    return 0;
-}
-
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-int getchar(){
-    uint8_t ch = 0;
-    int ret = read(FILENO_STDIN, &ch, 1);
-    return ret ?  ch : -1;
-}
 
 
 
@@ -120,119 +106,57 @@ listnode_t* insert_head_list(list_t *list, void* val){
 
 
 
-int process_key(int c){
-
-    //YES its gonna be like vi
-    // printf("received character : %u:%x:%c\n", c, c, c);
-     switch (c) {
-            // case 3: //^C //perhaps lets change it
-            //     break;
-
-            // case '\b': //remove character
-            //     break;
-            
-            // case 9: //tab
-            //     break;
-            // case 10:
-            // case 13: //process the inout buffer
-            
-            // case 0x1b: //esc
-            //     break;
-
-                
-
-            default: //add character
-                putchar(c);  //echo back to the user  
-                break;
-            }
-
-}
-
-
-
-
-int shouldRun = 1;
-
 int main(int argc, char **argv){
-
-
-    // //parsing the arguments
-    if(argc == 1){
-        puts("expected a file\n");
-        return 1;
-    }
-
 
     malloc_init();
 
-    char filepath[256];
-    memcpy(filepath, argv[1], strlen(argv[1]) );
+    int err;
+    int sockfd = socket(AF_UNIX, SOCK_RAW, 0);
+    if(sockfd < 0){
+        printf("[-] Failed to create socket\n");
+        return 1;
+    }
 
+    socklen_t socklen = sizeof(struct sockaddr_un);
+    struct sockaddr_un sockinfo;
+
+    sockinfo.sun_family = AF_UNIX;
+    sprintf(sockinfo.sun_path, "mds");
     
-
-    list_t line_list = create_list();
-
-    int file_fd = open(filepath, O_RDWR);
-
-    if(file_fd == -1){
-        file_fd = open(filepath, O_RDWR | O_CREAT, 0644);
-        if(file_fd == -1){
-            puts("Failed to create file.\n");
-            return 1;
-        }
-    }
-    else{
-        //read file into the line list
-        size_t file_size  = lseek(file_fd, 0, SEEK_END);
-        printf("->size : %u\n", file_size);
-        uint8_t* filebuf = malloc(file_size);
-
-        lseek(file_fd, 0, SEEK_SET);
-        read(file_fd, filebuf, file_size);
-
-        
-        uint8_t* prev = filebuf;
-        uint8_t* head = filebuf;
-
-        for(size_t i = 0; i < file_size + 1; ++i){
-
-            if(i == file_size){
-                size_t length = ((size_t)head) - ((size_t)prev);
-                uint8_t* line = malloc( length);
-                memcpy(line, prev, length);
-                insert_tail_list(&line_list, line);
-            }
-            if(*head == '\n'){
-                
-                size_t length = ((size_t)head) - ((size_t)prev);
-                uint8_t* line = malloc( length );
-                memset(line, 0, length);
-                memcpy(line, prev, length );
-                insert_tail_list(&line_list, line);
-                
-                prev = head + 1;
-            }
-            head++;
-        }   
-
-        free(filebuf);
+    err = bind(sockfd, &sockinfo, socklen);
+    if(err < 0){
+        printf("[-] Failed to bind the socket\n");
+        return 1;
     }
 
+    printf("[+] Created socket\n");
 
-    for(listnode_t* line = line_list.head; line ; line = line->next){
-        printf("-> %s\n", line->val);
+    err = listen(sockfd, 1);
+    if(err < 0){
+        printf("[-] Failed to listen\n");
+        return 1;
+    }
+    printf("[+] Listening on the socket\n");
+
+    pause(); 
+    //we wait for any signals afterwards
+    //then we accept an connection
+    
+    printf("[+] Accepting on the socket\n");
+    err = accept(sockfd, NULL, NULL); //return info about client
+    if(err < 0){
+        printf("[-] Failed to accept?: %x\n", err);
+        return 1;
     }
 
+    int clientfd = err;
+    printf("client fd that is :%u\n", clientfd);
+    
+    int ch = 0;
+    while( (err = read(clientfd, &ch, 1)) > 0 ){
 
-    // while(shouldRun){
-        
-    //    char c = getchar();
-    //     if(c != -1){             //i succesfully read something
-
-    //         process_key(c);            
-    //     }
-
-    // }
+        printf(" %x\n", ch);
+    }
     
     return 0;
 }

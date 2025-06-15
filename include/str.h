@@ -21,18 +21,19 @@ char * strcpy(char* dst, const char* src);
 char * strcat(char* dst, const char* src);
 char *strdup(const char *s);
 
-void kxxd(const char * src, size_t len);
-
+void kxxd(const void* src, size_t len);
+void * memsetw4(void* s, int c, uint32_t n);
+void * memcpyw4 ( void * destination, const void * source, size_t num );
 #define IS_ALPHABETICAL(character) \
-            (character >= 'a' &&  character <= 'z') \
-            || (character >= 'A' &&  character <= 'Z')
+            ( (character >= 'a' &&  character <= 'z') \
+            || (character >= 'A' &&  character <= 'Z') )
 
 #define IS_NUMBER(character) \
-            (character >= '0' &&  character <= '9') \
+            (character >= '0' &&  character <= '9') 
 
 
 #define IS_ALPHANUMERIC(character) \
-            IS_NUMBER(character) || IS_ALPHABETICAL(character)
+            (IS_NUMBER(character) || IS_ALPHABETICAL(character))
 
 int atoi (const char * str);
 

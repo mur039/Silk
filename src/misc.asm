@@ -23,6 +23,7 @@ flush_tss:
 
 global enable_interrupts
 global disable_interrupts
+
 enable_interrupts:
 	sti 
 	ret
@@ -33,25 +34,23 @@ disable_interrupts:
 	ret
 
 
-
+extern dump_stuck_frame
 extern schedule
 
 global jump_usermode
 jump_usermode:
-	mov ax, (4 * 8) | 3 ; ring 3 data with bottom 2 bits set for ring 3
-	mov ds, ax
-	mov es, ax 
-	mov fs, ax 
-	mov gs, ax ; SS is handled by iret
+	;mov ax, (4 * 8) | 3 ; ring 3 data with bottom 2 bits set for ring 3
+	;mov ds, ax
+	;mov es, ax 
+	;mov fs, ax 
+	;mov gs, ax ; SS is handled by iret
  
 	; set up the stack frame iret expects
-	mov eax, esp
 	push (4 * 8) | 3 ; data selector, stack segment also
-	push edx ; user stack
+	push 0 ; user stack
 	pushf ; eflags
 	push (3 * 8) | 3 ; code selector (ring 3 code with bottom 2 bits set for ring 3)
-	push ecx  ; instruction address to return to
-
+	push 0  ; instruction address to return to
 
 	;yes i will set up typical interrupt frame for the schedular and directly jump 
 	; to the next ready process instead of intermediate empty code block
@@ -69,16 +68,53 @@ jump_usermode:
     push eax
     mov eax, schedule
     call eax
-	pop eax
+    pop eax   ;shoudl have the r?
+    
+    jmp .old
+
+; ; push ss, esp, eflags, cs, eip in that order
+    push dword [eax + 72] ; ss
+    push dword [eax + 68] ; user esp
+    push dword [eax + 64] ; eflags
+    push dword [eax + 60] ; cs
+    push dword [eax + 56] ; eip
+
+    push eax
+    mov eax, esp
+    push eax
+    call dump_stuck_frame
+    pop eax
+    pop eax
+    
+
+    ; restore general-purpose registers
+    mov ecx, [eax + 40]   ; ecx
+    mov edx, [eax + 36]   ; edx
+    mov ebx, [eax + 32]   ; ebx
+    ;mov esp, [eax + 28]   ; esp (will be overwritten by iret anyway)
+    mov ebp, [eax + 24]   ; ebp
+    mov esi, [eax + 20]    ; esi
+    mov edi, [eax + 16]    ; edi
+
+    push eax
+    mov eax,0x23
+    mov ds, eax
+    mov es, eax
+    mov fs, eax
+    mov gs, eax
+    pop eax
+    mov eax, [eax + 44]   ; eax
+
+    iret
+
+.old:
+    ; old
     pop gs
     pop fs
     pop es
     pop ds
     popa
-    add esp, 8     ; Cleans up the pushed error code and pushed ISR number
-	
-
-
+    add esp, 8     ; Cleans up the pushed error code and pushed ISR number	
 	iret
 
 
@@ -94,9 +130,27 @@ jump_usermode:
 ;
 global promote_to_kproc
 promote_to_kproc:
-	
 
-    
+extern test_user_function
+
+global user_mode_test;
+user_mode_test:
+	mov ax, (4 * 8) | 3 ; ring 3 data with bottom 2 bits set for ring 3
+	mov ds, ax
+	mov es, ax 
+	mov fs, ax 
+	mov gs, ax ; SS is handled by iret
+
+	; set up the stack frame iret expects
+	mov eax, esp
+	push (4 * 8) | 3 ; data selector
+	push eax ; current esp
+	pushf ; eflags
+	push (3 * 8) | 3 ; code selector (ring 3 code with bottom 2 bits set for ring 3)
+	push test_user_function ; instruction address to return to
+	iret
+
+
 
 	
     

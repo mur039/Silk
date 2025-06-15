@@ -3,12 +3,6 @@
 #include <unistd.h>
 #include <stdint-gcc.h>
 
-
-int abs(int n){
-    n &= ~0x80000000; //signed bit set to zero
-    return n;
-}
-
 /*
 well 32-bit due to size can hold values between (-2^31, 2^31) so a 31-bit
  2^31 has ~10.33 digits or 11 digits, characters first character is sign digit the rest is the integer
@@ -48,12 +42,12 @@ struct Block
 
 typedef struct Block block_t;
 
-static block_t* mem_list = NULL;
+static struct Block *mem_list;
 void malloc_init(){
-    mem_list = mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
+    mem_list = mmap(NULL, 4096, 0, MAP_ANONYMOUS, -1, 0);
+    
     mem_list->is_free = 1;
-    mem_list->size = 4096; //raw size
-    mem_list->size -= sizeof(block_t); //header size
+    mem_list->size = 4096 - sizeof(block_t); //header size
     mem_list->next = NULL;
     mem_list->prev = NULL;
 
@@ -91,6 +85,11 @@ void* malloc(size_t size){
 
         if( head->next == NULL){ // jessy, we need more pages
             block_t * new = mmap(NULL, 0, 0, MAP_ANONYMOUS, -1, 0);
+            
+            if(!new){
+                return NULL;
+            }
+
             new->is_free = 1;
             new->size = 4096 - sizeof(block_t);
             new->next = NULL;
@@ -102,7 +101,6 @@ void* malloc(size_t size){
     
     return NULL;
 }
-
 
 
 
@@ -120,57 +118,6 @@ void  free(void *ptr){
     block_t * head = (block_t *)ptr;
     head -= 1;
     head->is_free = 1;
-
-    return;
-
-    //merging
-    /*three options 
-       ->  block ->
-           block ->
-        -> block
-    */
-    block_t* prev = head->prev;
-    block_t* next = head->next;
-   if(prev && next){
-      
-
-        //again 3 options
-        if(prev->is_free && next->is_free){ //both blocks are free
-
-            prev->size += head->size;
-            prev->size += next->size;
-
-            next->prev = prev;
-            prev->next = next->next;
-        }
-        else if(prev->is_free){
-
-            prev->size += head->size;
-            head->next->prev = prev;
-            prev->next = head->next;
-        }
-        else if(next->is_free){
-            head->size += next->size;
-            if(next->next)
-                next->next->prev = head;
-            head->next = next->next;
-        }
-   }
-
-   else if(prev){
-
-        if(prev->is_free){
-            prev->size += head->size;
-        }
-    }
-
-    else if(next){
-        head->size += next->size;
-        if(next->next)
-            next->next->prev = head;
-        head->next = next->next;
-    }
-
 
     return;
 }

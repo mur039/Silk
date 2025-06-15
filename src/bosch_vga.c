@@ -2,7 +2,7 @@
 
 
 int bosch_vga_register_device(pci_device_t* device){
-
+    
     //altough it's checked during enumuration, there's no harm from sanity checking
 
     if(!device){
@@ -20,8 +20,8 @@ int bosch_vga_register_device(pci_device_t* device){
 
     fb_console_printf("Well a BGA compatible display controller here\r\n");
 
-    uint32_t* ptr =  &device->header;
-    for(int i = 0; i < sizeof(pci_device_header_t) / 4 ; ++i){
+    uint32_t* ptr =  (uint32_t*)&device->header;
+    for(size_t i = 0; i < sizeof(pci_device_header_t) / 4 ; ++i){
         ptr[i] = pci_read_config(device->bus, device->slot, device->func, i * 4);
     }
 
@@ -32,8 +32,8 @@ int bosch_vga_register_device(pci_device_t* device){
 
     int32_t size = pci_get_bar_size(*device, 0);
     uint32_t* base_addr, *mmio_addr;
-    base_addr = device->header.type_0.base_address_0 & 0xFFFFFFF0;
-    mmio_addr = device->header.type_0.base_address_2 & 0xFFFFFFF0;
+    base_addr = (uint32_t*)(device->header.type_0.base_address_0 & 0xFFFFFFF0);
+    mmio_addr = (uint32_t*)(device->header.type_0.base_address_2 & 0xFFFFFFF0);
     
 
 

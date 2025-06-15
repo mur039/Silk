@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
-int FILENO_STDOUT = 0;
-int FILENO_STDIN = 1;
+int FILENO_STDIN = 0;
+int FILENO_STDOUT = 1;
 int FILENO_STDERR = 2;
 
 

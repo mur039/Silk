@@ -6,6 +6,7 @@ mboot:
     MULTIBOOT_VIDEO_MODE    equ 1<<2
     MULTIBOOT_HEADER_MAGIC	equ 0x1BADB002
     MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO | MULTIBOOT_VIDEO_MODE
+    ;MULTIBOOT_HEADER_FLAGS	equ MULTIBOOT_PAGE_ALIGN | MULTIBOOT_MEMORY_INFO
     MULTIBOOT_CHECKSUM	equ -(MULTIBOOT_HEADER_MAGIC + MULTIBOOT_HEADER_FLAGS)
     
     ;Multiboot Header
@@ -18,8 +19,8 @@ mboot:
     dd 0 ;bssEndAddr
     dd 0 ;entryAddr
     dd 0;mode type, linear mode
-    dd 1280;width
-    dd 800 ;height
+    dd 1024;width
+    dd 768 ;height
     dd 4;depth  
 
     ;1280x800
@@ -100,8 +101,8 @@ _changeSP:
     call ecx
     
 
-global ie_func:
-ie_func:
+global test_user_function:
+test_user_function:
 	jmp $
 	
 

@@ -136,7 +136,7 @@ int va_gprintf(char (* write)(char c), const char *format, va_list args){
                 if(!src){ //null pointer
 
                     const char * null_str = "(null)";
-                    for(int i = 0; i < strlen( null_str ); ++i){
+                    for(size_t i = 0; i < strlen( null_str ); ++i){
                         write(null_str[i]);
                     }
                     break;
@@ -202,6 +202,33 @@ void * memset(void* s, int c, uint32_t n){
 }
 
 
+void * memsetw4(void* s, int c, uint32_t n){
+    uint32_t * head = (uint32_t*)s;
+    uint32_t value = (uint32_t)c;
+
+    for(unsigned int  i = 0; i < n; ++i){
+        head[i] = value;
+    }
+    return s;
+}
+
+
+void * memcpyw4 ( void * destination, const void * source, size_t num ){
+    
+    uint32_t *_destination, *_source;
+
+    _destination =   (uint32_t*)destination;
+    _source =        (uint32_t*)source;
+    
+    for (size_t i = 0; i < num; i++){   
+        _destination[i] = _source[i];
+    }
+
+    return _destination;    
+}
+
+
+
 void * memcpy ( void * destination, const void * source, size_t num ){
     
     unsigned char  *_destination, *_source;
@@ -212,8 +239,7 @@ void * memcpy ( void * destination, const void * source, size_t num ){
         _destination[i] = _source[i];
     }
 
-    return _destination;
-    
+    return _destination;    
 }
 
 int memcmp( const void * ptr1, const void * ptr2, size_t num ){
@@ -333,9 +359,59 @@ char *strdup(const char *s){
     return retval;
 }
 
-void kxxd(const char * src, size_t len){
+#include <fb.h>
+void kxxd(const void * _src, size_t len){
 
-    for(int i = 0; i < len; ++i){
+    uint8_t* src = (uint8_t*)_src;
+    while(len > 16){
+        
+        for(int i = 0; i < 16; ++i){
+
+            if( src[i] < 0xf){
+                fb_console_printf("0%x ", src[i]);
+            }
+            else{
+                fb_console_printf("%x ", src[i]);
+            }
+        }
+
+        fb_console_printf("| ");
+        for(int j = 0; j < 16; ++j){
+            
+            fb_console_printf("%c", src[j] <= ' ' ? '.' : src[j] );
+        }
+        fb_console_printf("\n");
+
+        src += 16;
+        len -= 16;
+    }
+
+    for(size_t i = 0; i < 16; ++i){
+
+        if(i < len){
+
+            if( src[i] < 0xf){
+                fb_console_printf("0%x ", src[i]);
+            }
+            else{
+                fb_console_printf("%x ", src[i]);
+            }
+        }
+        else fb_console_printf("   ");
+    }
+
+    fb_console_printf("| ");
+    for(size_t j = 0; j < len; ++j){
+        
+        fb_console_printf("%c", src[j] <= ' ' ? '.' : src[j] );
+    }
+    fb_console_printf("\n");
+
+
+    return;
+
+
+    for(size_t i = 0; i < len; ++i){
         
         if( i % 16 == 0 ){
 

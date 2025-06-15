@@ -6,13 +6,10 @@
 #include <ps2_mouse.h>
 #include <filesystems/vfs.h>
 
-#define MAX_SYSCALL_NUMBER 256
 void (*syscall_handlers[MAX_SYSCALL_NUMBER])(struct regs *r);
 
-void unkown_syscall(struct regs *r)
-{
-    uart_print(COM1, "Unkown syscall %x\r\n", r->eax);
-    r->eax = -1;
+void unkown_syscall(struct regs *r){
+    r->eax = -ENOSYS;
 }
 
 extern void syscall_stub();
@@ -43,21 +40,39 @@ void syscall_handler(struct regs *r)
         uart_print(COM1, "Syscall , %x, out of range!. Halting", r->eax);
         halt();
     }
-    // ignore read for now
-    if (r->eax)
-    {
-        // fb_console_printf("calling syscall_handler %u\n", r->eax);
-    }
+    
+    // fb_console_printf(
+    //     "[*]syscall_handler:well pid:%u or filename:%s called syscall:%u\n", 
+    //     current_process->pid, 
+    //     current_process->filename, 
+    //     r->eax
+    // );
+    
     syscall_handlers[r->eax](r);
     return;
 }
 
-// syscalls defined here
+
 void syscall_getpid(struct regs *r)
 {
     r->eax = current_process->pid;
     return;
 }
+
+void syscall_getppid(struct regs *r){
+
+    if(current_process->pid == 1){ //special case
+        
+        r->eax = 0;
+    }
+    else{
+        
+        r->eax = ((pcb_t*)current_process->parent->val)->pid;
+    }
+    return;
+}
+
+
 
 /*
     int dup2(int oldfd, int newfd);
@@ -69,7 +84,6 @@ void syscall_dup2(struct regs *r)
     int old_fd = (int)r->ebx;
     int new_fd = (int)r->ecx;
 
-    fb_console_printf("SYSCALL_DUP2, old_fd new_fd : %u %u\n", old_fd, new_fd);
     // check whether given old_fd is valid
     if (!current_process->open_descriptors[old_fd].f_inode)
     { // emty one so err
@@ -84,10 +98,10 @@ void syscall_dup2(struct regs *r)
 
     current_process->open_descriptors[new_fd] = current_process->open_descriptors[old_fd];
     // also open the newfd as well so that if fs implement refcounting it reference counts again
-    fs_node_t *node = current_process->open_descriptors[new_fd].f_inode;
+    fs_node_t *node = (fs_node_t*)current_process->open_descriptors[new_fd].f_inode;
 
-    int read = (current_process->open_descriptors[new_fd].f_mode & O_RDONLY) != 0 | (current_process->open_descriptors[new_fd].f_mode & O_RDWR) != 0;
-    int write = (current_process->open_descriptors[new_fd].f_mode & O_WRONLY) != 0 | (current_process->open_descriptors[new_fd].f_mode & O_RDWR) != 0;
+    int read = (current_process->open_descriptors[new_fd].f_flags & O_RDONLY) != 0 | (current_process->open_descriptors[new_fd].f_flags & O_RDWR) != 0;
+    int write = (current_process->open_descriptors[new_fd].f_flags & O_WRONLY) != 0 | (current_process->open_descriptors[new_fd].f_flags & O_RDWR) != 0;
 
     open_fs(node, read, write); // to incerement refcount possibly
     r->eax = new_fd;
@@ -95,50 +109,135 @@ void syscall_dup2(struct regs *r)
 }
 
 // int execve(const char * path, const char * argv[]){
-void syscall_execve(struct regs *r)
-{ // more like spawn
+void syscall_execve(struct regs *r){
 
     r->eax = -1;
-    char *path = (const char *)r->ebx;
-    char **argv = (const char **)r->ecx;
+    char *path = ( char *)r->ebx;
+    char **argv = ( char **)r->ecx;
+    
+    pcb_t *cp = current_process;
+    fs_node_t* fnode = kopen(path, O_RDONLY);
 
-    if (!kopen(path, 0))
-    {
-
-        r->eax = -1;
+    if (!fnode ){
+        r->eax = -ENOENT;
         return;
     }
 
-    pcb_t *cp = current_process;
+    //check if it's a file
+    if(fnode->flags != FS_FILE){
+        close_fs(fnode);
+        r->eax = -EACCES;
+        return;
+    }
 
-    // free the resources and allocate new ones
-    strcpy(cp->filename, path);
 
-    for (int i = 0; i < cp->argc; ++i)
-    {
+    //maybe check it here
+    int type;
+    uint32_t header;
+    uint8_t* byteptr = (uint8_t*)&header;
+    read_fs(fnode, 0, 4, byteptr);
+
+
+    enum exec_type{
+        ELF_FILE = 0,
+        SHEBANG
+    };
+
+
+    if(!memcmp(byteptr, "#!", 2)){
+        
+        int i= 2;
+        uint8_t ch = 0;
+        while(ch != '\n' && i < 128){
+            if( (int)read_fs(fnode, i++, 1, &ch) == -1){
+                //it suppoesed to fine newline before eof
+                close_fs(fnode);
+                r->eax = -1;
+                return;
+            }
+        }
+        i--;
+        if(ch != '\n'){ //line is greater than 128 and that's not acceptable
+            
+            close_fs(fnode);
+            r->eax = -1;
+            return;
+        }
+
+        char* interpreter_path = kcalloc((i-1), 1);
+        read_fs(fnode, 2, i-2, interpreter_path);
+
+        //remove post spaces as well
+        for(int j = i-3; interpreter_path[j] == ' '; j--){
+            interpreter_path[j] = '\0';
+        }
+
+        // fb_console_printf("syscall_execve: interpreter_path:%s\n", interpreter_path);
+
+        type = SHEBANG;
+        strcpy(cp->filename, interpreter_path);
+        
+        kfree(interpreter_path);
+        close_fs(fnode);
+    }
+    else if(!memcmp(byteptr, "\x7f\x45\x4c\x46", 4) ){
+        
+        type = ELF_FILE;
+        strcpy(cp->filename, path);
+        close_fs(fnode);
+    }
+    else{
+        close_fs(fnode);
+        r->eax = -ENOEXEC;
+        return;
+    }
+
+
+    //free the original argv
+    for (int i = 0; i < cp->argc; ++i){
         kfree(cp->argv[i]);
     }
     kfree(cp->argv);
 
-    int argc;
-    for (argc = 0; argv[argc]; ++argc)
-        ;
 
-    cp->argc = argc;
-    cp->argv = kcalloc(argc + 1, sizeof(char *));
-    for (int i = 0; i < argc; ++i)
-    {
-        cp->argv[i] = strdup(argv[i]);
+    if(type == ELF_FILE){
+        
+        int argc;
+        for (argc = 0; argv[argc]; ++argc);
+        
+        cp->argc = argc;
+        cp->argv = kcalloc(argc + 1, sizeof(char *));
+        for (int i = 0; i < argc; ++i){
+            cp->argv[i] = strdup(argv[i]);
+        }
+
     }
+    else{ 
+        //shebang ise interpter -e filename and arguments
+        //path give the filename
+        //specified argument start in argv[1], so argc+1
 
-    // cp->state = TASK_CREATED;
-    // r->eax = 0;
-    // schedule(r);
-    // return;
+        int argc;
+        for (argc = 0 ; argv[argc]; ++argc);
+        argc++;
+
+        cp->argc = argc;
+        cp->argv = kcalloc(argc + 1, sizeof(char *));
+        cp->argv[0] = strdup(cp->filename);
+        cp->argv[1] = strdup(path); //filename
+
+        argv++;
+        for (int i = 0; argv[i]; ++i){
+
+            cp->argv[2 + i] = strdup(argv[i]);
+        }
+
+    }
 
     memset(&cp->regs, 0, sizeof(context_t));
     cp->regs.eflags = 0x206;
-    cp->stack = (void *)0xC0000000;
+    cp->stack_top = (void *)0xC0000000;
+    cp->stack_bottom = cp->stack_top - 4096;
     cp->regs.esp = (0xC0000000);
     cp->regs.ebp = 0; // for stack trace
     cp->regs.cs = (3 * 8) | 3;
@@ -147,27 +246,29 @@ void syscall_execve(struct regs *r)
     cp->regs.fs = (4 * 8) | 3;
     cp->regs.gs = (4 * 8) | 3;
     cp->regs.ss = (4 * 8) | 3;
-    ;
-
     cp->regs.cr3 = (u32)get_physaddr(cp->page_dir);
-
-    // open descriptors unless specified remain open
+    
     cp->state = TASK_CREATED; // so that schedular can load the image
+    
+    while(1){
+        listnode_t* node = list_remove(cp->mem_mapping, cp->mem_mapping->head);
+        if(!node)
+            break;
+        
+        vmem_map_t* map = node->val;
+        int is_alloc = (map->attributes >> 20) & 1;
+        int vattr = map->attributes & 0xfffff;
+        if(!is_alloc){
 
-    for (listnode_t *vmem_node = cp->mem_mapping->head; vmem_node; vmem_node = vmem_node->next)
-    {
+            if(vattr == VMM_ATTR_PHYSICAL_PAGE){
 
-        vmem_map_t *vmap = vmem_node->val;
-
-        if (vmap->attributes >> 20)
-        {
-            // gotta free the allocated pages
-            deallocate_physical_page((void *)vmap->phymem);
-            unmap_virtaddr_d(cp->page_dir, (void *)vmap->vmem);
-            uart_print(COM1, "vmem: %x->%x :: %x\r\n", vmap->vmem, vmap->phymem, vmap->attributes >> 20);
+                unmap_virtaddr((void*)map->vmem);
+                deallocate_physical_page((void*)map->phymem);
+            }
         }
-        list_remove(cp->mem_mapping, vmem_node);
-        // kfree(vmem_node->val);
+
+        kfree(map);
+        kfree(node);
     }
 
     vmem_map_t *empty_pages = kcalloc(1, sizeof(vmem_map_t));
@@ -176,7 +277,6 @@ void syscall_execve(struct regs *r)
     empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); // 3G -> 786432 pages
     list_insert_end(cp->mem_mapping, empty_pages);
 
-    r->eax = 0;
 
     context_switch_into_process(r, cp); // hacky
     schedule(r);
@@ -186,11 +286,20 @@ void syscall_execve(struct regs *r)
 void syscall_exit(struct regs *r)
 {
 
-    // fb_console_printf("process %s called exit\n", current_process->filename);
+    //also check for if pid 1 or 0 is trying to exit
+    if(current_process->pid <= 1){
+        fb_console_printf("Init process tried to exit, halting...\n");
+        halt();
+    }
+
     int exitcode = (int)r->ebx;
-    r->eax = exitcode & 0xFF;
-    current_process->state = TASK_ZOMBIE;
+    r->eax = (exitcode & 0xFF) << 8;
+
+    // fb_console_printf("[*]syscall_exit: process exited with exitcode: %u\n", exitcode);
+    save_context(r, current_process);
+    terminate_process(current_process);
     schedule(r);
+    return;
 }
 
 typedef enum
@@ -204,6 +313,10 @@ typedef enum
 void syscall_lseek(struct regs *r)
 {
     int fd = (int)r->ebx;
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
 
     file_t *file = &current_process->open_descriptors[fd];
 
@@ -244,72 +357,60 @@ void syscall_lseek(struct regs *r)
     return;
 }
 
-int32_t open_for_process(pcb_t *process, char *path, int flags, int mode)
-{
+int32_t open_for_process(pcb_t *process, char *path, int flags, int mode){
 
-    for (int i = 0; i < MAX_OPEN_FILES; i++)
-    {
-        if (process->open_descriptors[i].f_inode == NULL)
-        { // find empty entry
-
-            // process->open_descriptors[i].f_inode = tar_get_file(path, mode); //open file
-
-            // const char* abs_path = vfs_canonicalize_path(current_process->cwd, path);
-            // fb_console_printf("syscall_open : %s\n", abs_path);
-            fs_node_t *file = kopen(path, flags);
-
-            if (!file)
-            { // faile to find file
-
-                if (flags & O_CREAT)
-                { // creating specified then create the file
-                    char *canonical_path = vfs_canonicalize_path(current_process->cwd, path);
-                    int index = strlen(canonical_path);
-                    // will go backward until i find a /
-                    for (; index >= 0; index--)
-                    {
-                        if (canonical_path[index] == '/')
-                        {
-                            canonical_path[index] = '\0';
-                            break;
-                        }
-                    }
-
-                    file = kopen(canonical_path, flags);
-                    if (!file)
-                    {
-                        fb_console_printf("open_for_process: failed to open parent folder: %s\n", canonical_path);
-                        return -1;
-                    }
-
-                    create_fs(file, path, mode);
-
-                    file = kopen(path, flags);
-                    kfree(canonical_path);
-                }
-                else
-                {
-                    return -1;
-                }
-            }
-
-            uart_print(COM1, "Succesfully opened file %s : %x\r\n", path, i);
-            process->open_descriptors[i].f_inode = (void *)file; // forcefully
-            process->open_descriptors[i].f_flags = 0x6969;
-            process->open_descriptors[i].f_pos = 0;
-            process->open_descriptors[i].f_mode = mode;
-            return i;
-            /*
-            else{ //failed to find file
-
-                return -1;
-            }
-
-            */
-        }
+    int fd = process_get_empty_fd(current_process);
+    if(fd < 0){
+        return -EMFILE;
     }
-    return -1;
+
+    file_t *filedesc = &process->open_descriptors[fd];
+
+    fs_node_t *file = kopen(path, flags);
+    if (!file){ 
+                        
+        if(!(flags & O_CREAT)){
+            filedesc->f_inode = NULL;
+            return -ENOENT;
+        }
+
+        
+        char *canonical_path = vfs_canonicalize_path(current_process->cwd, path);
+        int index = strlen(canonical_path);
+        // will go backward until i find a /
+        for (; index >= 0; index--){
+            if (canonical_path[index] == '/'){
+                canonical_path[index] = '\0';
+                break;
+            }
+        }
+
+        //should recursively create folder?
+        file = kopen(canonical_path, flags);
+        if (!file){
+            close_fs(file);
+            kfree(canonical_path);
+            filedesc->f_inode = NULL;
+            return -ENOENT;;
+        }
+
+        create_fs(file, path, mode);
+        file = kopen(path, flags);
+        kfree(canonical_path);
+
+    }
+
+       
+    filedesc->f_inode = (void *)file; // forcefully
+    filedesc->f_flags = flags;
+    filedesc->f_pos = 0;
+    filedesc->f_mode = mode;
+    return fd;
+
 }
+
+
+
 
 /*O_RDONLY, O_WRONLY, O_RDWR*/
 void syscall_open(struct regs *r)
@@ -332,12 +433,16 @@ extern circular_buffer_t *ksock_buf;
 
 typedef struct dirent dirent_t;
 
-void syscall_read(struct regs *r)
-{
+void syscall_read(struct regs *r){
 
     int fd = (int)r->ebx;
     u8 *buf = (u8 *)r->ecx;
     size_t count = (size_t)r->edx;
+
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
 
     file_t *file = &current_process->open_descriptors[fd];
     if (file->f_inode == NULL)
@@ -346,32 +451,35 @@ void syscall_read(struct regs *r)
         return;
     }
 
-    if ((file->f_mode & (O_RDONLY | O_RDWR)) == 0)
+    if ((file->f_flags & (O_RDONLY | O_RDWR)) == 0)
     { // check if its readable
         r->eax = -1;
         return;
     }
 
-    if (file->f_flags == 0x6969)
+    fs_node_t *node = (void *)file->f_inode;
+    int result = read_fs(node, file->f_pos, count, buf);
+
+    if (result == -1)
     {
-
-        fs_node_t *node = (void *)file->f_inode;
-        int result = read_fs(node, file->f_pos, count, buf);
-
-        if (result == -1)
+        if (file->f_flags & O_NONBLOCK)
         {
-
-            current_process->state = TASK_INTERRUPTIBLE;
-            r->eip -= 2; // rewind back to the syscall
-            save_context(r, current_process);
-            schedule(r);
+            r->eax = -EAGAIN;
             return;
         }
 
-        r->eax = result;
-        file->f_pos += r->eax;
+        current_process->state = TASK_INTERRUPTIBLE;
+        current_process->syscall_state = SYSCALL_STATE_PENDING;
+        current_process->syscall_number = r->eax;
+
+        save_context(r, current_process);
+        schedule(r);
         return;
     }
+
+    r->eax = result;
+    file->f_pos += r->eax;
+    return;
 
     return;
 }
@@ -383,6 +491,11 @@ void syscall_write(struct regs *r)
     u8 *buf = (u8 *)r->ecx;
     size_t count = (size_t)r->edx;
 
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
+
     file_t *file;
     file = &current_process->open_descriptors[fd];
 
@@ -392,19 +505,29 @@ void syscall_write(struct regs *r)
         return;
     }
 
-    if ((file->f_mode & (O_WRONLY | O_RDWR)) == 0)
+    if ((file->f_flags & (O_WRONLY | O_RDWR)) == 0  )
     { // check if its writable
         r->eax = -1;
         return;
     }
 
-    if (file->f_flags == 0x6969)
+    fs_node_t *node = (fs_node_t *)file->f_inode;
+    int result = write_fs(node, file->f_pos, count, buf);
+
+    if (result == -1)
     {
-        fs_node_t *node = (fs_node_t *)file->f_inode;
-        r->eax = write_fs(node, file->f_pos, count, buf);
-        file->f_pos += r->eax;
+
+        current_process->state = TASK_INTERRUPTIBLE;
+        current_process->syscall_state = SYSCALL_STATE_PENDING;
+        current_process->syscall_number = r->eax;
+
+        save_context(r, current_process);
+        schedule(r);
         return;
     }
+
+    r->eax = result;
+    file->f_pos += r->eax;
 
     return;
 }
@@ -412,9 +535,13 @@ void syscall_write(struct regs *r)
 int close_for_process(pcb_t *process, int fd)
 {
 
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        return -EBADF;
+    }
+
     if (process->open_descriptors[fd].f_inode == NULL)
     { // trying to closed files that is not opened
-        return -1;
+        return -EBADF;
     }
 
     fs_node_t *node = (fs_node_t *)process->open_descriptors[fd].f_inode;
@@ -442,26 +569,41 @@ void syscall_close(struct regs *r)
 
 typedef struct
 {
-    //    unsigned int   st_dev;      /* ID of device containing file */
-    //    unsigned int   st_ino;      /* Inode number */
-    unsigned int st_mode; /* File type and mode */
-                          //    unsigned int st_nlink;    /* Number of hard links */
-    unsigned int st_uid;  /* User ID of owner */
-    unsigned int st_gid;  /* Group ID of owner */
+    unsigned int   st_dev;      /* ID of device containing file */
+    unsigned int   st_ino;      /* Inode number */
+    unsigned int  st_mode;     /* File type and mode */
+    unsigned int st_nlink;    /* Number of hard links */
+    unsigned int   st_uid;      /* User ID of owner */
+    unsigned int   st_gid;      /* Group ID of owner */
+
+    unsigned int      st_rdev;     /* Device ID (if special file) */
+    off_t      st_size;     /* Total size, in bytes */
+    size_t  st_blksize;  /* Block size for filesystem I/O */
+    size_t   st_blocks;   /* Number of 512 B blocks allocated */
+
+
+    uint32_t  st_atime;  /* Time of last access */
+    uint32_t  st_mtime;  /* Time of last modification */
+    uint32_t  st_ctime;  /* Time of last status chiange */
 
 } stat_t;
 
 void syscall_fstat(struct regs *r)
 {
     // ebx = fd, ecx = &stat
-    int pid = r->ebx;
+    int fd = r->ebx;
     stat_t *stat = (void *)r->ecx;
     file_t *file;
 
-    file = &current_process->open_descriptors[pid];
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
+
+    file = &current_process->open_descriptors[fd];
     if (file->f_inode == NULL)
     { // check if its opened
-        r->eax = -1;
+        r->eax = -EBADF;
         return;
     }
 
@@ -498,16 +640,22 @@ void syscall_fstat(struct regs *r)
     return;
 }
 
-void syscall_fork(struct regs *r)
-{ // the show begins
+void syscall_fork(struct regs *r) { // the show begins
 
-    uart_print(COM1, "syscall_fork: called from %s\r\n", current_process->filename);
+    
     r->eax = -1;
     save_context(r, current_process); // save the latest context
 
     // create pointers for  curreent and new process
     pcb_t *curr_proc = current_process;
     pcb_t *child_proc = create_process(curr_proc->filename, curr_proc->argv);
+
+    if(!child_proc){
+        r->eax = -ENOMEM;
+        return;
+    }
+
+
 
     // clone cwd
     kfree(child_proc->cwd);
@@ -517,20 +665,25 @@ void syscall_fork(struct regs *r)
     memcpy(child_proc->open_descriptors, current_process->open_descriptors, sizeof(file_t) * MAX_OPEN_FILES);
 
     // maybe open them as well but, yes use openfs to increment refcont for certain inodes...
-    fb_console_put("In fork duplicating file descriptor\n");
+    // fb_console_put("In fork duplicating file descriptor\n");
+    file_t* file = child_proc->open_descriptors;
     for (int i = 0; i < MAX_OPEN_FILES; ++i)
     {
 
-        fs_node_t *node = (fs_node_t *)child_proc->open_descriptors[i].f_inode;
-        if (!node)
-        { // empty entry
-            continue;
-        }
+        
+        fs_node_t *node = (fs_node_t *)file->f_inode;
+        
+        // empty entry
+        if (!node) continue;
+        
 
-        int read = (child_proc->open_descriptors[i].f_mode & O_RDONLY) != 0 || (child_proc->open_descriptors[i].f_mode & O_RDWR) != 0;
-        int write = (child_proc->open_descriptors[i].f_mode & O_WRONLY) != 0 || (child_proc->open_descriptors[i].f_mode & O_RDWR) != 0;
+        int rmask = O_RDONLY | O_RDWR, wmask = O_WRONLY | O_RDWR;
+
+        int read = (file->f_mode & rmask) != 0 || (file->f_flags & rmask) != 0;
+        int write = (file->f_mode & wmask) != 0 || (file->f_flags & wmask) != 0;
 
         open_fs(node, read, write);
+        file++;
     }
 
     // copy registers except cr3
@@ -552,8 +705,8 @@ void syscall_fork(struct regs *r)
             map_virtaddr(memory_window, empty_page, PAGE_READ_WRITE | PAGE_PRESENT);
             memcpy(memory_window, (void *)mm->vmem, 0x1000);
 
-            map_virtaddr_d(child_proc->page_dir, (void *)mm->vmem, empty_page, PAGE_READ_WRITE | PAGE_USER_SUPERVISOR | PAGE_PRESENT);
-            vmm_mark_allocated(child_proc->mem_mapping, (void *)mm->vmem, empty_page, VMM_ATTR_PHYSICAL_PAGE);
+            map_virtaddr_d(child_proc->page_dir, (void *)mm->vmem, empty_page, get_virtaddr_flags( (void*)mm->vmem) );
+            vmm_mark_allocated(child_proc->mem_mapping, mm->vmem, (uint32_t)empty_page, VMM_ATTR_PHYSICAL_PAGE);
         }
         else
         { // free
@@ -561,8 +714,16 @@ void syscall_fork(struct regs *r)
         }
     }
 
-    // finallt add child to child list of the parent
+    // finallt add child to child list of the parent and parent to the child
     list_insert_end(curr_proc->childs, child_proc);
+    child_proc->parent = curr_proc->self;
+
+    //inheret sid
+    child_proc->sid = curr_proc->sid;
+    child_proc->pgid = curr_proc->pgid;
+    child_proc->ctty = curr_proc->ctty;
+
+
     child_proc->state = TASK_RUNNING;
     r->eax = child_proc->pid;
     child_proc->regs.eax = 0;
@@ -572,45 +733,46 @@ void syscall_fork(struct regs *r)
 
 void syscall_pipe(struct regs *r)
 {
+    int *filds = (int *)r->ebx; // int fd[2]
+
     int fd[2] = {-1, -1};
-
-    for (int f = 0; f < 2; f++)
-    {
-        for (int i = 0; i < MAX_OPEN_FILES; i++)
-        {
-            if (current_process->open_descriptors[i].f_inode == NULL)
-            { // find empty entry
-                current_process->open_descriptors[i].f_inode = (void *)1;
-                fd[f] = i;
-                break;
-            }
-        }
-    }
-
-    if (fd[0] == -1 || fd[1] == -1)
-    {
-        r->eax = -1;
+    
+    fd[0] = process_get_empty_fd(current_process); //read
+    if (fd[0] == -1){
+        r->eax = -ENOBUFS;
         return;
     }
 
-    int *filds = (int *)r->ebx; // int fd[2]
 
-    // process->open_descriptors[i].f_inode = (void*)file; //forcefully
+    fd[1] = process_get_empty_fd(current_process); //write
+    if (fd[1] == -1){
 
-    fs_node_t *pipe = create_pipe(300);
+        if(fd[0] > 0){
+            current_process->open_descriptors[fd[0]].f_inode = NULL;
+        }
+        r->eax = -ENOBUFS;
+        return;
+    }
+    
 
-    open_fs(pipe, 1, 0);
-    open_fs(pipe, 0, 1);
+    file_t* fdesc_r = &current_process->open_descriptors[fd[0]];
+    file_t* fdesc_w = &current_process->open_descriptors[fd[1]];
+    
+    fs_node_t *pipe_r = create_pipe(300);
+    fs_node_t *pipe_w = memcpy( kmalloc(sizeof(fs_node_t)), pipe_r, sizeof(fs_node_t));
+
+    open_fs(pipe_r, 1, 0);
+    open_fs(pipe_w, 0, 1);
 
     // read head
-    current_process->open_descriptors[fd[0]].f_inode = (void *)pipe;
-    current_process->open_descriptors[fd[0]].f_mode = O_RDONLY;
-    current_process->open_descriptors[fd[0]].f_flags = 0x6969;
+    fdesc_r->f_inode = (void *)pipe_r;
+    fdesc_r->f_mode = O_RDONLY;
+    fdesc_r->f_flags = O_RDONLY;
 
     // write head
-    current_process->open_descriptors[fd[1]].f_inode = (void *)pipe;
-    current_process->open_descriptors[fd[1]].f_mode = O_WRONLY;
-    current_process->open_descriptors[fd[1]].f_flags = 0x6969;
+    fdesc_w->f_inode = (void *)pipe_w;
+    fdesc_w->f_mode = O_WRONLY;
+    fdesc_w->f_flags = O_WRONLY;
 
     filds[0] = fd[0];
     filds[1] = fd[1];
@@ -625,6 +787,7 @@ void syscall_pipe(struct regs *r)
 #define WUNTRACED 0x00000002
 #define WCONTINUED 0x00000004
 
+#define ECHILD 1
 void syscall_wait4(struct regs *r)
 {
     pid_t pid = (pid_t)r->ebx;
@@ -638,38 +801,58 @@ void syscall_wait4(struct regs *r)
     */
     save_context(r, current_process);
 
-    if (!options)
-    {
-        if (current_process->childs->size)
-        { // do you have any darling?
-            current_process->state = TASK_INTERRUPTIBLE;
-        }
-        schedule(r);
+    //if process doesn't have any child then 
+    if(!current_process->childs->size){
+        r->eax = -ECHILD;
+        return;
     }
 
-    if (options & WNOHANG)
-    {
-        // check if anychild process exited
+    for (listnode_t *cnode = current_process->childs->head; cnode; cnode = cnode->next){
+        pcb_t *cproc = cnode->val;
 
-        for (listnode_t *cnode = current_process->childs->head; cnode; cnode = cnode->next)
-        {
-            pcb_t *cproc = cnode->val;
-            if (cproc->state == TASK_ZOMBIE)
-            {
-                pid_t retpid = cproc->pid;
-                if (wstatus)
-                    *wstatus = cproc->regs.eax;
+        if (cproc->state == TASK_ZOMBIE){ // yes exited fella
+            pid_t retpid = cproc->pid;
+            if (wstatus)
+                *wstatus = cproc->regs.eax;
 
-                terminate_process(cproc);
-                process_release_sources(cproc);
+            // terminate_process(cproc);
+            process_release_sources(cproc);
+            
 
-                r->eax = retpid;
-                list_remove(current_process->childs, cnode);
-                return;
-            }
+            r->eax = retpid;
+            list_remove(current_process->childs, cnode);
+            kfree(cnode);
+            kfree(cproc);
+
+            return;
         }
+
+        else if (cproc->state == TASK_STOPPED){ // yes exited fella
+            pid_t retpid = cproc->pid;
+            if (wstatus)
+                *wstatus = (SIGSTOP << 8) | 0x7f;
+
+            
+            r->eax = retpid;
+            return;
+        }
+        
+    }
+    
+    //now if we get there we need to look for options
+    if(options & WNOHANG){
         r->eax = 0;
+        return;
     }
+
+
+    
+    //if not then we set syscall_state pending and schedule to another process    
+    current_process->syscall_state = SYSCALL_STATE_PENDING;
+    current_process->syscall_number = r->eax;
+    current_process->state = TASK_INTERRUPTIBLE;
+    schedule(r);
+    return;
 }
 
 #define MAP_ANONYMOUS 1
@@ -688,45 +871,77 @@ void syscall_mmap(struct regs *r)
 
     if (fd == -1 && flags & MAP_ANONYMOUS)
     { // practically requesting a page
-        void *page = allocate_physical_page();
-        void *suitable_vaddr = vmm_get_empty_vpage(current_process->mem_mapping, 4096);
 
-        map_virtaddr(suitable_vaddr, page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-        vmm_mark_allocated(current_process->mem_mapping, (u32)suitable_vaddr, (u32)page, VMM_ATTR_PHYSICAL_PAGE);
-        memset(suitable_vaddr, 0, 4096);
+        
+        uint32_t nof_pages = (length / 4096) + (length % 4096 != 0);
+
+        void** phypages = kcalloc(nof_pages, sizeof(void*));
+        for(size_t i = 0; i < nof_pages; i++){
+            void* addr = allocate_physical_page();
+            if(!addr){
+                //release the allocated pages then return -1;
+                fb_console_printf("Out of physical memory\n");
+                
+                for(size_t j = 0; j < i; ++j){
+                    deallocate_physical_page(phypages[j]);
+                }
+                
+                kfree(phypages);
+                r->eax = -1;
+                return;
+                
+            }
+            phypages[i] = addr;
+        }
+
+        void *suitable_vaddr = vmm_get_empty_vpage(current_process->mem_mapping, nof_pages * 4096);
+
+        for(size_t i = 0; i < nof_pages; ++i){
+            map_virtaddr((uint8_t*)suitable_vaddr + i*4096 , phypages[i], PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+            memset((uint8_t*)suitable_vaddr + i*4096, 0, 4096);
+            vmm_mark_allocated(current_process->mem_mapping, (u32)suitable_vaddr + i*4096, (u32)phypages[i], VMM_ATTR_PHYSICAL_PAGE);
+        }
+        
+        kfree(phypages);
+        
         r->eax = (u32)suitable_vaddr;
+        return;
+    }
+
+
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
         return;
     }
 
     fs_node_t *device_in_question = (fs_node_t *)current_process->open_descriptors[fd].f_inode;
 
-    // for now only device files are mappable to the address space
-    switch (device_in_question->flags)
-    {
+    if(!device_in_question->mmap){
+        r->eax = -1;
+        return;
+    }    
 
-        // if(device_in_question->)
-    }
-
-    // err
-    r->eax = -1;
+   
+    r->eax = (uint32_t)device_in_question->mmap(device_in_question, length, prot, offset);
     return;
 }
 
 void syscall_kill(struct regs *r)
 {
     pid_t pid = (pid_t)r->ebx;
-    int sig = (int)r->ecx;
-    pcb_t *dest_proc = process_get_by_pid(pid);
-
-    if (!dest_proc)
-    {
-        fb_console_printf("Failed to find process by pid:%u \n", pid);
-        r->eax = -1;
+    unsigned int signum = (int)r->ecx;
+    
+    save_context(r, current_process);
+    int err = process_send_signal(pid, signum);
+    
+    //if signal is sent to the caller itself then we should schedule
+    if(current_process->pid == pid){
+        schedule(r);
         return;
     }
 
-    dest_proc->recv_signals = sig;
-    r->eax = 0;
+    //if not return properly
+    r->eax = err;
     return;
 }
 
@@ -756,10 +971,15 @@ void syscall_getdents(struct regs *r)
     void *dirp = (void *)r->ecx;
     unsigned int count = (unsigned int)r->edx;
 
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
+
     file_t *file = &current_process->open_descriptors[fd];
     if (file->f_inode == NULL)
     { // check if its opened
-        r->eax = -1;
+        r->eax = -EBADF;
         return;
     }
 
@@ -770,7 +990,7 @@ void syscall_getdents(struct regs *r)
         return;
     }
 
-    fs_node_t *node = file->f_inode;
+    fs_node_t *node = (fs_node_t *)file->f_inode;
 
     uint32_t old_offset = node->offset;
     struct dirent *val = readdir_fs(node, node->offset);
@@ -799,30 +1019,36 @@ void syscall_getdents(struct regs *r)
 
 void syscall_chdir(struct regs *r)
 {
-    const char *path = (const char *)r->ebx;
-
+    
+    
+    char *path = (char *)r->ebx;
+    
     // check whether abs_path exist on vfs
-
     fs_node_t *alleged_node = kopen(path, 0);
-
-    if (alleged_node && alleged_node->flags & FS_DIRECTORY)
-    {
-
-        char *abs_path = vfs_canonicalize_path(current_process->cwd, path); // allocates
-        r->eax = 0;
-        kfree(current_process->cwd);
-        current_process->cwd = kcalloc(strlen(abs_path) + 1 + 1, 1);
-        strcat(current_process->cwd, abs_path);
-        strcat(current_process->cwd, "/");
-        kfree(abs_path);
+    r->eax = -ENOENT;
+    if(!alleged_node){
         return;
     }
-    else
-    {
 
-        r->eax = 1;
+    if ( !(alleged_node->flags & (FS_DIRECTORY | FS_SYMLINK)) ){ //the node is neither a directory nor a symlink
+    
+        close_fs(alleged_node); //tmpfs releases this memory as well
+        r->eax = -ENOTDIR;
         return;
     }
+
+    close_fs(alleged_node); //tmpfs releases this memory as well
+
+    char *abs_path = vfs_canonicalize_path(current_process->cwd, path); // allocates
+    char *nbuffer = kmalloc(strlen(abs_path) + 2);
+    sprintf(nbuffer, "%s/", abs_path);
+    
+    kfree(abs_path);
+    kfree(current_process->cwd);
+    current_process->cwd = nbuffer;
+
+    r->eax = 0;
+    return;
 }
 
 typedef struct
@@ -841,17 +1067,30 @@ typedef struct
 } ksysinfo_t;
 
 #include <pmm.h>
-extern uint8_t *bitmap_start;
-extern uint32_t bitmap_size;
+uint8_t *bitmap_start;
+uint32_t bitmap_size;
+
+#if 1
+extern page_bitmap_t highmemory;
+#endif
 
 void syscall_sysinfo(struct regs *r)
 {
+
     ksysinfo_t *info = (void *)r->ebx;
 
+    //check if it is a valid pointer
+    r->eax = -1;
+    if(!is_virtaddr_mapped(info) )
+        return;
+
+    
+    bitmap_start = highmemory.bitmap;
+    bitmap_size  = highmemory.bitmap_size;
+    
     // info can be looked wheter its valid or not
-    if (!is_virtaddr_mapped_d(current_process->page_dir, info))
-    {
-        r->eax = -1;
+    if (!is_virtaddr_mapped(info)){
+        r->eax = -EINVAL;
         return;
     }
 
@@ -861,18 +1100,19 @@ void syscall_sysinfo(struct regs *r)
 
     // calculating the usage
     long free_pages = 0;
-    for (unsigned int i = 0; i < bitmap_size; ++i)
-    {
+    for (unsigned int i = 0; i < bitmap_size; ++i)    {
 
-        for (int bit = 0; bit < 8; ++bit)
-        {
+        int octet = bitmap_start[i];
+        if(!bitmap_start[i]){ free_pages += 8; }
+        else{
 
-            if (GET_BIT(bitmap_start[i], bit) == 0)
-            { // empty page
-
-                free_pages += 1;
+            for (int bit = 0; bit < 8; ++bit){
+                
+                if( !(octet & 1)) free_pages++;
+                octet >>= 1;
             }
         }
+
     }
 
     info->freeram = free_pages * 4096;
@@ -899,14 +1139,16 @@ int mount(const char *source, const char *target,
 #include <filesystems/tmpfs.h>
 #include <filesystems/fat.h>
 #include <filesystems/ext2.h>
+#include <filesystems/pts.h>
+
 void syscall_mount(struct regs *r)
 {
 
-    char *source = (const char *)r->ebx;
-    char *target = (const char *)r->ecx;
-    char *filesystemtype = (const char *)r->edx;
+    char *source = (char *)r->ebx;
+    char *target = (char *)r->ecx;
+    char *filesystemtype = (char *)r->edx;
     unsigned long mountflags = (unsigned long)r->esi;
-    void *data = (const void *)r->edi;
+    void *data = (void *)r->edi;
 
     char *abs_source_path = vfs_canonicalize_path(current_process->cwd, source);
     char *abs_target_path = vfs_canonicalize_path(current_process->cwd, target);
@@ -938,6 +1180,18 @@ void syscall_mount(struct regs *r)
         {
 
             vfs_mount(abs_target_path, tmpfs_install());
+            r->eax = 0;
+            goto mount_end;
+            ;
+        }
+        else if (!strcmp(source, "devpts"))
+        {
+            fs_node_t* node = pts_create_node();
+            if(!node){
+                r->eax = -ENOENT;
+                goto mount_end;
+            }
+            vfs_mount(abs_target_path, node);
             r->eax = 0;
             goto mount_end;
             ;
@@ -1007,7 +1261,6 @@ void syscall_mount(struct regs *r)
 
 mount_end:
     kfree(abs_source_path);
-    kfree(abs_target_path);
     return;
 }
 
@@ -1109,9 +1362,9 @@ void syscall_mkdir(struct regs *r)
 
 void syscall_ioctl(struct regs *r)
 {
-    int fd = r->ebx;
-    unsigned long request = r->ecx;
-    void *argp = r->edx;
+    int fd = (int)r->ebx;
+    unsigned long request = (unsigned long)r->ecx;
+    void *argp = (void*)r->edx;
 
     // ugly as fuck
     //  void * argp[4] = {
@@ -1120,26 +1373,20 @@ void syscall_ioctl(struct regs *r)
     //                      &r->edi,
     //                      &r->ebp
     //                  };
-    if (fd < 0 || fd > MAX_OPEN_FILES)
-    {
-        r->eax = -1;
+    if (fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
         return;
     }
 
-    fs_node_t *node = current_process->open_descriptors[fd].f_inode;
-    if (node->ioctl)
-    {
+    fs_node_t *node = (fs_node_t *)current_process->open_descriptors[fd].f_inode;
+    if (node->ioctl){
         r->eax = node->ioctl(node, request, argp);
-        return;
     }
-    else
-    {
-        fb_console_printf("syscall_ioctl: doesn't have ioctl\n");
-        r->eax = -1;
-        return;
+    else{
+        r->eax = -ENOTTY;
     }
 
-    r->eax = 0;
+    return;
 }
 
 
@@ -1147,4 +1394,173 @@ void syscall_pivot_root(struct regs *r){
 
     //it will just iterate throught vfs fs_tree
     vfs_tree_traverse(fs_tree);
+}
+
+
+
+
+//int fcntl(int fd, int op, ... /* arg */ );
+void syscall_fcntl(struct regs *r){ //max  6 arg so
+
+    int fd = r->ebx;
+    int op = r->ecx;
+
+    int arg0 = r->edx;
+    int arg1 = r->esi;
+    int arg2 = r->edi;
+    int arg3 = r->ebp;
+
+    //check whether that fd is valid
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
+
+    //as well as if it's opened
+    if(!current_process->open_descriptors[fd].f_inode){
+        r->eax = -EBADF;
+        return;
+    }
+
+    //afterwards we can check op
+    enum ops {
+        F_GETFL = 0,
+        F_SETFL,
+        F_GETFD, 
+        F_SETFD,
+        F_DUPFD,
+
+        OPS_MAX
+    };
+
+    if(op < 0 || op >= OPS_MAX){
+        //invalid op
+        r->eax = -EINVAL;
+        return;
+    }
+
+    file_t* file = &current_process->open_descriptors[fd];
+    switch(op){
+        case F_GETFL:
+            // fb_console_printf("[*]syscall_fcntl: on fd: %u F_GETFL operation is called, arg0: %x\n", fd, arg0);
+            r->eax = file->f_flags; 
+            return;
+            break;
+
+        case F_SETFL:
+            // fb_console_printf("[*]syscall_fcntl: on fd: %u F_SETFL operation is called, arg0: %x\n", fd, arg0);
+            file->f_flags = arg0;
+            r->eax = 0;
+            return;
+            break;
+        
+        case F_DUPFD:
+            // fb_console_printf("[*]syscall_fcntl: on fd: %u F_DUPFD operation is called, arg0: %x\n", fd, arg0);
+        ;
+            int minfd = arg0;
+            int canditate = -1;
+
+            for(int i = minfd; i < MAX_OPEN_FILES; ++i){
+
+                if(!current_process->open_descriptors[i].f_inode){ //is it empty?
+                    canditate = i;
+                    break;
+                }
+            }
+
+            if(canditate == -1){
+                r->eax = -EMFILE;
+                return;
+            }
+
+            file_t* dup = &current_process->open_descriptors[canditate];
+
+            *dup = *file;
+
+            r->eax = canditate;
+            return;
+        break;
+    }
+        
+
+}
+
+void syscall_pause(struct regs *r){
+    //maybe somehow add a flag to specify that it is interrupted
+    //pauses current ttask until a signal is received thus return EINTR
+    save_context(r , current_process);
+
+    current_process->state = TASK_INTERRUPTIBLE;
+    current_process->syscall_number = r->eax;
+    current_process->syscall_state = SYSCALL_STATE_PENDING;
+
+    schedule(r);
+    return;
+}
+
+
+/*pid_t getpgrp(void);*/
+void syscall_getpgrp(struct regs *r){
+    r->eax = current_process->pgid;
+    return;
+}
+
+/* int setpgid(pid_t pid, pid_t pgid); */
+void syscall_setpgid(struct regs *r){
+    
+    pid_t pid = (pid_t)r->ebx;
+    pid_t pgid = (pid_t)r->ecx;
+
+    if(pgid < 0){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    pcb_t* target_proc = NULL;
+    if(pid == 0){
+        target_proc = current_process;
+    }
+    else{
+        target_proc = process_get_by_pid(pid);
+        if(!target_proc){
+            r->eax = -EINVAL;
+            return;
+        }
+
+        //check if it's our child
+        if( ((pcb_t*)target_proc->parent->val) != current_process){
+            r->eax = -EINVAL;
+            return;
+        }
+    }
+
+    //check if callers session same as the target_proc 
+
+    if(current_process->sid != target_proc->sid){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    target_proc->pgid = pgid;
+
+    r->eax = 0;
+    return;
+}
+
+// pid_t setsid(void);
+void syscall_setsid(struct regs* r){
+
+    pcb_t* proc = current_process;
+    
+    if(proc->pid == proc->sid){
+        r->eax = -ENOPERM;
+        return;
+    }
+
+    proc->sid = proc->pid;
+    proc->pgid = proc->pid;
+
+    proc->ctty = NULL;
+    r->eax = proc->pid;
+    return;
 }

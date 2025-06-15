@@ -117,9 +117,9 @@ fs_node_t * fat_node_create( fs_node_t* node){
 
 		case FAT_TYPE_32:
 			;
-			fnode->readdir = fat32_readdir;
-			fnode->finddir = fat32_finddir;
-			fnode->mkdir   = fat32_mkdir;
+			fnode->readdir = (readdir_type_t)fat32_readdir;
+			fnode->finddir = (finddir_type_t)fat32_finddir;
+			fnode->mkdir   = (mkdir_type_t)fat32_mkdir;
 			fat_bootsector_32_t* fat32_sp = fat->sector0;
 			fat->cluster_index = fat32_sp->BPB_RootClus;
 			break;
@@ -140,7 +140,7 @@ int fat_create_ascii_from_dir(fat_directory_entry_t dir, char*  target_ascii){
 	if(!target_ascii) //can't dereference a nullpntr can we?
 		return 0;
 
-	fat_long_name_directory_entry_t* ldir = &dir;
+	fat_long_name_directory_entry_t* ldir = (fat_long_name_directory_entry_t*)&dir;
 	//with assumption that target_ascii has atleast 14 bytes of space 13 for string and null for termination
 	uint16_t cs2_string_buffer[13];
 	
@@ -162,7 +162,7 @@ int fat_create_ascii_from_dir(fat_directory_entry_t dir, char*  target_ascii){
 }
 
 
-int fat_create_usc2_from_ascii_n(char* ascii_str, uint16_t* ucs2_str, size_t length){
+int fat_create_usc2_from_ascii_n(const char* ascii_str, uint16_t* ucs2_str, size_t length){
 	
 	int ispadding = 0;
 	for(size_t i = 0; i < length; ++i){
@@ -205,7 +205,7 @@ struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 	uint32_t i = 0;
 	while(1){ //search for entire directory to find folder/file
 
-		read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), &dir);
+		read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&dir);
 		// dev->read(dev, dir_start_offset, sizeof(fat_directory_entry_t), &dir);
 		// ata_read(ata, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&dir);
 		dir_start_offset += sizeof(fat_directory_entry_t);
@@ -239,7 +239,7 @@ struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 	fat_directory_entry_t mdir;
 	// ata_read(ata, dir_start_offset, sizeof(fat_long_name_directory_entry_t), (uint8_t*)&mdir);
 	// dev->read(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
-	read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
+	read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&mdir);
 
 	// dev->read(node, dir_start_offset, sizeof(fat_long_name_directory_entry_t), &mdir);
 
@@ -255,7 +255,7 @@ struct dirent * fat32_readdir(fs_node_t *node, uint32_t index){
 			// ata_read(ata, dir_start_offset, sizeof(fat_long_name_directory_entry_t), &mdir);
 			// ata_read(node, dir_start_offset, sizeof(fat_long_name_directory_entry_t), (uint8_t*)&mdir);
 			// dev->read(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
-			read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), &mdir);
+			read_fs(dev, dir_start_offset, sizeof(fat_directory_entry_t), (uint8_t*)&mdir);
 
 		}
 	}
@@ -285,10 +285,10 @@ no_dir_entry_left:
 }
 
 
-finddir_type_t fat32_finddir(struct fs_node* node, char *name){
+struct fs_node* fat32_finddir(struct fs_node* node, char *name){
 
 	fat_struct_t* fat = node->device;
-	fs_node_t** dev = fat->dev;
+	fs_node_t* dev = fat->dev;
 	
 
 	fat_bootsector_32_t* bpb = fat->sector0;
@@ -374,9 +374,9 @@ finddir_type_t fat32_finddir(struct fs_node* node, char *name){
 					if(dir.dir_attr == FAT_DIR_ATTR_DIRECTORY ){
 						
 						fnode->flags   = FS_DIRECTORY;
-						fnode->readdir = fat32_readdir;
-						fnode->finddir = fat32_finddir;
-						fnode->mkdir   = fat32_mkdir;
+						fnode->readdir = (readdir_type_t)fat32_readdir;
+						fnode->finddir = (finddir_type_t)fat32_finddir;
+						fnode->mkdir   = (mkdir_type_t)fat32_mkdir;
 
 					}
 					else{
@@ -396,7 +396,7 @@ finddir_type_t fat32_finddir(struct fs_node* node, char *name){
     return NULL;
 }
 
-read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uint8_t* buffer){
+uint32_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uint8_t* buffer){
 	
 
 	if(offset + size >= node->length){
@@ -485,7 +485,7 @@ read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uin
 }
 
 
-write_type_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer){
+uint32_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer){
 
 
 	fat_struct_t* fat = node->device;
@@ -555,12 +555,12 @@ write_type_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_
 
 
 
-mkdir_type_t fat32_mkdir(fs_node_t* node, const char* name, uint16_t permission){
+void fat32_mkdir(fs_node_t* node, const char* name, uint16_t permission){
 
 	
 	fat_struct_t* fat = node->device;
-	device_t* dev = fat->dev;
-	ata_device_t* ata = dev->priv;
+	device_t* dev = (device_t*)fat->dev;
+	ata_device_t* ata = (ata_device_t*)dev->priv;
 
 	//select correct drive?
 	int drive = 0xa | (ata->drive_index & 1);
@@ -646,7 +646,7 @@ mkdir_type_t fat32_mkdir(fs_node_t* node, const char* name, uint16_t permission)
 	
 
 	//this one is wiht the assumption that there's 2 consecutive list enties and name length is smaller than 13 characters
-	fat_long_name_directory_entry_t* ldir = &edir;
+	fat_long_name_directory_entry_t* ldir = (fat_long_name_directory_entry_t*)&edir;
 	ldir->long_dir_order = 0x41;
 	ldir->long_dir_attr = FAT_DIR_ATTR_LONGNAME;
 	ldir->long_dir_type = 0;
@@ -693,7 +693,7 @@ mkdir_type_t fat32_mkdir(fs_node_t* node, const char* name, uint16_t permission)
 
 	//mark the cluster as allocated and end of chain
 	uint32_t eoc_dat = 0x0FFFFFF8;
-	ata_write(ata, fat_start_offset + free_entry*4, 4, &eoc_dat);
+	ata_write(ata, fat_start_offset + free_entry*4, 4, (uint8_t*)&eoc_dat);
 
 	dir_start_offset =  (data_start_sector + ((free_entry - 2)*fat32_sp->comm.BPB_SecPerClus));
 	dir_start_offset *= fat32_sp->comm.BPB_BytsPerSec;

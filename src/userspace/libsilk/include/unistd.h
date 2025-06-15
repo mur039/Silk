@@ -32,5 +32,8 @@ int mount(const char *source, const char *target,
 int unlink(const char* name);
 int mkdir(const char* pathname, int mode);
 int ioctl(int fd, unsigned long request, void* argp);
+int pause(void);
 
+//retvals from kernel
+#define EAGAIN 2
 #endif

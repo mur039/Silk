@@ -120,11 +120,11 @@ __attribute__((noreturn)) static inline void halt(){
 
 
 static inline void idle(){
-    uart_print(0x3f8, "\r\nSystem Halted.\r\n");
     enable_interrupts();    
     asm volatile(
         "hlt\n\t"
     );
+    // disable_interrupts();
     return;
 }
 

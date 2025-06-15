@@ -51,7 +51,7 @@ void *find_sdt_by_signature(void *RootSDT, const char * signature){
     RSDT_t *rsdt = (RSDT_t *) RootSDT;
     int entries = (rsdt->h.Length - sizeof(rsdt->h)) / 4;
 
-    ACPISDTHeader_t **h = (ACPISDTHeader_t *) &rsdt->PointerToOtherSDT;
+    ACPISDTHeader_t **h = (ACPISDTHeader_t **)&rsdt->PointerToOtherSDT; //a table
     for (int i = 0; i < entries; i++)
     {
         if (!memcmp(h[i]->Signature, signature , 4))
@@ -103,7 +103,7 @@ int acpi_parse_madt(ACPISDTHeader_t* table){
     
     size_t data_length = table->Length - sizeof(ACPISDTHeader_t);
 
-    madt_t* madtable = table;
+    madt_t* madtable = (madt_t*)table;
     uint32_t* local_apic_addr = (uint32_t*)madtable->local_apic_addr;
     uint32_t flags = madtable->flags;
     
@@ -113,7 +113,7 @@ int acpi_parse_madt(ACPISDTHeader_t* table){
     uint8_t* madt_entries = &madtable->entries;
 
 
-    for(int i = 0; i < data_length; ){
+    for(size_t i = 0; i < data_length; ){
         uint8_t entry = madt_entries[i];
         uint8_t record_len = madt_entries[i + 1];
 

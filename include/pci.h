@@ -39,6 +39,38 @@ typedef struct {
 }__attribute__((packed)) pci_device_type_0_t;
 
 
+typedef struct {
+    uint32_t base_address_0;
+    uint32_t base_address_1;
+    
+    uint8_t primary_bus_number;
+    uint8_t second_bus_number;
+    uint8_t subordinate_bus_number;
+    uint8_t secondary_latency_timer;
+
+    uint8_t io_base;
+    uint8_t io_limit;
+    uint16_t secondary_status;
+
+    uint16_t memory_base;
+    uint16_t memory_limit;
+
+    uint16_t prefetchable_memory_base;
+    uint16_t prefetchable_memory_limit;
+
+    uint32_t prefetchable_base_upper_32_bit;
+    uint32_t prefetchable_limit_upper_32_bit;
+
+    uint16_t io_base_upper_16_bit;
+    uint16_t io_limit_upper_16_bit;
+
+    u8 capabilities_pntr; u8 _reserved[3];
+    uint32_t expansion_rom_base_address;
+    uint8_t  interrupt_line; uint8_t interrupt_pin; uint8_t min_grant; uint8_t bridge_control;
+
+}__attribute__((packed)) pci_device_type_1_t;
+
+
 enum pci_capability_id {
     PCI_NULL= 0,
     PCI_PCI_POWER,
@@ -89,9 +121,8 @@ typedef struct {
 
     union{
         pci_device_type_0_t type_0;
+        pci_device_type_1_t type_1;
     };
-
-
 
 } pci_device_header_t;
 
@@ -115,7 +146,9 @@ void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, u
 void enumerate_pci_devices();
 int32_t pci_get_bar_size(pci_device_t dev, unsigned int bar );
 int32_t pci_list_capabilities(pci_device_t* dev);
+void pci_enable_bus_mastering(pci_device_t* dev);
 
+void recursive_enumerate_pci_devices(uint8_t bus);
 
 
 #endif

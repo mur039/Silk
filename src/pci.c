@@ -121,7 +121,6 @@ void * pci_read(void * dst, uint8_t bus, uint8_t slot, uint8_t func, uint8_t off
 
 
 
-
 // write a 32-bit value to the PCI configuration space
 void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value){
     uint32_t address;
@@ -142,104 +141,59 @@ void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, u
 }
 
 
-//ppehaps i can create nodes for the pci devices?
-read_type_t pci_read_fs(fs_node_t* node, uint32_t offset, uint32_t len, uint8_t* buf){
-    device_t* dev = node->device;
-    pci_device_t* pci = dev->priv;
+// Enumerate all PCI devices
+void recursive_enumerate_pci_devices(uint8_t bus){
 
-    if(offset >= 256){ //eof
-        return 0;
+    return;
+    for (uint8_t device = 0; device < PCI_MAX_DEVICE; device++)
+    {
+        for (uint8_t function = 0; function < PCI_MAX_FUNCTION; function++)
+        {
+
+            pci_device_header_t pci;
+            if ((pci_read_config(bus, device, function, 0) & 0xFFFF) == 0xFFFF)
+            {
+                // check if device is present
+                continue;
+            }
+
+            for (unsigned int i = 0; i < (sizeof(pci_device_header_t) / 4); ++i){
+                uint32_t *head = (uint32_t*)&pci;
+                head[i] = pci_read_config(bus, device, function, i * 4);
+            }
+
+            uart_print(COM1, "Found PCI device: bus %x, device %x, function %x\r\n", bus, device, function);
+            uart_print(COM1, "Vendor ID: 0x%x, Device ID: 0x%x Header type: 0x%x\r\n",
+                       pci.common_header.vendor_id,
+                       pci.common_header.device_id,
+                       pci.common_header.header_type);
+
+            uart_print(COM1, "Class: %s, Subclass: 0x%x, Prog IF: 0x%x \r\n\r\n",
+                       class_str[pci.common_header.class_code],
+                       pci.common_header.subclass,
+                       pci.common_header.programming_if);
+
+            if (pci.common_header.header_type == 0x1)
+            { // pci-pci bridge
+
+                uint8_t secondary_bus = pci.type_1.second_bus_number ;
+                recursive_enumerate_pci_devices(secondary_bus);
+            }
+        }
     }
-
-    /*
-    pci i/o ports, only supports four bytes a read at a time
-    so we find in index of 4 and according to the length mask and write to the user buffer
-
-    since this space is only 256 bytes we can actually read *all* space in buffer 
-    and read from the buffer itself? perhaps yes, maybe no
-    */
-   uint32_t* uintptr;
-
-   uint8_t pci_space[256];
-   uintptr = (uint32_t*)pci_space;
-   for(int i = 0; i < (256/4) ; ++i ){
-        
-        uintptr[i] = pci_read_config(pci->bus, pci->slot, pci->func, i*4);
-   }
-
-    size_t collectable = 256 - (offset);
-    if(len >= collectable){
-
-        len = collectable;
-    }
-
-
-    memcpy(buf, &pci_space[offset], len);
-    return len;
 }
-
-
-write_type_t pci_write_fs(fs_node_t* node, uint32_t offset, uint32_t len, uint8_t* buf){
-    device_t* dev = node->device;
-    pci_device_t* pci = dev->priv;
-
-    if(offset >= 256){ //eof
-        return 0;
-    }
-
-    /*
-    pci i/o ports, only supports four bytes a read at a time
-    so we find in index of 4 and according to the length mask and write to the user buffer
-
-    since this space is only 256 bytes we can actually read *all* space in buffer 
-    and read from the buffer itself? perhaps yes, maybe no
-    */
-   uint32_t* uintptr;
-
-   uint8_t pci_space[256];
-   uintptr = (uint32_t*)pci_space;
-   for(int i = 0; i < (256/4) ; ++i ){
-        
-        uintptr[i] = pci_read_config(pci->bus, pci->slot, pci->func, i*4);
-   }
-
-    size_t collectable = 256 - (offset);
-    if(len >= collectable){
-
-        len = collectable;
-    }
-
-
-    memcpy(&pci_space[offset], buf, len);
-
-    //then write this buffer back to the io space
-    for(int i = 0; i < (256/4) ; ++i ){
-        
-        pci_write_config(pci->bus, pci->slot, pci->func, i*4, uintptr[i]);
-   }
-    return len;
-}
-
-
-
-
 
 // Enumerate all PCI devices
 void enumerate_pci_devices() {
 
 
     uint8_t bus, device, function;
-    for (bus = 0; bus < PCI_MAX_BUS - 1; bus++) {
+    for (bus = 0; bus < PCI_MAX_BUS - 1 ; bus++) {
 
         for (device = 0; device < PCI_MAX_DEVICE; device++) {
 
             for (function = 0; function < PCI_MAX_FUNCTION; function++) {
-                
 
-
-
-                /*
-                    */
                 pci_device_header_t pci;
                 for(unsigned int i = 0; i < 4 ; ++i){
                     u32 * head = (u32*)&pci;
@@ -247,11 +201,11 @@ void enumerate_pci_devices() {
                 }
                 if (pci.common_header.vendor_id != 0xFFFF) { // Device present
 
-                    for(unsigned int i = 0; i < (sizeof(pci_device_header_t)/4) ; ++i){
-                        u32 * head = (u32*)&pci;
-                        head[i] = pci_read_config(bus, device, function, i * 4 );
+                    for (unsigned int i = 0; i < (sizeof(pci_device_header_t) / 4); ++i)
+                    {
+                        uint32_t *head = (uint32_t *)&pci;
+                        head[i] = pci_read_config(bus, device, function, i * 4);
                     }
-
 
                     pci_device_t * p = kcalloc(1, sizeof(pci_device_t));
 
@@ -261,15 +215,6 @@ void enumerate_pci_devices() {
                     p->header = pci;
                     list_insert_end(&pci_devices, p);
 
-                    // device_t* pci_dev = kcalloc(1, sizeof(device_t));
-                    // pci_dev->priv = p;
-                    // pci_dev->name = strdup("pci000:00:0");
-                    // sprintf(pci_dev->name, "pci:%u:%u:%u", bus, device,function);
-                    
-                    // pci_dev->read = pci_read_fs;
-                    // pci_dev->write = pci_write_fs;
-                    // pci_dev->unique_id = 32;
-                    // dev_register(pci_dev);
 
                     uart_print( COM1, "Found PCI device: bus %x, device %x, function %x\r\n", bus, device, function);
                     uart_print( COM1, "Vendor ID: 0x%x, Device ID: 0x%x Header type: 0x%x\r\n", 
@@ -282,28 +227,10 @@ void enumerate_pci_devices() {
                                 pci.common_header.subclass, 
                                 pci.common_header.programming_if
                                 );
-
-
-
-
-                /*
-                uint32_t vendor_device = pci_read_config(bus, device, function, 0);
-                uint16_t vendor_id = vendor_device & 0xFFFF;
-                uint16_t device_id = (vendor_device >> 16) & 0xFFFF;
-
-                
-                if (vendor_id != 0xFFFF) { // Device present
-                    uint32_t class_code = pci_read_config(bus, device, function, 8);
-                    uint8_t base_class = (class_code >> 24) & 0xFF;
-                    uint8_t sub_class = (class_code >> 16) & 0xFF;
-                    uint8_t prog_if = (class_code >> 8) & 0xFF;
-
                     
-
-                    uart_print( COM1, "Found PCI device: bus %x, device %x, function %x\r\n", bus, device, function);
-                    uart_print( COM1, "Vendor ID: 0x%x, Device ID: 0x%x\r\n", vendor_id, device_id);
-                    uart_print( COM1, "Class: %s, Subclass: 0x%x, Prog IF: 0x%x \r\n\r\n", class_str[base_class], sub_class, prog_if);
-                */
+                    if(pci.common_header.header_type == 0x1){
+                        uart_print( COM1, "A pci-pci bridge that is second and primary bus numbers %u:%u\r\n", pci.type_1.second_bus_number, pci.type_1.primary_bus_number);
+                    }
 
 
                 }
@@ -320,8 +247,8 @@ int32_t pci_get_bar_size(pci_device_t dev, unsigned int bar ){
     pci_device_common_header_t head = dev.header.common_header;
     head.command_reg &= 0xFFFC; //disable both mem nad io access
 
-    for(int i = 0; i < sizeof(pci_device_common_header_t) / 4 ; ++i){
-        uint32_t* uintptr = &head;
+    for(size_t i = 0; i < sizeof(pci_device_common_header_t) / 4 ; ++i){
+        uint32_t* uintptr = (uint32_t*)&head;
         pci_write_config(dev.bus, dev.slot, dev.func, 4*i, uintptr[i]);
     }
 
@@ -334,8 +261,8 @@ int32_t pci_get_bar_size(pci_device_t dev, unsigned int bar ){
     size += 1;
     pci_write_config(dev.bus, dev.slot, dev.func, 0x10 + bar*0x4, bar_addr);
 
-    for(int i = 0; i < sizeof(pci_device_common_header_t) / 4 ; ++i){
-        uint32_t* uintptr = &dev.header.common_header;
+    for(size_t i = 0; i < sizeof(pci_device_common_header_t) / 4 ; ++i){
+        uint32_t* uintptr = (uint32_t*)&dev.header.common_header;
         pci_write_config(dev.bus, dev.slot, dev.func, 4*i, uintptr[i]);
     }
 
@@ -367,4 +294,15 @@ int32_t pci_list_capabilities(pci_device_t* dev){
     }
 
     return 0;
+}
+
+
+void pci_enable_bus_mastering(pci_device_t* dev) {
+    uint8_t bus = dev->bus;
+    uint8_t slot = dev->slot;
+    uint8_t func = dev->func;
+    
+    uint32_t cmd = pci_read_config(bus, slot, func, 0x04);
+    cmd |= (1 << 2); // Set Bus Master Enable bit
+    pci_write_config(bus, slot, func, 0x04, cmd);
 }

@@ -91,6 +91,7 @@ void print_help_str(){
 }
 
 
+void xxd_main(int fd, int length);
 
 int main(int argc, char ** argv){
 
@@ -101,8 +102,8 @@ int main(int argc, char ** argv){
     const char *source = NULL, *len = NULL, *offset = NULL;
 
     if(argc == 1){
-        puts("Expected arguments, see --help");
-        return 1;
+        xxd_main(FILENO_STDIN, -1);
+        return 0;
     }
 
 
@@ -169,20 +170,21 @@ int main(int argc, char ** argv){
 
 
     source = src_target_table[0];
-
-
-
-    if(!source){
-        puts("source isn't specified\n");
-        return 1;
-    }
-
     const char * file_path = source;
-    
-    int fd_file = open(file_path, O_RDONLY);
-    if(fd_file == -1){
-        puts("No such file or directory\n");
-        return 1;
+
+
+
+    int fd_file;
+    if(!source){
+        fd_file = FILENO_STDIN;
+    }
+    else{
+
+        fd_file = open(file_path, O_RDONLY);
+        if(fd_file == -1){
+            puts("No such file or directory\n");
+            return 1;
+        }
     }
 
 
@@ -209,16 +211,25 @@ int main(int argc, char ** argv){
     }
 
     
-    uint32_t total_read = 0;
+    xxd_main(fd_file, length);
+    
 
-    uint8_t line_buffer[16];
+    
+    return 0;
+}
+
+void xxd_main(int fd, int length){
+
+    int fd_file = fd;
     int line_index = 0;
+    uint32_t total_read = 0;
+    uint8_t line_buffer[16];
 
     while(1){
 
         size_t tok = read(fd_file, &line_buffer[line_index], 1);
-        total_read++;
-        line_index++;
+        total_read += tok;
+        line_index += tok;
 
         //check if we read enough
         if(length != -1 && total_read >= length){
@@ -251,10 +262,13 @@ int main(int argc, char ** argv){
             for(int i = 0; i < line_index; ++i){
 				if(line_buffer[i] < 0x10 ){
                     printf("0%x ", line_buffer[i]);
-                }else{printf("%x ", line_buffer[i]);}
+                }else{
+                    printf("%x ", line_buffer[i]);
+                }
 			}
+
 			for(int i = line_index; i < 16; ++i){
-				printf("  ");
+				printf("   ");
 			}
 
 
@@ -277,5 +291,5 @@ int main(int argc, char ** argv){
 
     } 
        
-    return 0;
+
 }

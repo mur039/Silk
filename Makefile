@@ -1,5 +1,6 @@
 BUILD_DIR = ./build
-CFLAGS = -ffreestanding -m32 -g -c -Wextra -I./include -DDEBUG
+CFLAGS = -ffreestanding -m32 -g -c -Wextra -I./include -DDEBUG 
+CFLAGS += -Werror
 default: 
 	make kernel
 	make libsilk
@@ -13,6 +14,7 @@ userspace:
 		$(MAKE) -C $$dir ; \
 		done
 init: ./initrd
+	
 	cp build/init_bin/* ./initrd/tar_files/bin/
 	cp $(BUILD_DIR)/v86.bin ./initrd/tar_files/bin/v86.bin
 	cd initrd && make
@@ -73,6 +75,7 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/ps2_mouse.c -o  $(BUILD_DIR)/ps2_mouse.o
 	i686-elf-gcc $(CFLAGS) ./src/cmos.c -o $(BUILD_DIR)/cmos.o
 	i686-elf-gcc $(CFLAGS) ./src/timer.c -o $(BUILD_DIR)/timer.o
+	i686-elf-gcc $(CFLAGS) ./src/socket.c -o $(BUILD_DIR)/socket.o
 	
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/tar.c -o $(BUILD_DIR)/tar.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/vfs.c -o $(BUILD_DIR)/vfs.o
@@ -82,12 +85,12 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/fat.c -o $(BUILD_DIR)/fat.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/ext2.c -o $(BUILD_DIR)/ext2.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/tmpfs.c -o $(BUILD_DIR)/tmpfs.o
-	i686-elf-gcc $(CFLAGS) ./src/filesystems/pex.c -o $(BUILD_DIR)/pex.o
-	i686-elf-gcc $(CFLAGS) ./src/virtio.c -o $(BUILD_DIR)/virtio.o
+	i686-elf-gcc $(CFLAGS) ./src/filesystems/pts.c -o $(BUILD_DIR)/pts.o
 
+	i686-elf-gcc $(CFLAGS) ./src/virtio.c -o $(BUILD_DIR)/virtio.o
 	i686-elf-gcc $(CFLAGS) ./src/glyph.c -o $(BUILD_DIR)/glyph.o
 	i686-elf-gcc $(CFLAGS) ./src/fb.c -o $(BUILD_DIR)/fb.o
-		i686-elf-gcc $(CFLAGS) ./src/bosch_vga.c -o $(BUILD_DIR)/bosch_vga.o
+	i686-elf-gcc $(CFLAGS) ./src/bosch_vga.c -o $(BUILD_DIR)/bosch_vga.o
 	i686-elf-gcc $(CFLAGS) ./src/syscalls.c -o $(BUILD_DIR)/syscalls.o
 	i686-elf-gcc $(CFLAGS) ./src/pci.c -o $(BUILD_DIR)/pci.o
 	i686-elf-gcc $(CFLAGS) ./src/process.c -o $(BUILD_DIR)/process.o
@@ -97,6 +100,18 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/circular_buffer.c -o $(BUILD_DIR)/circular_buffer.o
 	i686-elf-gcc $(CFLAGS) ./src/pipe.c -o $(BUILD_DIR)/pipe.o
 	i686-elf-gcc $(CFLAGS) ./src/vmm.c -o $(BUILD_DIR)/vmm.o
+	i686-elf-gcc $(CFLAGS) ./src/vt.c -o $(BUILD_DIR)/vt.o
+
+	i686-elf-gcc $(CFLAGS) ./src/network/netif.c -o $(BUILD_DIR)/netif.o
+	i686-elf-gcc $(CFLAGS) ./src/network/route.c -o $(BUILD_DIR)/route.o
+	i686-elf-gcc $(CFLAGS) ./src/network/arp.c -o $(BUILD_DIR)/arp.o
+	i686-elf-gcc $(CFLAGS) ./src/network/ipv4.c -o $(BUILD_DIR)/ipv4.o
+	i686-elf-gcc $(CFLAGS) ./src/network/e1000.c -o $(BUILD_DIR)/e1000.o
+	i686-elf-gcc $(CFLAGS) ./src/network/unix_domain_socket.c -o $(BUILD_DIR)/unix_domain_socket.o
+	i686-elf-gcc $(CFLAGS) ./src/network/inet_socket.c -o $(BUILD_DIR)/inet_socket.o
+	i686-elf-gcc $(CFLAGS) ./src/network/udp.c -o $(BUILD_DIR)/udp.o
+	i686-elf-gcc $(CFLAGS) ./src/network/tcp.c -o $(BUILD_DIR)/tcp.o
+
 
 	cd $(BUILD_DIR) && i686-elf-ld -o ../kernel.elf -T ../linker.ld  \
 		boot.o lkmain.o \
@@ -104,7 +119,10 @@ kernel:
 		pmm.o pit.o gdt.o misc_asm.o ps2.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
 		v86.o pci.o elf.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o \
 		ata.o cmos.o virtio.o pipe.o vmm.o queue.o semaphore.o g_tree.o nulldev.o proc.o \
-		fat.o ext2.o tmpfs.o tty.o char.o pex.o bosch_vga.o
+		fat.o ext2.o tmpfs.o tty.o char.o bosch_vga.o \
+		socket.o unix_domain_socket.o  inet_socket.o \
+		netif.o route.o e1000.o arp.o ipv4.o udp.o tcp.o \
+		vt.o pts.o
 
 	
 debug_kernel:kernel.elf
@@ -115,3 +133,27 @@ debug_kernel:kernel.elf
 		
 debug: kernel.elf
 	qemu-system-i386 -m 3G -hda bootable.iso -s -S 
+
+
+setup_network_tap_if:
+	sudo ip addr add 192.168.100.1/24 dev tap0
+	sudo ip link set tap0 up
+
+
+
+run_network_tap:
+	qemu-system-i386 -m 1G \
+	-netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
+	-device e1000,netdev=net0 \
+	-drive file=bootable.iso,media=cdrom,index=1 \
+	-drive file=blk_file.iso,media=disk,index=0,format=raw \
+	-boot d
+
+
+run_network_user:
+	qemu-system-i386 -m 1G \
+	-netdev user,id=net0 -device e1000,netdev=net0 \
+	-drive file=bootable.iso,media=cdrom,index=1 \
+	-drive file=blk_file.iso,media=disk,index=0,format=raw \
+	-boot d
+	

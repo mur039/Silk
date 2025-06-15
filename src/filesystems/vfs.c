@@ -11,7 +11,7 @@ char** _vfs_parse_path(const char * path){
     paths->head = NULL;
     paths->tail = NULL;
 
-    char * previous_head = path;
+    const char * previous_head = path;
     for(int i = 0; ; ++i){
 
     
@@ -184,7 +184,7 @@ char* vfs_canonicalize_path(const char* cwd, const char* rpath){
     }
     else{
         concat_path = kcalloc( strlen(cwd) + strlen(rpath) + 1, 1);
-            strcat(concat_path, cwd);
+        strcat(concat_path, cwd);
         strcat(concat_path, rpath);
     }
 
@@ -287,7 +287,7 @@ int vfs_mount(char * path, fs_node_t * local_root){
 				break;
 			}
 			int found = 0;
-			fb_console_printf("Searching for %s\n", at);
+			// fb_console_printf("Searching for %s\n", at);
             
 			// foreach(child, node->children) 
             for(listnode_t* child = node->children->head; child ; child = child->next )
@@ -335,7 +335,7 @@ static void vfs_tree_traverse_helper_func( tree_node_t * node, int height){ //sm
     if (!node) return; //for invalid and stop recursion
     
     //indentation
-    for(uint32_t i = 0; i < height; ++i){
+    for(int i = 0; i < height; ++i){
         fb_console_put("  ");
     }
     
@@ -384,7 +384,7 @@ fs_node_t *get_mount_point(char * path, unsigned int path_depth, char **outpath,
 			break;
 		}
 		int found = 0;
-		fb_console_printf("Searching for %s\n", at);
+		// fb_console_printf("Searching for %s\n", at);
 
 		
         for(listnode_t* child = node->children->head;  child  ; child = child->next)
@@ -433,11 +433,11 @@ uint32_t write_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buff
 		uint32_t ret = node->write(node, offset, size, buffer);
 		return ret;
 	} else {
-		return 0;
+		return size;
 	}
 }
 
-unlink_type_t unlink_fs(fs_node_t* node, const char* name){
+int unlink_fs(fs_node_t* node, const char* name){
 	if(node->flags & FS_DIRECTORY && node->unlink)
 	{
 		return node->unlink(node, name);
@@ -613,7 +613,7 @@ list_t* vfs_directory_entry_list(fs_node_t* src_node){
 
     while(1){
 
-        int old_offset = src_node->offset;
+        uint32_t old_offset = src_node->offset;
         struct dirent* item = readdir_fs(src_node, src_node->offset);
         
         if(old_offset > src_node->offset){
@@ -644,11 +644,11 @@ void vfs_copy(fs_node_t* root_node, fs_node_t* target_node, int depth){
         struct dirent* item = readdir_fs(root_node, root_node->offset);
         
         for(int i = 0; i < depth; ++i){
-            fb_console_putchar(' ');
+            // fb_console_putchar(' ');
             }
         
         if(old_offset > root_node->offset){
-            fb_console_putchar('\n');
+            // fb_console_putchar('\n');
             break;
         }
 
@@ -659,7 +659,7 @@ void vfs_copy(fs_node_t* root_node, fs_node_t* target_node, int depth){
         if(item){
             switch(item->type){
                 case FS_FILE:
-                    fb_console_printf("name : %s> file\n",  item->name);
+                    // fb_console_printf("name : %s> file\n",  item->name);
                     
                     //open on root node
                     rnode = finddir_fs(root_node, item->name);
@@ -680,7 +680,7 @@ void vfs_copy(fs_node_t* root_node, fs_node_t* target_node, int depth){
                     break;
                 
                 case FS_DIRECTORY:
-                    fb_console_printf("name : %s> dir\n",item->name);
+                    // fb_console_printf("name : %s> dir\n",item->name);
                     
                     //create folder at target filesystem as well
                     mkdir_fs(target_node, item->name, 0777);

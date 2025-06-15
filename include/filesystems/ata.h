@@ -41,6 +41,24 @@ Registers
 
 An ATA bus typically has ten I/O ports which control its behavior. For the primary bus, these I/O ports are usually 0x1F0 (the "I/O" port base) through 0x1F7 and 0x3F6 (the "Control" port base) through 0x3F7. For the secondary bus, they are usually 0x170 through 0x177 and 0x376 through 0x377. Some systems may have non-standard port locations for the ATA busses, in which case it may be helpful to consult the section on PCI to determine how to retrieve port addresses for various devices in the system. 
 
+
+
+ATAPI
+For ATAPI:
+
+    Bit 15 = 1 → Indicates device is not ATA (i.e., it’s ATAPI)
+
+    Bits 8–7 = Device type:
+
+        00 = Direct-access (e.g., HDD)
+
+        01 = Tape
+
+        05 = CD-ROM (most ATAPI devices)
+
+    Bits 6–5 = Reserved
+
+    Bits 4–0 = Packet interface standard (usually 0 or 1)
 */
 
 //register offsets
@@ -84,6 +102,15 @@ An ATA bus typically has ten I/O ports which control its behavior. For the prima
 #define ATA_CMD_IDENTIFY_PACKET_DEVICE 0xA1
 #define ATA_CMD_FLUSH_CACHE 0xe7
 
+// ATAPI Commands
+#define ATAPI_IDENTIFY_PACKET_DEVICE 0xA1
+
+//ATAPI DEVICE TYPES
+#define ATAPI_DEVICE_HDD 0
+#define ATAPI_DEVICE_TAPE 1
+#define ATAPI_DEVICE_CDROM 5
+
+
 // ATA Status Flags
 #define ATA_STATUS_ERR  0x01
 #define ATA_STATUS_DRQ  0x08
@@ -100,14 +127,40 @@ int ata_find_devices();
 
 void ata_initialize(uint16_t io_base, uint16_t ctrl_base);
 int ata_send_identify(uint16_t io_base, uint16_t ctrl_base, int drive, uint8_t *buffer);
+int atapi_send_identify(uint16_t io_base, uint16_t ctrl_base, int drive, uint8_t *buffer);
+
 int ata_send_command(uint16_t io_base, uint16_t ctrl_base, int drive, uint8_t command, uint8_t* buffer);
 
+void ata_register_device(int bus, int drive, int sector_count, const uint8_t serial_number[20], const char modelname[40]);
+int ata_register_partitions(int bus, int drive, int sector_count);
+void atapi_register_device(int bus, int drive, const uint8_t serial_number[20], const char modelname[40]);
 
-int ata_read_sector(uint16_t io_base, uint16_t ctrl_base, uint32_t lba, uint8_t *buffer);
-int ata_write_sector(uint32_t io_base, uint32_t ctrl_base, uint32_t lba, uint8_t *buffer);
+
+int ata_read_sector(uint16_t bus, uint16_t drive, uint32_t lba, uint8_t *buffer);
+int ata_write_sector(uint32_t bus, uint32_t drive, uint32_t lba, uint8_t *buffer);
 
 
 
+struct ata_cache_node{
+    struct ata_cache_node* next;
+    uint8_t disk_index; //0b10 bus, 0b1 drive
+    uint32_t lba_index;
+    uint8_t* data;
+
+    int is_dirty;
+
+  
+};
+
+struct ata_cache{
+    struct ata_cache_node* head;
+    int current_cache_count;
+    int max_cache_count;
+    uint8_t* raw_buffer;
+};
+
+
+void initialize_ata_cache(struct ata_cache* cache_struct, int max_cache_count);
 
 typedef struct {
     uint8_t data[ATA_SECTOR_SIZE]; // Cached sector data
@@ -158,8 +211,8 @@ int ata_wait_ready(uint16_t io_base);
 enum ata_device_type ata_determine_dev_type(int bus, int drive);
 void ata_soft_reset_bus(int bus);
 
-write_type_t ata_write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
-read_type_t  ata_read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
+uint32_t ata_write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
+uint32_t  ata_read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 int ata_read(ata_device_t* ata, uint32_t offset, uint32_t size, uint8_t* buffer);
 int ata_write(ata_device_t* ata, uint32_t offset, uint32_t size, uint8_t* buffer);
 int ata_is_mbr(uint8_t* sector0);

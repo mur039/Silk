@@ -12,8 +12,8 @@ int vsprintf ( char * str, const char * format, va_list arg );
 int printf (const char * format, ... );
 int vprintf (const char * format,  va_list arg );
 
-extern int FILENO_STDOUT;
 extern int FILENO_STDIN;
+extern int FILENO_STDOUT;
 extern int FILENO_STDERR;
 
 #endif

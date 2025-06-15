@@ -30,10 +30,10 @@ device_t* create_uart_device(int port);
 
 
 
-write_type_t uart_console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer);
-read_type_t uart_console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
-open_type_t uart_console_open(fs_node_t* node, uint8_t read, uint8_t write);
-close_type_t uart_console_close(fs_node_t* node);
+uint32_t uart_console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer);
+uint32_t uart_console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
+void uart_console_open(fs_node_t* node, uint8_t read, uint8_t write);
+void uart_console_close(fs_node_t* node);
 
 
 #define error(msg) uart_print(COM1, "%s->%u->%s: %s\r\n", __FILE__, __LINE__, __func__, msg);

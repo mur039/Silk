@@ -13,7 +13,7 @@ int open(const char * path, int flags, ...){
 
     }
 
-    return syscall(SYSCALL_OPEN, path, flags, -1);
+    return syscall(SYSCALL_OPEN, path, flags);
 
 
 }

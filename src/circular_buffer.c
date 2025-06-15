@@ -18,7 +18,11 @@ circular_buffer_t circular_buffer_create(size_t buffer_size){
 
 void circular_buffer_destroy(circular_buffer_t * cb){
     
-    kfree(cb->base);
+    if(!cb) return;
+
+    if(cb->base)
+        kfree(cb->base);
+    
     cb->base = NULL;
     cb->max_size = 0;
     cb->write = 0;

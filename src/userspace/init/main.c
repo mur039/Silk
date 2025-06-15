@@ -1,98 +1,122 @@
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
 #include <sys/syscall.h>
-extern int dup2(int old_fd, int new_fd);
-extern int getpid();
 
-
-int fileno_stdout = 0;
-int fileno_stderr = 0;
-
-int log_err(char *dst){
-    while(*(dst) != '\0') write( fileno_stderr, (dst++), 1);
-    return 0;
-} 
-int puts(char * dst){
-
-    write( fileno_stdout, dst, strlen(dst));
-    return 0;
-}
-int putchar(int c){
-    return write(fileno_stdout, &c, 1);
-}
-
-char line_buf[32];
-
-int main(int _argc, char * _argv[]){    
-
-    //should inherit from the kernel but
-    int fd_console = open("/dev/console", O_WRONLY);
-    if(fd_console == -1){
-        return 1;
-    }
-
-    int fd_kbd = open("/dev/console", O_RDONLY);
-    if(fd_kbd == -1){
-        return 1;
-    }
-
-
-    int fd_com1 = open("/dev/console", O_WRONLY);
-    if(fd_com1 == -1){
-        return 1;
-    }
-
-
-
-    fileno_stdout = fd_console;
-    fileno_stderr = fd_com1;
-
-
-    if(getpid() != 0){
-        puts("Must be runned as PID, 0\n");
-        return 1;
-    }
-
-
-    puts("Hello from init process\n");
-    puts("Let's try to fork and execute init process...\n");
+//if succesfull return pid of child, else -1
+int create_child_terminal(const char* filepath, const char* termpath){
     
     int pid = fork();
-    // while(1);
     
     if(pid == -1){
-        puts("Failed to fork, exitting...\n");
-        exit(1);
+        return -1;
     }
 
     if(pid == 0){
+
+        // setsid(); //become the session master darling
+        int termfd = open(termpath, O_RDWR);
+        if(termfd < 0){
+            return -1;  
+        }
+
+        dup2(termfd, FILENO_STDIN);
+        dup2(termfd, FILENO_STDOUT);
+        dup2(termfd, FILENO_STDERR);
+
+        fcntl(FILENO_STDIN, F_SETFL, O_RDONLY);
+        fcntl(FILENO_STDOUT, F_SETFL, O_WRONLY);
+        fcntl(FILENO_STDERR, F_SETFL, O_WRONLY);
+
+
         puts("As a child i execute the init program\n");
         
-        
-        const char * program_path = "/bin/sh";
-        const char * args[] = { 
-                                program_path,
+        const char * program_path = filepath;
+        char *const args[] = { 
+                                (char*)program_path,
+                                "-l",
                                 NULL
                                 };
 
         int result = execve(
                         program_path,
-                        args
+                        args,
+                        NULL
                         );
 
         if(result == -1){
             puts("Failed to execute another process :(\n");
-            return 1;
+            return -2;
         }
        
         
     }
+    return pid;
+}
 
-    while (1);
+
+int main(int _argc, char * _argv[]){    
+
+    if(getpid() != 1){
+        puts("Must be runned as PID, 1\n");
+        return 1;
+    }
+
+    const char* ttypath = "/dev/tty0";
+    //should inherit from the kernel but
+    int fd = open(ttypath, O_RDWR);
+    if(fd < 0){
+        return 1;
+    }
+
+    dup2(fd, FILENO_STDIN);
+    dup2(fd, FILENO_STDOUT);
+    dup2(fd, FILENO_STDERR);
+
+    int flags = fcntl(fd, F_GETFL, 0);
+
+    fcntl(FILENO_STDIN, F_SETFL,  O_RDONLY);
+    fcntl(FILENO_STDOUT, F_SETFL, O_WRONLY);
+    fcntl(FILENO_STDERR, F_SETFL, O_WRONLY);
+
+    close(fd);
+
+
+
+    puts("Hello from init process\n");
+    puts("Let's try to fork and execute init process...\n");
+
+    int pid;
+    pid = create_child_terminal("/bin/dash", "/dev/ttyS0");    
+    if(pid < 0){
+        puts("Failed to fork, exitting...\n");
+        return 1;
+    }
+
+    pid = create_child_terminal("/bin/dash", "/dev/tty0");
+    if(pid < 0){
+        puts("Failed to fork, exitting...\n");
+        return 1;
+    }
+
+
+
     
-    wait4(-1, NULL, 0, NULL);
-    //if we return that means child has exited thus means no other process left so it would terminate
-    printf("child exited\n");
+    while(1){
 
+        pid_t err = wait4(-1, NULL, 0, NULL);
+        
+        if( err < 0){ //some error
+            
+            if( errno == ECHILD){ //no child
+                puts("I don't have any children left motherfucker, though i can relunch a new program but oh well\n");
+                return 0;
+            }
+        }
+        
+    }
+    
+    
     return 0;
 }

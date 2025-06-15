@@ -11,6 +11,14 @@ struct regs
     unsigned int eip, cs, eflags, useresp, ss;   /* pushed by the processor automatically */ 
 };
 
+
+
+
+//eflag bits
+#define EFLAGS_INTERRUPT_ENABLE_MASK 0x200
+#define EFLAGS_TRAP_MASK 0x100
+#define EFLAGS_CPU_ID_MASK 0x00200000
+
 void isrs_install();
 void fault_handler(struct regs *r);
 void dump_registers(struct regs *r);

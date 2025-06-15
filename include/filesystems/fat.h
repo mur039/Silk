@@ -167,11 +167,11 @@ read_type_t fat12_read_fs(struct fs_node* node, uint32_t offset, uint32_t size, 
 
 
 struct dirent * fat32_readdir(fs_node_t *node, uint32_t index);
-finddir_type_t fat32_finddir(struct fs_node* node, char *name);
-read_type_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uint8_t* buffer);
-write_type_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
+struct fs_node* fat32_finddir(struct fs_node* node, char *name);
+uint32_t fat32_read(struct fs_node* node, uint32_t offset, uint32_t size, uint8_t* buffer);
+uint32_t fat32_write(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 
-mkdir_type_t fat32_mkdir(fs_node_t* node, const char* name, uint16_t permission);
+void fat32_mkdir(fs_node_t* node, const char* name, uint16_t permission);
 
 
 

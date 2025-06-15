@@ -1,18 +1,39 @@
 #include <fb.h>
+#include <timer.h>
+#include <process.h>
 
+static int framebuffer_type;
 static uint8_t *framebuffer_addr = NULL;
-static uint32_t framebuffer_width;
-static uint32_t framebuffer_heigth;
+uint32_t framebuffer_width;
+uint32_t framebuffer_heigth;
 
 
 uint8_t * get_framebuffer_address(void){
     return framebuffer_addr;
 }
 
-void init_framebuffer(void * address, int width, int height){
-    framebuffer_addr = address;
+//1 RGB, 2 text mode
+void init_framebuffer(void * address, int width, int height, int type){
+    
+    framebuffer_addr = FRAMEBUFFER_VADDR;
     framebuffer_width = width;
     framebuffer_heigth = height;
+    framebuffer_type = type;
+
+    //now base on that check whether specified pages mapped or not
+    uint8_t* start_addr = address;
+    size_t nof_pages = width*(height + 1);
+    nof_pages *= (type == 1 ? 4 : 2);
+    nof_pages = (nof_pages/4096) + ((nof_pages % 4096) != 0);
+    
+    uint8_t* vaddr = (uint8_t*)FRAMEBUFFER_VADDR;
+    for(size_t i = 0; i <= nof_pages; ++i){
+        map_virtaddr(vaddr, start_addr, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_WRITE_THROUGH);
+        start_addr += 4096;
+        vaddr += 4096;
+    }
+
+
     return;
 }
 
@@ -43,18 +64,18 @@ int framebuffer_raw_write(size_t start, void * src, size_t count){
     uint32_t dword_section = count / 4;
     uint32_t byte_section = count % 4;
     
-    uint32_t* screen = framebuffer_addr;
+    uint32_t* screen = (uint32_t*)framebuffer_addr;
     uint32_t* dwordptr = src;
     //fill out the byte section
     
-    for(int i = 0; i < dword_section; ++i){
+    for(size_t i = 0; i < dword_section; ++i){
         screen[i] = dwordptr[i];
     }
 
 
-    for(int i = 0; i < byte_section; ++i){
-        uint8_t* bytescreen = &screen[dword_section];
-        uint8_t* bytesptr = &dwordptr[dword_section];
+    for(size_t i = 0; i < byte_section; ++i){
+        uint8_t* bytescreen = (uint8_t*)&screen[dword_section];
+        uint8_t* bytesptr = (uint8_t*)&dwordptr[dword_section];
 
         bytescreen[i] = bytesptr[i];
     }
@@ -84,7 +105,7 @@ void framebuffer_put_glyph(const unsigned short symbol, int x, int y, pixel_t bg
 
 }
 
-static pixel_t term_8_16_colors[10] ={
+pixel_t term_8_16_colors[10] ={
     {.red = 0x00, .green = 0x00, .blue = 0x00}, //black
     {.red = 0xff, .green = 0x00, .blue = 0x00}, //red
     {.red = 0x00, .green = 0xff, .blue = 0x00}, //green
@@ -104,13 +125,30 @@ static int fb_cursor_x;
 static int fb_cursor_y;
 static int fb_console_cols;
 static int fb_console_rows;
+//cursor shit
+int fb_cursor_state = 0;
+static uint8_t *under_cursor_area = NULL;
 
+void cursor_blinker(void* some){
+
+    
+
+}
 /*-1 means maximum*/
 
 uint32_t init_fb_console(int cols, int rows){
     
-    fb_console_cols =  (cols == -1) ? (int)(framebuffer_width / 8) :cols; 
-    fb_console_rows =  (rows == -1) ? (int)(framebuffer_heigth / get_glyph_size()) :rows;
+    if(framebuffer_type == 1){
+
+        fb_console_cols =  (cols == -1) ? (int)(framebuffer_width / 8) :cols; 
+        fb_console_rows =  (rows == -1) ? (int)(framebuffer_heigth / get_glyph_size()) :rows;
+        // timer_register(500, 500, cursor_blinker, NULL);
+    }
+    else{
+        fb_console_cols = framebuffer_width;
+        fb_console_rows = framebuffer_heigth;
+    }
+
     fb_cursor_x = 0;
     fb_cursor_y = 0;
 
@@ -125,6 +163,7 @@ uint32_t init_fb_console(int cols, int rows){
     uint32_t retval;
     retval = fb_console_rows & 0xffff;
     retval |= (fb_console_cols & 0xffff) << 16; 
+
     return retval;   
 }
 
@@ -216,7 +255,88 @@ static int escape_sequence = 0;
 #define TTY_CONSOLE_ESCAPE_ENCODER_BUFFER_SIZE 32
 static int tty_console_escape_encoder_buffer_head = 0;
 static char tty_console_escape_encoder_buffer[TTY_CONSOLE_ESCAPE_ENCODER_BUFFER_SIZE]; 
+uint8_t utf8_buffer[4];
+size_t expected_bytes = 0;
+size_t received_bytes = 0;
+
 void fb_console_putchar(unsigned short c){
+
+#ifdef UTF8
+    //utf shenanigans
+    if(!expected_bytes){
+
+        if(c >= 0x80){
+    
+            if((c & 0xE0) == 0xC0){
+                expected_bytes = 2;
+                received_bytes = 1;
+                utf8_buffer[0] = c;
+                return;
+            }
+            else if ((c & 0xF0) == 0xE0)
+                { // three  byte
+                expected_bytes = 3;
+                received_bytes = 1;
+                utf8_buffer[0] = c;
+                return;
+            }
+            else if ((c & 0xF8) == 0xF0)
+            { // four  byte
+                expected_bytes = 4;
+                received_bytes = 1;
+                utf8_buffer[0] = c;
+                return;
+            }
+            
+            //we might try to print unicodes so
+            goto normal_printing;
+            
+        }
+        //do nothing for 7-bit characters they just go through
+
+    }
+
+    uint32_t val = 0;
+    if(expected_bytes){
+        if(c & 0xc0 == 0x80){ //continuation byte happy
+            utf8_buffer[received_bytes++] = c;
+            if(received_bytes >= expected_bytes){
+                uint8_t* ptr = utf8_buffer;
+                switch(expected_bytes){
+                    case 2:
+
+                        val = (*ptr & 0x1F) << 6;
+                        val |= (*(++ptr) & 0x3F);
+                        break;
+                    case 3:
+
+                        val = (*ptr & 0xF) << 12;
+                        val |= (*(++ptr) & 0x3F) << 6;
+                        val |= (*(++ptr) & 0x3F);
+                        break;
+                    case 4:
+
+                        val = (*ptr & 0x7) << 18;
+                        val |= (*(++ptr) & 0x3F) << 12;
+                        val |= (*(++ptr) & 0x3F) << 6;
+                        val |= (*(++ptr) & 0x3F);
+                        break;
+                }
+
+                expected_bytes = 0;
+                received_bytes = 0;
+                goto normal_printing;
+            }
+        }
+        else{ //my streak is broken :/
+            expected_bytes = 0;
+            received_bytes = 0;
+        }
+    }
+#endif
+
+    //before that if cursor is on the screen we disable it, since every write goes through this function
+    if(fb_cursor_state ) cursor_blinker(NULL);
 
 
     /*for all escape sequences all of them ends with a alphabetical character
@@ -267,8 +387,11 @@ void fb_console_putchar(unsigned short c){
                     }
 
                     int line, col;
-                    line = atoi(escape_code_args[0]);
-                    col = atoi(escape_code_args[1]);
+                    line = atoi(escape_code_args[0]) - 1;
+                    col = atoi(escape_code_args[1]) - 1;
+
+
+                    // fb_console_printf("ESC[%u;%uH\n", line, col);
 
                     line = line < 0 ? 0 : line > fb_console_rows ? fb_console_rows : line;
                     col = col < 0 ? 0 : col > fb_console_cols ? fb_console_cols : col;
@@ -341,16 +464,22 @@ void fb_console_putchar(unsigned short c){
 
                         switch(selector){
                             case 0:
-                                 for(int y = fb_cursor_y; y < (opcode == 'J' ? fb_console_rows : fb_cursor_y + 1) ; ++y){
+                                for(int y = fb_cursor_y; y < (opcode == 'J' ? fb_console_rows : fb_cursor_y + 1) ; ++y){
                                    for(int x = y == fb_cursor_y ? fb_cursor_x : 0; x < fb_console_cols; ++x){
-                                    framebuffer_put_glyph(' ', x * 8, y * get_glyph_size(), fb_bg, fb_fg);
-
+                                        framebuffer_put_glyph(' ', x * 8, y * get_glyph_size(), fb_bg, fb_fg);
                                     }
                                 }
                                 break;
                             case 1:
                                 break;
                             case 2:
+                                //clear all the screen;
+                                if(opcode != 'J') break;
+                                for(int y = 0; y < fb_console_rows ; ++y){
+                                    for(int x = 0 ; x < fb_console_cols; ++x){
+                                         framebuffer_put_glyph(' ', x * 8, y * get_glyph_size(), fb_bg, fb_fg);
+                                     }
+                                 }
                                 break;
 
                             default:break;
@@ -366,14 +495,13 @@ void fb_console_putchar(unsigned short c){
                         for(int y = fb_cursor_y; y < fb_console_rows; ++y){
                             for(int x = y == fb_cursor_y ? fb_cursor_x : 0; x < fb_console_cols; ++x){
                                 framebuffer_put_glyph(' ', x * 8, y * get_glyph_size(), fb_bg, fb_fg);
-
                             }
                         }
                     }
                     else{ //K erase in line
                         for(int i = 0; i < fb_console_cols; ++i){
                             framebuffer_put_glyph(' ', i * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg );
-                        }
+                        }   
                     }
                 }
                 break;
@@ -476,8 +604,7 @@ void fb_console_putchar(unsigned short c){
 normal_printing:
     switch (c)
     {
-        // case '\0': 
-        //     break;
+
         case 0:  //don't do a thing
             break;
         case 27: //for escape sequences
@@ -494,19 +621,18 @@ normal_printing:
             fb_cursor_y += 1;
             break;
 
+        case 127:
         case '\b':
             if(fb_cursor_x){
                 fb_cursor_x -= 1;
                 framebuffer_put_glyph(' ', fb_cursor_x * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg);
-
             }
             break;
         case '\t':
             fb_cursor_x += 4;
             break;
-        case ' ':
+        case ' ': 
             framebuffer_put_glyph(' ', fb_cursor_x * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg );
-
             fb_cursor_x += 1;
             break;
 
@@ -527,17 +653,27 @@ normal_printing:
     if(fb_cursor_y >= fb_console_rows){ 
 
         fb_cursor_x = 0; //already zero
+
+        uint8_t *fb_start, *fb_end;
+        fb_start = framebuffer_addr;
+        fb_end = fb_start + framebuffer_width * 4 * framebuffer_heigth;
+
+        fb_start += framebuffer_width * 4 * get_glyph_size();
         
-        // faster?
-        uint32_t* screen = framebuffer_addr;
-        for(int i = 0; i < framebuffer_width*framebuffer_heigth; ++i){
-            screen[i] = screen[get_glyph_size()*framebuffer_width + i];
-        }
+        memcpyw4(framebuffer_addr, fb_start, (size_t)(fb_end - fb_start)/4);
 
-        // memcpy(framebuffer_addr, &framebuffer_addr[4*get_glyph_size()*framebuffer_width], 4*framebuffer_width*(framebuffer_heigth));
+        fb_start = fb_end - framebuffer_width * 4 * get_glyph_size();
+        
+        memsetw4(fb_start, *(uint32_t*)&fb_bg, (size_t)(fb_end - fb_start) / 4);
 
-        for(int x = 0; x < fb_console_cols; ++x)
-            framebuffer_put_glyph(' ', x * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg );
+        // uint32_t *_begin = (uint32_t*)framebuffer_addr, *_begin2 = (uint32_t*)&framebuffer_addr[4*get_glyph_size()*framebuffer_width];
+        // for(size_t i = 0; i < framebuffer_width*framebuffer_heigth; ++i){
+        //     _begin[i]  = _begin2[i];
+        // }
+        // // memcpy(framebuffer_addr, &framebuffer_addr[4*get_glyph_size()*framebuffer_width], 4*framebuffer_width*(framebuffer_heigth));
+
+        // for(int x = 0; x < fb_console_cols; ++x)
+        //     framebuffer_put_glyph(' ', x * 8, fb_cursor_y * get_glyph_size(), fb_bg, fb_fg );
 
         fb_cursor_y -= 1;
     }
@@ -562,32 +698,6 @@ void fb_console_put(char *s){
     }
 }
 
-void fb_console_blink_cursor(){
-    //block blinking
-
-     for (size_t j = 0; j < get_glyph_size(); j++)
-    {
-        pixel_t * row = (pixel_t *)&framebuffer_addr[(fb_cursor_y*get_glyph_size() + j) * 4 * framebuffer_width];
-        for(int i = 0; i < 8; ++i){ //bits
-            if(
-                row[fb_cursor_x*8 + i].alpha == fb_fg.alpha &&
-                row[fb_cursor_x*8 + i].red == fb_fg.red     &&
-                row[fb_cursor_x*8 + i].green == fb_fg.green &&
-                row[fb_cursor_x*8 + i].blue == fb_fg.blue
-                
-            ){
-                memcpy( &row[fb_cursor_x*8 + i], &fb_bg, sizeof(pixel_t));
-            }
-            else{
-                memcpy( &row[fb_cursor_x*8 + i], &fb_fg, sizeof(pixel_t));
-            }
-            
-        }
-    }
-    
-
-}
-
 
 static char fb_console_gprintf_wrapper(char c){
     fb_console_putchar(c);
@@ -606,44 +716,12 @@ void fb_console_printf(const char * fmt, ...){
 }
 
 
-write_type_t console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
-    (void)node;
-    (void)offset;
-    
-    fb_console_write(buffer, 1, size);
-    return size;
-}   
-
-
-extern volatile int  is_kbd_pressed;
-extern char kb_ch;
-extern uint8_t kbd_scancode;
-
-read_type_t console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
-    (void)node;
-    (void)offset;
-    (void)size;
-    if(is_kbd_pressed){
-        is_kbd_pressed = 0;
-        *buffer = kb_ch;
-        return 1;
-    }
-
-    //should block but
-    return 0;
-}
-
-write_type_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+uint32_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
     (void)node;
     return framebuffer_raw_write(offset, buffer, size);
 }   
 
 
-void pci_disp_irq_handler(struct regs *r){
-
-    fb_console_printf("well pci_disp_irq_handler\n");
-
-}
 
 static int framebuffer_id = 0;
 
@@ -657,32 +735,71 @@ typedef struct{
 
 
 
-static ioctl_type_t framebuffer_ioctl(fs_node_t* node, unsigned long request, void* argp){
+static int framebuffer_ioctl(fs_node_t* node, unsigned long request, void* argp){
 
     device_t* dev = node->device;
     framebuffer_t* fb = dev->priv;
     uint16_t *lengths = (uint16_t*)argp;
+
+    switch(request){
+        case 0:
+            lengths[0] = fb->width;
+            lengths[1] = fb->height;
+            break;
+
+        case 1:
+            ;
+            uint32_t* addr = argp;
+            *addr = (uint32_t)fb->baseaddr;
+            break;
+        default:
+            return 1;
+    }
     
-    lengths[0] = fb->width;
-    lengths[1] = fb->height;
     return 0;
 }
 
-close_type_t framebuffer_close(fs_node_t* node){
-
+void framebuffer_close(fs_node_t* node){
+    
     return;
+}
+
+void* framebuffer_mmap(fs_node_t* node, size_t length, int prot, size_t offset){
+
+    device_t* dev = node->device;
+    framebuffer_t* fb = dev->priv;
+
+    //for now offset is ignored and length must match the framebuffer
+    if(length != fb->height*fb->width*(fb->bpp/8u) || offset != 0){
+        return (void*)-1;
+    }
+
+    size_t roundedup_length = ((length/4096) + (length % 4096 != 0)) * 4096;
+    void* candidate_addr = vmm_get_empty_vpage(current_process->mem_mapping, roundedup_length);
+
+    if(candidate_addr == (void*)-1)  
+        return (void*)-1;
+
+    for(size_t i = 0; i < roundedup_length ; i += 4096){
+        map_virtaddr( (uint8_t*)candidate_addr + i, (uint8_t*)fb->baseaddr + i, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_WRITE_THROUGH | PAGE_USER_SUPERVISOR );
+        vmm_mark_allocated(current_process->mem_mapping, (uint32_t)candidate_addr + i, (uint32_t)fb->baseaddr + i, VMM_ATTR_PHYSICAL_MMIO);
+    }
+    
+    return candidate_addr;
 }
 
 void install_basic_framebuffer(uint32_t* base, uint32_t width, uint32_t height, uint32_t bpp){
     device_t framebuffer;
+    memset(&framebuffer, 0, sizeof(framebuffer));
     framebuffer.name = strdup("fbxxx");
     sprintf(framebuffer.name, "fb%u", framebuffer_id++);
 
-    framebuffer.write = fb_write;
-    framebuffer.ioctl = framebuffer_ioctl;
-    framebuffer.close = framebuffer_close;
-    framebuffer.dev_type = DEVICE_BLOCK;
-    framebuffer.unique_id = 32;
+    framebuffer.write = (write_type_t)fb_write;
+    framebuffer.ioctl = (ioctl_type_t)framebuffer_ioctl;
+    framebuffer.close = (close_type_t)framebuffer_close;
+    framebuffer.mmap = (mmap_type_t)framebuffer_mmap;
+    framebuffer.dev_type = DEVICE_CHAR;
+    framebuffer.unique_id = 29;
 
     framebuffer_t* priv = kcalloc(1, sizeof(framebuffer_t));
     priv->baseaddr = base;

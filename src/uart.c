@@ -2,11 +2,14 @@
 #include <sys.h>
 #include <str.h>
 #include <queue.h>
+#include <tty.h>
 
 
+tty_t serial_tty[1];
 
 int init_uart_port(int port)
 {
+    
     //gotta do somthing about it , interrupts doesn't trigger
     outb(port + 1, 0x00);    // Disable all interrupts
     outb(port + 3, 0x80);    // Enable DLAB (set baud rate divisor)
@@ -69,72 +72,21 @@ void uart_print(int port, const char * source, ...){
         source,
         arg
     );
-    // for(int i = 0; source[i] != '\0'; ++i){
-    //     uart_write(port, &source[i], 1, 1);
-    // }
-    return;
 }
 
-
-
-
-
-
-typedef  struct uart_console_priv_dat{
-    queue_t work_queue;
-    circular_buffer_t internal_circular_buffer;
-    uint8_t refcount;
-
-} uart_console_priv_dat_t;
-
-extern volatile int is_received_char;
-extern volatile char ch;
-
 #include <process.h>
-typedef struct uart_work_desc {
-    pcb_t* req_proc;
-    size_t byte_size;
-} uart_work_desc_t;
-
-
-device_t* com1_dev = NULL;
 
 void uart_handler(struct regs *r){
     (void)r;
     
     char c = serial_read(0x3f8);
-    
-    if(com1_dev){
-        uart_console_priv_dat_t* priv = com1_dev->priv;
-        if(priv->refcount){
-            
-            circular_buffer_putc(&priv->internal_circular_buffer, c);
 
-            int size = circular_buffer_avaliable(&priv->internal_circular_buffer);
-            uart_work_desc_t* pending_job = queue_dequeue_item(&priv->work_queue);
-        
+    //with the assumption of coming from COM1
+    int port_index = 0;
 
-            if(pending_job){ //check if there's a pending job
+    struct tty* tty = &serial_tty[port_index];
 
-                if(size >= pending_job->byte_size){
-                    //unblock the process
-                    // pending_job->req_proc->regs.eip -= 2; //wind it back to the int 0x80 call
-                    pending_job->req_proc->state = TASK_RUNNING;
-                    kfree(pending_job); //created during the read operation then deallocated
-
-                }
-                else{
-                //if not push job back to the queue
-                queue_enqueue_item(&priv->work_queue, pending_job);
-                }
-            }
-
-        }
-    }
-
-    is_received_char = 1;
-    ch = c;
-
+    tty_ld_write(tty, &c, 1);
     return;
 }
 
@@ -148,7 +100,45 @@ static int port_addr_index(int port){
 }
 
 
+void tty_driver_8250_putchar(struct tty* tty, char c){
+    
+    int port = tty->index == 0 ? COM1 : -1;
+    if(port < -1){
+        return;
+    }
 
+    if(tty->termio.c_oflag & OPOST){
+        if(c == '\n' && (tty->termio.c_oflag & ONLCR)){
+            uart_write(port, "\r", 1, 1);
+        }
+    }
+
+    if(c == '\b' || c == 127){
+        uart_write(port, "\b ", 1, 3);    
+    }
+    
+    uart_write(port, &c, 1, 1);
+}
+
+void tty_driver_8250_write(struct tty* tty, const char* buf, size_t len){
+    
+    int port = tty->index == 0 ? COM1 : -1;
+    if(port < -1){
+        return;
+    }
+
+    for(size_t i = 0; i < len; ++i){
+        tty->driver->put_char(tty, buf[i]);
+    }
+}
+
+
+struct tty_driver serial_driver = {
+    .name = "8250uart",
+    .num = 1,
+    .write = &tty_driver_8250_write,
+    .put_char = &tty_driver_8250_putchar
+};
 
 device_t* create_uart_device(int port){
     
@@ -158,6 +148,10 @@ device_t* create_uart_device(int port){
 
     
     int pindex = port_addr_index(port);
+    if(pindex < 0){
+        return NULL;
+    }
+
     device_t* dev = kcalloc(1, sizeof(device_t));
     if(!dev)
         error("failed allocate for dev");
@@ -168,88 +162,33 @@ device_t* create_uart_device(int port){
 
     sprintf(dev->name, "ttyS%u", pindex);
 
-    // alloc_print_list();
-    // halt();
+    tty_t* tty = &serial_tty[pindex];
+    memset(tty, 0, sizeof(struct tty));
+    dev->priv = tty;
 
-    dev->write = uart_console_write;
-    dev->read = uart_console_read;
-    dev->open = uart_console_open;
-    dev->close = uart_console_close;
+    tty->size.ws_col = 80;
+    tty->size.ws_row = 25;
+    tty->index = pindex;
+
+    tty->termio.c_lflag = ISIG | ICANON | ECHO;
+    tty->termio.c_iflag = ICRNL;
+    tty->termio.c_oflag = OPOST | ONLCR;
+    tty->read_wait_queue = list_create();
+    tty->read_buffer = circular_buffer_create(4096);
+    tty->write_buffer = circular_buffer_create(4096);
+    tty->linebuffer = circular_buffer_create(512);
+    tty->driver = &serial_driver;
+
+    dev->open  = (open_type_t)tty_open;
+    dev->close = (close_type_t)tty_close;
+    dev->write = (write_type_t)tty_write;
+    dev->read = (read_type_t)tty_read;
+    dev->ioctl = (ioctl_type_t)tty_ioctl;
     dev->dev_type = DEVICE_CHAR;
-    dev->unique_id = port;
 
     dev->unique_id = pindex;
-    
-    uart_console_priv_dat_t* priv = kmalloc(sizeof(uart_console_priv_dat_t));
-    if(!priv)
-        error("failed allocate for priv");
-    
-    priv->work_queue = queue_create(1);
-    priv->internal_circular_buffer  = circular_buffer_create(256);
-    priv->refcount = 0;
-    dev->priv = priv;
-    
-    com1_dev = dev;
-    
-    return dev;    
+      
+    dev_register(dev);
+    return dev;
 }
-
-
-
-open_type_t uart_console_open(fs_node_t* node, uint8_t read, uint8_t write){
-    
-
-    device_t* dev = node->device;
-    uart_console_priv_dat_t* priv = dev->priv;
-
-    priv->refcount++;
-    return;
-}
-
-
-close_type_t uart_console_close(fs_node_t* node){
-    
-    device_t* dev = node->device;
-    uart_console_priv_dat_t* priv = dev->priv;
-     
-    priv->refcount--;
-    return;
-}
-
-
-
-write_type_t uart_console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
-    (void)node;
-    (void)offset;
-
-    uart_write(COM1, buffer, 1, size);
-    return size;
-}   
-
-
-read_type_t uart_console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
-    (void)node;
-    (void)offset;
-    // (void)size;
-
-    device_t* dev = node->device;
-    uart_console_priv_dat_t* priv = dev->priv;
-
-    int availble_char = circular_buffer_avaliable( &priv->internal_circular_buffer );
-    
-
-    if( size <= availble_char){ //enough bytes in buffer
-        circular_buffer_read(&priv->internal_circular_buffer, buffer, 1, size);
-        return size;
-    }
-
-    //should block but how?
-    uart_work_desc_t* job = kcalloc(1, sizeof(uart_work_desc_t));
-    
-    job->req_proc = current_process;
-    job->byte_size = size;
-    queue_enqueue_item(&priv->work_queue, job);
-    return -1;
-}
-
 

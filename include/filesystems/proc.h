@@ -6,7 +6,7 @@
 #include <process.h>
 
 fs_node_t * proc_create();
-finddir_type_t proc_finddir(struct fs_node* node, char *name);
+struct fs_node* proc_finddir(struct fs_node* node, char *name);
 
 
 #endif

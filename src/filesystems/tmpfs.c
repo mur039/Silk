@@ -44,12 +44,12 @@ fs_node_t * tmpfs_install(){
 	// fnode->open    = tmpfs_open;
 	// fnode->close   = tmpfs_close;
 
-    fnode->create  = tmpfs_create;
-    fnode->mkdir   = tmpfs_mkdir;
-    fnode->unlink  = tmpfs_unlink;
-	fnode->readdir = tmpfs_readdir;
-	fnode->finddir = tmpfs_finddir;
-	fnode->ioctl   = NULL;
+    fnode->create  = (create_type_t)tmpfs_create;
+    fnode->mkdir   = (mkdir_type_t)tmpfs_mkdir;
+    fnode->unlink  = (unlink_type_t)tmpfs_unlink;
+	fnode->readdir = (readdir_type_t)tmpfs_readdir;
+	fnode->finddir = (finddir_type_t)tmpfs_finddir;
+	fnode->ioctl   = (ioctl_type_t)NULL;
 
 
     tmpfs_device_t* tmpfs = kcalloc(1, sizeof(tmpfs_device_t));
@@ -72,9 +72,9 @@ fs_node_t * tmpfs_install(){
 }
 
 
-finddir_type_t tmpfs_finddir (struct fs_node* node, char *name){    
+struct fs_node* tmpfs_finddir (struct fs_node* node, char *name){    
 
-    fb_console_printf("tmpfs_finddir: %s::%s\n", node->name, name);
+    //fb_console_printf("tmpfs_finddir: %s::%s\n", node->name, name);
     
     tmpfs_device_t* tmpfs = node->device;
     if(!tmpfs){        
@@ -101,8 +101,8 @@ finddir_type_t tmpfs_finddir (struct fs_node* node, char *name){
             fnode->read = NULL;
             fnode->write = NULL;
             fnode->ioctl = NULL;
-            fnode->open = tmpfs_open;
-            fnode->close = tmpfs_close;
+            fnode->open = (open_type_t)tmpfs_open;
+            fnode->close = (close_type_t)tmpfs_close;
 
             if(_tmpfs->type == FS_FILE){
                 
@@ -112,11 +112,11 @@ finddir_type_t tmpfs_finddir (struct fs_node* node, char *name){
             else{
                 
                 fnode->flags = FS_DIRECTORY;
-                fnode->mkdir   = tmpfs_mkdir;
-                fnode->create  = tmpfs_create;
-                fnode->unlink  = tmpfs_unlink;
-                fnode->readdir = tmpfs_readdir;
-                fnode->finddir = tmpfs_finddir;
+                fnode->mkdir   = (mkdir_type_t)tmpfs_mkdir;
+                fnode->create  = (create_type_t)tmpfs_create;
+                fnode->unlink  = (unlink_type_t)tmpfs_unlink;
+                fnode->readdir = (readdir_type_t)tmpfs_readdir;
+                fnode->finddir = (finddir_type_t)tmpfs_finddir;
 
             }
             return fnode;
@@ -129,7 +129,7 @@ finddir_type_t tmpfs_finddir (struct fs_node* node, char *name){
 
 
 struct dirent * tmpfs_readdir(fs_node_t *node, uint32_t index) {
-    // fb_console_printf("tmpfs_readdir: index:%u:%s\n", index, node->name);
+    // //fb_console_printf("tmpfs_readdir: index:%u:%s\n", index, node->name);
     
 
     if(node->flags != FS_DIRECTORY){
@@ -172,7 +172,7 @@ struct dirent * tmpfs_readdir(fs_node_t *node, uint32_t index) {
 }
 
 
-create_type_t tmpfs_create(fs_node_t* node, char* name, uint16_t permissions){
+void tmpfs_create(fs_node_t* node, char* name, uint16_t permissions){
 
 
     //create a new tmpfs entry
@@ -191,9 +191,9 @@ create_type_t tmpfs_create(fs_node_t* node, char* name, uint16_t permissions){
 }
 
 
-mkdir_type_t tmpfs_mkdir(fs_node_t* node, char* name, uint16_t permissions){
+void tmpfs_mkdir(fs_node_t* node, char* name, uint16_t permissions){
 
-    fb_console_printf("tmpfs_mkdir: %s, %x\n", name, permissions);
+    //fb_console_printf("tmpfs_mkdir: %s, %x\n", name, permissions);
     
     //create a new tmpfs entry
     tmpfs_device_t* croot = kcalloc(1, sizeof(tmpfs_device_t));
@@ -211,18 +211,18 @@ mkdir_type_t tmpfs_mkdir(fs_node_t* node, char* name, uint16_t permissions){
     return;
 }
 
-open_type_t tmpfs_open(fs_node_t* node, uint8_t read, uint8_t write){
+void tmpfs_open(fs_node_t* node, uint8_t read, uint8_t write){
 
     read &= 1;
     write &= 1;
-    node->read  = read ?  tmpfs_read  : NULL;
-    node->write = write ? tmpfs_write : NULL;
+    node->read  = (read_type_t)(read ?  tmpfs_read  : NULL);
+    node->write = (write_type_t)(write ? tmpfs_write : NULL);
 
     tmpfs_device_t* n = node->device;
     n->ref_count++;
 }
 
-close_type_t tmpfs_close(fs_node_t* node){
+void tmpfs_close(fs_node_t* node){
     
     tmpfs_device_t* n = node->device;
     n->ref_count--;
@@ -232,7 +232,7 @@ close_type_t tmpfs_close(fs_node_t* node){
 
 
 
-write_type_t tmpfs_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+uint32_t tmpfs_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
     
   
     tmpfs_device_t* tmpfs = node->device;
@@ -258,7 +258,7 @@ write_type_t tmpfs_write(struct fs_node *node , uint32_t offset, uint32_t size, 
     int page_offset = offset % 4096;
     // if(size > 1){
 
-    //     fb_console_printf("tmpfs_write: page_index:%u page_offset:%u\n", page_index, page_offset);
+    //     //fb_console_printf("tmpfs_write: page_index:%u page_offset:%u\n", page_index, page_offset);
     // }
     listnode_t* page = tmpfs->data_page_list.head;
 
@@ -300,7 +300,7 @@ write_type_t tmpfs_write(struct fs_node *node , uint32_t offset, uint32_t size, 
     return size;
 }
 
-read_type_t tmpfs_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+uint32_t tmpfs_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
 
     tmpfs_device_t* tmpfs =  node->device;
 
@@ -318,7 +318,7 @@ read_type_t tmpfs_read(struct fs_node *node , uint32_t offset, uint32_t size, ui
     
     // if(size > 1){
 
-    //     fb_console_printf("tmpfs_read: page_index:%u page_offset:%u\n", page_index, page_offset);
+    //     //fb_console_printf("tmpfs_read: page_index:%u page_offset:%u\n", page_index, page_offset);
     // }
 
     listnode_t* page = tmpfs->data_page_list.head;
@@ -341,7 +341,7 @@ read_type_t tmpfs_read(struct fs_node *node , uint32_t offset, uint32_t size, ui
     return size;
 }
 
-unlink_type_t tmpfs_unlink(fs_node_t* node, char* name){
+int tmpfs_unlink(fs_node_t* node, char* name){
 
     tmpfs_device_t* tmpfs = node->device;
     tree_node_t* tnode = tmpfs->self;

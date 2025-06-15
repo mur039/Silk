@@ -307,7 +307,11 @@ int v86_int(int number, context_t* ctx){ //?????? how nigga how??
     //ok turn k_thread into a v8086 process
     save_current_context(current_process);
     uint32_t* ebp;
-    asm volatile("mov %%ebp, %0": "r="(ebp) ::);
+    asm volatile(
+        "mov %%ebp, %0"
+        :"=r"(ebp) :
+        :
+    );
     fb_console_printf(" ebp :%x ebp[0]:%x eip[1]:%x\n", ebp, ebp[0], ebp[1]);
     
 
@@ -316,10 +320,10 @@ int v86_int(int number, context_t* ctx){ //?????? how nigga how??
     we store some information into the k_stack structure and use it to return 
     */
 
-    uint32_t * recovery_info = current_process->kstack;
+    uint32_t * recovery_info = (uint32_t*)current_process->kstack;
     recovery_info[0] = (uint32_t)ebp;
     recovery_info[1] = (uint32_t)ctx;
-    pcb_t * p_head = &recovery_info[2];
+    pcb_t * p_head = (pcb_t*)&recovery_info[2];
     *p_head = *current_process;
 
     
@@ -361,7 +365,7 @@ int v86_int(int number, context_t* ctx){ //?????? how nigga how??
     current_process->regs.cs = 0;
     current_process->regs.eip = 0x7c00;
     
-    uint8_t * phead = 0x7c00;
+    uint8_t * phead = (uint8_t*)0x7c00;
     phead[0] = 0xcd;
     phead[1] = number;
     
