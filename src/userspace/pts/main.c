@@ -18,7 +18,16 @@ int main(int argc, char** argv){
     }
     //grantpt unlockpt ptsname etc
     printf("ptsname of the slave that is: %s\n", ptsname(fdptmx));
-    pause();
+
+    char lbuff[128]= {0};
+    int  index = 0;
+    while(( index = read(fdptmx, lbuff, 128)) > 0){
+        lbuff[index] = '\0';
+        puts(lbuff);
+
+    }
+    
+
     close(fdptmx);
     return 0;    
 }

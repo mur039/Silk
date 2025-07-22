@@ -6,6 +6,9 @@
 #include <gdt.h>
 #include <queue.h>
 #include <syscalls.h>
+#include <fpu.h>
+
+
 queue_t ready_queue;
 queue_t blocked_queue;
 
@@ -255,6 +258,10 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     p1->syscall_state =  SYSCALL_STATE_NONE;
     p1->syscall_number = 0;
+
+
+    //initialize the fpu as well
+    initialize_fpu_user(p1);
     return p1;
 
 }
@@ -350,6 +357,7 @@ pcb_t * load_process(pcb_t * proc){
     }
 
     kfree(phdr);
+    close_fs(exec_file);
 
     proc->regs.eip = (uint32_t)elf_header.e_entry;
 
@@ -494,6 +502,7 @@ int context_switch_into_process(struct regs  *r, pcb_t * process)
     );
     
     current_page_dir = (uint32_t *)process->page_dir;
+    fpu_load_from_buffer(process->fpu);
 
     //well well well otherwise only works for ring3 tasks
     if( (process->regs.cs & 0x3) == 3){ //ring3 task
@@ -504,8 +513,10 @@ int context_switch_into_process(struct regs  *r, pcb_t * process)
     else{
         
         r->esp = process->regs.esp;
+        extern int resume_kthread(struct regs* r);
+        
 
-        return 0;
+        return resume_kthread(r);
         struct regs* newstack_r = (void*)r->esp;
         newstack_r -= 1;
         *newstack_r = *r; //copy it over
@@ -607,6 +618,9 @@ void save_context(struct regs * r, pcb_t * process){
     process->regs.ss = r->ss;
     process->regs.fs = r->fs;
     process->regs.gs = r->gs;
+
+    //save fpu state as well
+    fpu_save_to_buffer(process->fpu);
 }
 
 

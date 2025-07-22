@@ -20,42 +20,76 @@ static int is_tty_master(tty_t* tty){
 }
 
 void pts_driver_close(struct tty* tty){
-    
+     
     int index = tty->index;
+    struct ptypair* pair = masterslave_table[index];
+    tty_t *master, *slave;
+    master = &pair->master;
+    slave = &pair->slave;
 
-    if(!tty->refcount){
+    
+    if(tty->refcount == 0){
         circular_buffer_destroy(&tty->linebuffer);
         circular_buffer_destroy(&tty->read_buffer);
         circular_buffer_destroy(&tty->write_buffer);
 
-        tty->driver = NULL;
+
+        if(tty == master){
+            slave->eof_pending = 1;
+            process_wakeup_list(&slave->read_wait_queue);
+            //flush write buffer to the slave
+        }
+        else{
+            master->eof_pending = 1;
+            process_wakeup_list(&master->read_wait_queue);
+            //flush write buffer to the master
+        }
+
     }
 
-    struct ptypair* pair = masterslave_table[index];
-    
-    if(!pair->master.refcount && !pair->slave.refcount){
 
+    if(!master->refcount && !slave->refcount){ //both side are closed then
         kfree(pair);
         masterslave_table[index] = NULL;
     }
-    
+}
+
+void pts_driver_open(struct tty* tty){
+
+    int index = tty->index;
+    struct ptypair* pair = masterslave_table[index];
+    tty_t *master, *slave;
+    master = &pair->master;
+    slave = &pair->slave;
+
+    if(master == tty){ // i mean master has to be open anyway sooooooo
+
+    }
+    else{ // if slave opens we can wakeup the master if its sleeping on the write_queue
+    }
+
 }
 
 
 
 void pts_driver_putchar(struct tty* tty, char c){
+    
     struct ptypair* pair = masterslave_table[tty->index];
 
     if(&pair->master ==  tty){ //we are the master
         tty_ld_write(&pair->slave, &c, 1);
     }
     else{
-        tty_ld_write(&pair->master, &c, 1);
+        
+        circular_buffer_putc(&pair->master.read_buffer, c);
+        process_wakeup_list(&pair->master.read_wait_queue); // notify master
+        // tty_ld_write(&pair->master, &c, 1);
     }
 
 }
 
 void pts_driver_write(struct tty* tty, const char* c, size_t nbytes){
+    
     for(size_t i = 0; i < nbytes; ++i){
         tty->driver->put_char(tty,c[i]);
     }
@@ -66,6 +100,7 @@ void pts_driver_write(struct tty* tty, const char* c, size_t nbytes){
 struct tty_driver pts_driver = {
     
     .name = "pts", 
+    .num = 3,
     .close = &pts_driver_close,
     .write = &pts_driver_write,
     .put_char = &pts_driver_putchar
@@ -108,7 +143,7 @@ struct ptypair* pts_allocate_slot(){
     pair->slave.size.ws_col = 80;
     pair->slave.size.ws_row = 25;
     pair->slave.index = index;
-    pair->slave.termio.c_lflag = ISIG | ICANON ;
+    pair->slave.termio.c_lflag = ISIG | ICANON | ECHO ;
     pair->slave.read_wait_queue = list_create();
     pair->slave.read_buffer = circular_buffer_create(4096);
     pair->slave.write_buffer = circular_buffer_create(4096);

@@ -54,14 +54,18 @@ typedef enum {
 } syscall_state_t;
 
 
+typedef uint8_t fpu_state_t[512];
+
+
 typedef struct {
-    char filename[512];
+    u32 state;
     int argc;
     char **argv;
     context_t regs;
     uint8_t *stack_top, *stack_bottom;
+    char filename[512];
+    fpu_state_t fpu;
     file_t open_descriptors[MAX_OPEN_FILES]; //max opened files
-    u32 state;
 
     
     //identifiying info, different between childs and parents
@@ -85,7 +89,6 @@ typedef struct {
     unsigned long syscall_number;
     
 }pcb_t;
-
 
 extern list_t * process_list;
 extern pcb_t * current_process;

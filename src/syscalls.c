@@ -84,15 +84,28 @@ void syscall_dup2(struct regs *r)
     int old_fd = (int)r->ebx;
     int new_fd = (int)r->ecx;
 
+    if(old_fd < 0 || old_fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
+
+    if(new_fd < 0 || new_fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return;
+    }
+
+    file_t *oldfile, *newfile;
+    oldfile = &current_process->open_descriptors[old_fd];
+    newfile = &current_process->open_descriptors[new_fd];
+
     // check whether given old_fd is valid
-    if (!current_process->open_descriptors[old_fd].f_inode)
-    { // emty one so err
+    if (!oldfile->f_inode){ // emty one so err
+        r->eax = -EBADF;
         return;
     }
 
     // check if new_fd is open, is so close it
-    if (current_process->open_descriptors[new_fd].f_inode)
-    { // open file_desc
+    if (newfile->f_inode){
         close_for_process(current_process, new_fd);
     }
 
@@ -322,7 +335,7 @@ void syscall_lseek(struct regs *r)
 
     if (file->f_inode == NULL)
     { // check if its opened
-        r->eax = -1;
+        r->eax = -EBADF;
         return;
     }
 
@@ -447,7 +460,7 @@ void syscall_read(struct regs *r){
     file_t *file = &current_process->open_descriptors[fd];
     if (file->f_inode == NULL)
     { // check if its opened
-        r->eax = -1;
+        r->eax = -EBADF;
         return;
     }
 
@@ -501,21 +514,26 @@ void syscall_write(struct regs *r)
 
     if (file->f_inode == NULL)
     { // check if its opened
-        r->eax = -1;
+        r->eax = -EBADF;
         return;
     }
 
     if ((file->f_flags & (O_WRONLY | O_RDWR)) == 0  )
     { // check if its writable
-        r->eax = -1;
+        r->eax = -EINVAL;
         return;
     }
 
     fs_node_t *node = (fs_node_t *)file->f_inode;
     int result = write_fs(node, file->f_pos, count, buf);
 
-    if (result == -1)
-    {
+    if (result == -1){
+
+         if (file->f_flags & O_NONBLOCK)
+        {
+            r->eax = -EAGAIN;
+            return;
+        }
 
         current_process->state = TASK_INTERRUPTIBLE;
         current_process->syscall_state = SYSCALL_STATE_PENDING;
@@ -1373,12 +1391,23 @@ void syscall_ioctl(struct regs *r)
     //                      &r->edi,
     //                      &r->ebp
     //                  };
+
+    //check fd numerically
     if (fd < 0 || fd > MAX_OPEN_FILES){
         r->eax = -EBADF;
         return;
     }
 
-    fs_node_t *node = (fs_node_t *)current_process->open_descriptors[fd].f_inode;
+    //check if the file is an open file
+    file_t* file = &current_process->open_descriptors[fd];
+    if(!file->f_inode){
+        r->eax = -EBADF;
+        return;
+    }
+
+
+    fs_node_t *node = (fs_node_t *)file->f_inode;
+
     if (node->ioctl){
         r->eax = node->ioctl(node, request, argp);
     }

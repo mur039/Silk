@@ -36,6 +36,7 @@ disable_interrupts:
 
 extern dump_stuck_frame
 extern schedule
+extern dump_registers
 
 global jump_usermode
 jump_usermode:
@@ -46,6 +47,7 @@ jump_usermode:
 	;mov gs, ax ; SS is handled by iret
  
 	; set up the stack frame iret expects
+
 	push (4 * 8) | 3 ; data selector, stack segment also
 	push 0 ; user stack
 	pushf ; eflags
@@ -55,6 +57,7 @@ jump_usermode:
 	;yes i will set up typical interrupt frame for the schedular and directly jump 
 	; to the next ready process instead of intermediate empty code block
 	;set up what interrupt handlers like timer which calls the schedular expects
+
 	push 0 ;err_code
 	push 0 ; supposed interrupt number
 
@@ -63,52 +66,19 @@ jump_usermode:
     push es
     push fs
     push gs
+
+	mov ax, 0x10   ; Load the Kernel Data Segment descriptor!
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
     
     mov eax, esp   ; Push us the stack
     push eax
     mov eax, schedule
     call eax
     pop eax   ;shoudl have the r?
-    
-    jmp .old
 
-; ; push ss, esp, eflags, cs, eip in that order
-    push dword [eax + 72] ; ss
-    push dword [eax + 68] ; user esp
-    push dword [eax + 64] ; eflags
-    push dword [eax + 60] ; cs
-    push dword [eax + 56] ; eip
-
-    push eax
-    mov eax, esp
-    push eax
-    call dump_stuck_frame
-    pop eax
-    pop eax
-    
-
-    ; restore general-purpose registers
-    mov ecx, [eax + 40]   ; ecx
-    mov edx, [eax + 36]   ; edx
-    mov ebx, [eax + 32]   ; ebx
-    ;mov esp, [eax + 28]   ; esp (will be overwritten by iret anyway)
-    mov ebp, [eax + 24]   ; ebp
-    mov esi, [eax + 20]    ; esi
-    mov edi, [eax + 16]    ; edi
-
-    push eax
-    mov eax,0x23
-    mov ds, eax
-    mov es, eax
-    mov fs, eax
-    mov gs, eax
-    pop eax
-    mov eax, [eax + 44]   ; eax
-
-    iret
-
-.old:
-    ; old
     pop gs
     pop fs
     pop es
@@ -149,6 +119,26 @@ user_mode_test:
 	push (3 * 8) | 3 ; code selector (ring 3 code with bottom 2 bits set for ring 3)
 	push test_user_function ; instruction address to return to
 	iret
+
+
+global resume_kthread
+resume_kthread:
+	mov eax, [esp + 4]
+	ret
+	
+	pop eax
+	pop gs
+	pop fs
+	pop es
+	pop ds
+	popa
+	add esp, 8
+	; unsigned int eip, cs, eflags, useresp, ss;
+	iret
+
+
+	ret
+	
 
 
 

@@ -29,18 +29,17 @@ void ps2_mouse_initialize(){
 }
 
 
-
 volatile int is_available = 0;
 int lock = 0;
 ps2_mouse_generic_package_t ps2_mouse_irq_package;
 void ps2_mouse_handler(struct regs *r){
     (void)r;
-        ps2_mouse_generic_package_t in;
-        u8 * phead = (u8*)&in;
-        for(int i = 0; i < 3; ++i){
+    ps2_mouse_generic_package_t in;
+    u8 * phead = (u8*)&in;
+    for(int i = 0; i < 3; ++i){
             
-            phead[i] = inb(PS2_DATA_PORT);
-        }
+	phead[i] = inb(PS2_DATA_PORT);
+    }
 
 
     if(!lock){
@@ -52,6 +51,8 @@ void ps2_mouse_handler(struct regs *r){
     // fb_console_printf("PkcsS/2 mouse  (dx, dy, button): %x %x %x\r", ps2_mouse_irq_package.x_axis_move& 0xff, ps2_mouse_irq_package.y_axis_move & 0xff, ps2_mouse_irq_package.bits.raw);
     return;
 }
+
+
 
  //data is 3 byte and is little endian encoded so sign bit can be used if call is succesfull
 int32_t ps2_mouse_read(){

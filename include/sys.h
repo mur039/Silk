@@ -75,6 +75,32 @@ static inline uint32_t inl(uint16_t port)
     return ret;
 }
 
+
+
+
+
+//CR0 fields
+
+
+
+static inline uint32_t get_cr0(){
+    uint32_t ret;
+    asm volatile ( "mov %%cr0, %0" : "=r"(ret) );
+    return ret;
+}
+
+//will return old one and replace it
+static inline uint32_t set_cr0(uint32_t cr0){
+    uint32_t ret = get_cr0();
+       __asm__ volatile (
+        "mov %0, %%cr0"
+        :
+        : "r"(cr0)
+        : "memory"
+    );
+    return ret;
+}
+
 static inline uint32_t get_cr3(){
     uint32_t ret;
     asm volatile ( "mov %%cr3, %0" : "=r"(ret) );
@@ -92,6 +118,28 @@ static inline uint32_t set_cr3(u32 cr3){
     );
     return ret;
 }
+
+
+static inline uint32_t get_cr4(){
+    uint32_t ret;
+    asm volatile ( "mov %%cr4, %0" : "=r"(ret) );
+    return ret;
+}
+
+//will return old one and replace it
+static inline uint32_t set_cr4(u32 cr4){
+    uint32_t ret = get_cr4();
+       __asm__ volatile (
+        "mov %0, %%cr4"
+        :
+        : "r"(cr4)
+        : "memory"
+    );
+    return ret;
+}
+
+
+
 
 
 

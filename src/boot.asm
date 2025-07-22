@@ -36,7 +36,10 @@ _start:
     push eax
     push ebx
     call lkmain
+    cli
+_haltloop:
     hlt
+    jp _haltloop
 
 ;-----------------------------------
 CODE_SEG equ GDT_code - GDT_start;

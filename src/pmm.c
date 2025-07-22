@@ -245,6 +245,10 @@ int pmm_alloc_is_chain_corrupted(){
     int index = 0;
     for(block_t* head = kmalloc_mem_list ;  head  ; head = head->next){
 
+        if(head == head->next){
+            return 0;
+        }
+
         int head_is_free = head->is_free & 1ul;
         int head_magic = head->is_free & ~1ul;
 
@@ -279,6 +283,7 @@ void * kmalloc(unsigned int size){
     //for next k*alloc if it fails then at least we get the last callers of this function thus the corrupting function
     // inkernelstacktrace();
     // alloc_print_list();
+
     if(pmm_alloc_is_chain_corrupted()){
         halt();
     }
@@ -310,25 +315,76 @@ void * kmalloc(unsigned int size){
             return NULL;
         }
 
-        if( (head->is_free & 1ul) && (size + sizeof(block_t) ) <= head->size  ){
-            uint8_t* placement = (uint8_t*)&head[1];
-            placement += size;
+        if( (head->is_free & 1ul) && (size + sizeof(block_t) ) <= head->size ){
 
-            block_t* next_free = (block_t*)placement;
-            next_free->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
-            next_free->size = head->size - size - sizeof(block_t);
-            next_free->prev = head;
-            next_free->next = head->next;
-
-            if(!next_free->next){ //possible the last item
-                malloc_last_block = next_free;
+            //yes block size can take the size and the block but the split one is applicable?
+            size_t left = head->size - (size + sizeof(block_t));
+            if(left <= sizeof(block_t)){ //if left size is smaller or equal than block_t, then 
+                
+                //we don't split, mark the block as allocated
+                head->is_free = KMALLOC_MAGIC | KMALLOC_ALLOCATED;
+                return &head[1]; //return the memory
             }
+            else{ //splitable
+                /*
+                head:
+                *---------------------
+                *-----------
+                            *---------
+                
+                */
 
-            head->is_free = KMALLOC_MAGIC | KMALLOC_ALLOCATED;
-            head->next = next_free;
-            head->size = size;
-        
-            return &head[1];
+                #if 0
+                // head has, header and size
+                // since it's a block the header is already allocated thus size -> new_size + header + left
+                uint8_t* byteptr = (uint8_t*)head;
+                byteptr += sizeof(block_t) + size;
+                block_t* nblock = (block_t*)byteptr;
+                
+                head->is_free = KMALLOC_MAGIC | KMALLOC_ALLOCATED;
+                head->size = size;
+
+                nblock->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
+                nblock->size = left;
+
+
+                nblock->next = head->next;
+                nblock->prev = head;
+                head->next = nblock;
+                if(nblock->next){
+                    nblock->next->prev = nblock;
+                }
+                else{ //possibly nblock is the last item thu
+                    malloc_last_block = nblock;
+                }
+
+                return &head[1];
+    
+            #else
+
+                uint8_t* placement = (uint8_t*)&head[1];
+                placement += size;
+                
+                block_t* next_free = (block_t*)placement;
+                next_free->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
+                next_free->size = head->size - size - sizeof(block_t);
+                next_free->prev = head;
+                next_free->next = head->next;
+
+                if(!next_free->next){ //possible the last item
+                    malloc_last_block = next_free;
+                }
+            
+                head->is_free = KMALLOC_MAGIC | KMALLOC_ALLOCATED;
+                head->next = next_free;
+                head->size = size;
+                
+                return &head[1];
+
+                #endif
+
+
+            }
         }
         
         index++;
@@ -337,6 +393,7 @@ void * kmalloc(unsigned int size){
     
     error("out of memory");
     uart_print(COM1, "tried to allocate %u, allocating a page\r\n", size);
+    alloc_print_list();
     halt();
 
     block_t* newpage = kpalloc(16);
@@ -460,8 +517,33 @@ void kfree(void * ptr){
     block_t* prev = head->prev;
     block_t* next = head->next;
 
-    //pointers got corrupted somewhere which makes next and prev to point to a memory outside of the mapped memory
+    /*
+        *----*------*-----
+        *----*------------
+    
+    */
+    
+#if 0
+    if(next && KMALLOC_IS_FREE(next->is_free)){
+        head->size += next->size + sizeof(block_t);
+        head->next = next->next;
+        if(head->next){
+            head->next->prev = head;
+        }
+    }
 
+    if(prev && KMALLOC_IS_FREE(prev->is_free)){
+        prev->size += head->size += sizeof(block_t);
+        prev->next = head->next;
+        if(prev->next){
+            prev->next->prev = prev;
+        }
+    }
+
+
+
+
+#else
     if(next){
 
         if(!is_virtaddr_mapped(next)){ //if next is not mapped than it is invalid so nullify
@@ -494,6 +576,10 @@ void kfree(void * ptr){
             }
         }
     }
+
+    #endif
+
+
 }
 
 

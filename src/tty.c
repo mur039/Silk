@@ -126,11 +126,16 @@ void tty_open(struct fs_node* fnode, int read, int write){
 void tty_close(struct fs_node* fnode){
     tty_t* tty = ((device_t*)fnode->device)->priv;
 
-    if(tty->refcount > 0) tty->refcount--;
+    if(tty->refcount > 0){
 
-    if(tty->driver && tty->driver->close){
-        tty->driver->close(tty);
+        tty->refcount--;
+        
+        if(tty->driver && tty->driver->close){
+            tty->driver->close(tty);
+        }
+
     }
+    
 
     return;
 };
@@ -152,11 +157,11 @@ uint32_t tty_read(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t
     //if canonical then should read up to readline or size
     if(tty->termio.c_lflag & ICANON){ 
 
-        if(tty->eof_pending){
-            
-            tty->eof_pending = 0;
+        if(tty->eof_pending == 1){
             size_t remaining = circular_buffer_avaliable(&tty->read_buffer);
-            circular_buffer_read(&tty->read_buffer, buffer, 1, remaining);
+            if(remaining) 
+                circular_buffer_read(&tty->read_buffer, buffer, 1, remaining);
+            tty->eof_pending = 0;
             return remaining;
         }
         

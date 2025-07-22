@@ -737,6 +737,9 @@ int process_key(int c){
                 printf("\n%s ", prompt_buf);
                 break;
 
+            case 4: //^D
+                exit(0);
+            break;
             case '\b': //remove character
                 command_buffer[command_buffer_index] = '\0';
                 command_buffer_index -= 1;

@@ -49,6 +49,7 @@
 #include <network/e1000.h>
 #include <network/netif.h>
 #include <vt.h>
+#include <fpu.h>
 
 extern uint32_t bootstrap_pde[1024];
 extern uint32_t bootstrap_pte1[1024];
@@ -65,8 +66,6 @@ static inline void reboot_by_ps2(){ //there's no way i can return
 
 
 
-volatile int  is_received_char = 0;
-char ch;
 
 
 uint32_t kernel_stack[2048];
@@ -480,7 +479,6 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     initialize_netif();
     
     enumerate_pci_devices();    
-
     fb_console_printf("Found PCI devices: %u\n", pci_devices.size);
     for(listnode_t * node = pci_devices.head; node != NULL ;node = node->next ){
         pci_device_t *dev = node->val;
@@ -554,7 +552,7 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     install_basic_framebuffer((void*)0xfd000000, mbd->framebuffer_width, mbd->framebuffer_height, mbd->framebuffer_bpp);
     
     // asm volatile("fninit\n\t"); //floating points or sumthin, but at the moment we don't save fpu state
-
+    initialize_fpu();
     process_init();
     pcb_t * init =  create_process("/bin/init", (char* []){"/bin/init", NULL} );
     init->sid = 1;
@@ -562,7 +560,7 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
     jump_usermode();
     
-    
+
     //we shouldn't get there //if we do.. well that's imperessive
     for(;;){   
 

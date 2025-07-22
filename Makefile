@@ -94,13 +94,13 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/syscalls.c -o $(BUILD_DIR)/syscalls.o
 	i686-elf-gcc $(CFLAGS) ./src/pci.c -o $(BUILD_DIR)/pci.o
 	i686-elf-gcc $(CFLAGS) ./src/process.c -o $(BUILD_DIR)/process.o
-	i686-elf-gcc $(CFLAGS) ./src/elf.c -o $(BUILD_DIR)/elf.o
 	i686-elf-gcc $(CFLAGS) ./src/g_list.c -o $(BUILD_DIR)/g_list.o
 	i686-elf-gcc $(CFLAGS) ./src/g_tree.c -o $(BUILD_DIR)/g_tree.o
 	i686-elf-gcc $(CFLAGS) ./src/circular_buffer.c -o $(BUILD_DIR)/circular_buffer.o
 	i686-elf-gcc $(CFLAGS) ./src/pipe.c -o $(BUILD_DIR)/pipe.o
 	i686-elf-gcc $(CFLAGS) ./src/vmm.c -o $(BUILD_DIR)/vmm.o
 	i686-elf-gcc $(CFLAGS) ./src/vt.c -o $(BUILD_DIR)/vt.o
+	i686-elf-gcc $(CFLAGS) ./src/fpu.c -o $(BUILD_DIR)/fpu.o
 
 	i686-elf-gcc $(CFLAGS) ./src/network/netif.c -o $(BUILD_DIR)/netif.o
 	i686-elf-gcc $(CFLAGS) ./src/network/route.c -o $(BUILD_DIR)/route.o
@@ -117,12 +117,12 @@ kernel:
 		boot.o lkmain.o \
 		kmain.o str.o uart.o acpi.o idt.o isr.o isr_asm.o irq.o irq_asm.o \
 		pmm.o pit.o gdt.o misc_asm.o ps2.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
-		v86.o pci.o elf.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o \
+		v86.o pci.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o \
 		ata.o cmos.o virtio.o pipe.o vmm.o queue.o semaphore.o g_tree.o nulldev.o proc.o \
 		fat.o ext2.o tmpfs.o tty.o char.o bosch_vga.o \
 		socket.o unix_domain_socket.o  inet_socket.o \
 		netif.o route.o e1000.o arp.o ipv4.o udp.o tcp.o \
-		vt.o pts.o
+		vt.o pts.o fpu.o
 
 	
 debug_kernel:kernel.elf
@@ -136,6 +136,7 @@ debug: kernel.elf
 
 
 setup_network_tap_if:
+	sudo ip tuntap add dev tap0 mode tap	
 	sudo ip addr add 192.168.100.1/24 dev tap0
 	sudo ip link set tap0 up
 

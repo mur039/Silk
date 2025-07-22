@@ -91,7 +91,7 @@ static struct dirent * proc_readdir(fs_node_t *node, uint32_t index) {
 enum process_attributes_enum{
     CMD_LINE = 0,
     CMD_MMAP,
-
+    CMD_STAT,
 
     PROCESS_ATTRIBUTES_ENUM__EOL
 };
@@ -99,6 +99,7 @@ enum process_attributes_enum{
 const char * process_attribute[] = {
     [CMD_LINE] = "cmdline",
     [CMD_MMAP] = "maps",
+    [CMD_STAT] = "stat",
     
     
     
@@ -214,6 +215,8 @@ static uint32_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t s
 
 }
  
+#include <tty.h>
+#include <filesystems/pts.h>
 static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
     //impl contains pid, inode contains the file index which specifies the data
     pid_t proc_pid = node->impl;
@@ -224,6 +227,8 @@ static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
     //should exist. this is what happens when you blindly copy paste :/
     pcb_t* proc = process_get_by_pid(proc_pid);
     uint8_t *byteptr;
+    char localbuffer[256];
+
     switch(attr_index){
         case CMD_LINE:
             node->device = file;
@@ -247,7 +252,6 @@ static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
         case CMD_MMAP:
         node->device = file;
         file->strlen = 0;
-        char localbuffer[128];
         
         for(listnode_t* lnode = proc->mem_mapping->head; lnode ; lnode = lnode->next){
             vmem_map_t* vmem = lnode->val;
@@ -284,6 +288,53 @@ static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
         }
 
         pmm_alloc_is_chain_corrupted();
+
+        break;
+
+        case CMD_STAT:
+        node->device = file;
+        file->strlen = 0;
+
+        int tty_nr;
+        tty_t* tty = ((tty_t*)proc->ctty);
+        if(!tty) tty_nr = 0;
+        else{
+            
+            int major =  0, minor = 0;
+            switch(tty->driver->num){
+                
+                case 1: //serial
+                    major = 4;
+                    minor = 64; 
+                    minor += tty->index;
+                    break;
+                case 2: //vt
+                    major = 4;
+                    minor += tty->index;
+                break;
+
+                case 3: //pts
+                
+                    major = 136;
+                    minor = tty->index;
+                    break;
+                default: 
+                break;
+            }
+            
+            tty_nr = (major << 8) | minor;
+        }
+        file->strlen = sprintf(
+                                localbuffer, "%u (%s) %c %u %u %u %u", 
+                                proc->pid, proc->filename, 
+                                proc->state  == TASK_RUNNING ? 'R' : '?',
+                                ((pcb_t*)(proc->parent->val))->pid,
+                                proc->pgid,
+                                proc->sid,
+                                tty_nr
+                            );
+        file->str_data = kcalloc(file->strlen, 1);
+        memcpy(file->str_data, localbuffer, file->strlen);
 
         break;
 

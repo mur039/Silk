@@ -50,7 +50,9 @@
         "types.h": "c",
         "inttypes.h": "c",
         "stddef.h": "c",
-        "netif.h": "c"
+        "netif.h": "c",
+        "cmos.h": "c",
+        "show.h": "c"
     }
     
 }

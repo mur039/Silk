@@ -8,6 +8,11 @@ struct vt *virtualterms = NULL;
 struct vt *active_vt;
 
 
+static struct vt* vt_get_from_tty( struct tty* tty){
+    return &virtualterms[tty->index];
+}
+
+
 
 int vt_tty_send(int _scancode){
 
@@ -62,17 +67,35 @@ int vt_tty_send(int _scancode){
 }
 
 
+static void vt_flush_output(struct tty* tty){
+    size_t remaining = circular_buffer_avaliable(&tty->write_buffer);
+    while(remaining--){
+        vt_console_putchar(circular_buffer_getc(&tty->write_buffer));
+    }
+}
 
 void tty_driver_vt_putchar(struct tty* tty, char c){
     
+    struct vt* vt = vt_get_from_tty(tty);
     int active_index = (int)(active_vt - virtualterms);
     
-    if(active_index != tty->index){
+    //either not active display or we are in graphical mode
+    if(active_index != tty->index || (vt->kmode & 1)){
 
-        circular_buffer_putc(&tty->write_buffer, c);
+        if( circular_buffer_avaliable(&tty->write_buffer) >= 4096){
+            //yakışmadı imamoğlu
+            //discard it 
+        }
+        else{
+            circular_buffer_putc(&tty->write_buffer, c);
+        }
         return;
     }
     
+    //if character is newline or buffer is filled then
+    if(c == '\n'){
+        vt_flush_output(tty);
+    }
     vt_console_putchar(c);
     return;
 }
@@ -85,24 +108,78 @@ void tty_driver_vt_write(struct tty* tty, const char* buf, size_t len){
     }
 }
 
+void tty_driver_vt_close(struct tty* tty){
+    
+    
+
+    return;
+}
+
 struct tty_driver vt_driver = {
     
     .name = "vt",
     .num = 2,
     .write =  &tty_driver_vt_write,
-    .put_char = &tty_driver_vt_putchar
+    .put_char = &tty_driver_vt_putchar,
+    .close = &tty_driver_vt_close
+    
 };
 
+
+#include <syscalls.h>
+int vt_ioctl(fs_node_t* fnode, unsigned long op, void* argp){
+
+     //no controlling terminal
+    if(!current_process->ctty){
+        return -ENOTTY;
+    }
+
+
+    tty_t* tty = ((device_t*)fnode->device)->priv;
+    struct vt* vt = vt_get_from_tty(tty);
+
+    if(current_process->ctty != tty){ //fd not associated with this tty
+        return -ENOTTY;
+    }
+
+    if(tty->session != current_process->sid){
+        return -ENOTTY;
+    }
+
+    
+    int* ptr = (int*)argp;
+    switch (op){
+        
+    case KDGETMODE:
+        if(!is_virtaddr_mapped(ptr)) return -EFAULT;
+        *ptr = vt->kmode & 1;
+    break;
+    
+    case KDSETMODE:
+        vt->kmode &= ~1ul;
+        vt->kmode |= ((int)argp) & 1;
+        if(!(vt->kmode & 1) && active_vt == vt_get_from_tty(tty)){ 
+            vt_flush_output(tty);
+        }
+    break;
+    default: 
+        return tty_ioctl(fnode, op, argp);
+    break;
+    }
+
+    return 0;
+}
 
 
 void vt_csr_blinker(void* vs){
     
+    int kdmode = active_vt->kmode & 1;
     int crsr_state = (active_vt->kmode >> 1) & 3;
     int crsr_en = crsr_state & 1;
     int crsr_visible = (crsr_state >> 1) & 1;
     //okay check if cursor is disabled and is it on screen
  
-    if(crsr_en){
+    if(crsr_en && !kdmode){
 
         char chr, attr;
         chr = active_vt->textbuff[ active_vt->tty.size.ws_col * active_vt->cursor_pos[1] + active_vt->cursor_pos[0]];
@@ -134,7 +211,7 @@ int install_virtual_terminals(int count, int row, int cols){
         return -1;
     }   
     
-    timer_register(500, 500, vt_csr_blinker, NULL);
+    timer_register(250, 250, vt_csr_blinker, NULL);
 
     for(int i = 0; i < count ; ++i){
         device_t dev;
@@ -147,7 +224,7 @@ int install_virtual_terminals(int count, int row, int cols){
         dev.close = (close_type_t)tty_close;
         dev.write = (write_type_t)tty_write;
         dev.read = (read_type_t)tty_read;
-        dev.ioctl = (ioctl_type_t)tty_ioctl; //????
+        dev.ioctl = (ioctl_type_t)vt_ioctl; //????
 
         struct vt* vt = &virtualterms[i];
         struct tty* tty = &vt->tty;
@@ -188,7 +265,7 @@ void vt_console_putchar(unsigned short c){
     if(active_vt->kmode & 0b100){ // if visible then
         vt_csr_blinker(NULL);
     }
-    // if(fb_cursor_state ) cursor_blinker(NULL);
+
     //actually buffer for unicode as well?????
     if(active_vt->esc_encoder[0] == '\e'){ //non empty and possiblt valid? encoder
 
@@ -230,6 +307,29 @@ void vt_console_putchar(unsigned short c){
         
         switch(opcode){
 
+
+            case 'A': //move up
+            
+                while ((buffhead < bufftail)){ //^[[{0, 1, 2, 3}J
+                    if( !IS_NUMBER(*buffhead)){ //hmmmmmm
+                        state = -1;
+                        break;
+                    }
+                    arguments[0] *= 10;
+                    arguments[0] += *buffhead - '0';
+                    buffhead++;
+                }
+
+                if(state < 0) break;
+
+                if(active_vt->cursor_pos[1] < (size_t)arguments[0]){
+                    active_vt->cursor_pos[1] = 0;
+                }
+                else{
+                    active_vt->cursor_pos[1] -= arguments[0];
+                }
+                
+            break;
 
             case 'H':  //^[[H   ^[[{line};{col}H
                 if(bufftail[-1] == '['){ //just ^[[H
@@ -539,5 +639,13 @@ int vt_redraw(){
         }
     }
 
+
+    //flush write buffer to the screen
+    struct tty* tty = &active_vt->tty;
+    size_t remaining = circular_buffer_avaliable(&tty->write_buffer);
+    for(size_t i = 0; i < remaining; ++i){
+        vt_console_putchar( circular_buffer_getc(&tty->write_buffer));
+    }
+    
     return 0;
 }
