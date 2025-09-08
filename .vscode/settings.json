@@ -52,7 +52,13 @@
         "stddef.h": "c",
         "netif.h": "c",
         "cmos.h": "c",
-        "show.h": "c"
+        "show.h": "c",
+        "unwind.h": "c",
+        "module.h": "c",
+        "g_tree.h": "c",
+        "lfs_util.h": "c",
+        "shell.h": "c",
+        "parser.h": "c"
     }
     
 }

@@ -44,7 +44,7 @@ struct vt {
 int vt_redraw();
 int vt_tty_send(int scancode);
 int install_virtual_terminals(int count, int row, int cols);
-void vt_console_putchar( unsigned short c);
+void vt_console_putchar( unsigned int c);
 
 #define KDGETMODE	0x4B3B	//Get current mode (KD_TEXT/KD_GRAPHICS)
 #define KDSETMODE	0x4B3A	//Set mode (text/graphics)

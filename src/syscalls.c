@@ -113,10 +113,9 @@ void syscall_dup2(struct regs *r)
     // also open the newfd as well so that if fs implement refcounting it reference counts again
     fs_node_t *node = (fs_node_t*)current_process->open_descriptors[new_fd].f_inode;
 
-    int read = (current_process->open_descriptors[new_fd].f_flags & O_RDONLY) != 0 | (current_process->open_descriptors[new_fd].f_flags & O_RDWR) != 0;
-    int write = (current_process->open_descriptors[new_fd].f_flags & O_WRONLY) != 0 | (current_process->open_descriptors[new_fd].f_flags & O_RDWR) != 0;
+    int nflags = current_process->open_descriptors[new_fd].f_flags; 
 
-    open_fs(node, read, write); // to incerement refcount possibly
+    open_fs(node, nflags); // to incerement refcount possibly
     r->eax = new_fd;
     return;
 }
@@ -290,8 +289,6 @@ void syscall_execve(struct regs *r){
     empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); // 3G -> 786432 pages
     list_insert_end(cp->mem_mapping, empty_pages);
 
-
-    context_switch_into_process(r, cp); // hacky
     schedule(r);
     return;
 }
@@ -384,7 +381,8 @@ int32_t open_for_process(pcb_t *process, char *path, int flags, int mode){
                         
         if(!(flags & O_CREAT)){
             filedesc->f_inode = NULL;
-            return -ENOENT;
+            // fb_console_printf("sys_open: failed to find %s at %s", path, current_process->cwd);
+            return -ENOENT; 
         }
 
         
@@ -413,6 +411,9 @@ int32_t open_for_process(pcb_t *process, char *path, int flags, int mode){
 
     }
 
+    if( (flags & O_TRUNC)  && (flags & (O_WRONLY | O_RDWR)) && file->ops.truncate){
+        file->ops.truncate(file, 0);
+    }
        
     filedesc->f_inode = (void *)file; // forcefully
     filedesc->f_flags = flags;
@@ -437,12 +438,7 @@ void syscall_open(struct regs *r)
 #include <semaphore.h>
 #include <circular_buffer.h>
 #include <pipe.h>
-extern volatile int is_received_char;
 extern char ch;
-extern volatile int is_kbd_pressed;
-extern char kb_ch;
-extern uint8_t kbd_scancode;
-extern circular_buffer_t *ksock_buf;
 
 typedef struct dirent dirent_t;
 
@@ -466,7 +462,12 @@ void syscall_read(struct regs *r){
 
     if ((file->f_flags & (O_RDONLY | O_RDWR)) == 0)
     { // check if its readable
-        r->eax = -1;
+        r->eax = -EBADF;
+        return;
+    }
+
+    if( !(is_virtaddr_mapped(buf) && (uint32_t)buf < 0xc0000000)){
+        r->eax =  -EINVAL;
         return;
     }
 
@@ -697,10 +698,7 @@ void syscall_fork(struct regs *r) { // the show begins
 
         int rmask = O_RDONLY | O_RDWR, wmask = O_WRONLY | O_RDWR;
 
-        int read = (file->f_mode & rmask) != 0 || (file->f_flags & rmask) != 0;
-        int write = (file->f_mode & wmask) != 0 || (file->f_flags & wmask) != 0;
-
-        open_fs(node, read, write);
+        open_fs(node, file->f_flags);
         file++;
     }
 
@@ -779,8 +777,8 @@ void syscall_pipe(struct regs *r)
     fs_node_t *pipe_r = create_pipe(300);
     fs_node_t *pipe_w = memcpy( kmalloc(sizeof(fs_node_t)), pipe_r, sizeof(fs_node_t));
 
-    open_fs(pipe_r, 1, 0);
-    open_fs(pipe_w, 0, 1);
+    open_fs(pipe_r, O_RDONLY);
+    open_fs(pipe_w, O_WRONLY);
 
     // read head
     fdesc_r->f_inode = (void *)pipe_r;
@@ -845,7 +843,7 @@ void syscall_wait4(struct regs *r)
             return;
         }
 
-        else if (cproc->state == TASK_STOPPED){ // yes exited fella
+        else if (cproc->state == TASK_STOPPED){ // yes stopeed fella
             pid_t retpid = cproc->pid;
             if (wstatus)
                 *wstatus = (SIGSTOP << 8) | 0x7f;
@@ -879,6 +877,7 @@ void syscall_wait4(struct regs *r)
 void syscall_mmap(struct regs *r)
 {
 
+    
     r->eax = 0;
     void *addr = (void *)r->ebx;
     size_t length = (size_t)r->ecx;
@@ -889,8 +888,8 @@ void syscall_mmap(struct regs *r)
 
     if (fd == -1 && flags & MAP_ANONYMOUS)
     { // practically requesting a page
-
         
+        enable_interrupts();    
         uint32_t nof_pages = (length / 4096) + (length % 4096 != 0);
 
         void** phypages = kcalloc(nof_pages, sizeof(void*));
@@ -934,13 +933,13 @@ void syscall_mmap(struct regs *r)
 
     fs_node_t *device_in_question = (fs_node_t *)current_process->open_descriptors[fd].f_inode;
 
-    if(!device_in_question->mmap){
+    if(!device_in_question->ops.mmap){
         r->eax = -1;
         return;
     }    
 
    
-    r->eax = (uint32_t)device_in_question->mmap(device_in_question, length, prot, offset);
+    r->eax = (uint32_t)device_in_question->ops.mmap(device_in_question, length, prot, offset);
     return;
 }
 
@@ -948,9 +947,16 @@ void syscall_kill(struct regs *r)
 {
     pid_t pid = (pid_t)r->ebx;
     unsigned int signum = (int)r->ecx;
-    
     save_context(r, current_process);
-    int err = process_send_signal(pid, signum);
+
+    int err = -EINVAL;
+
+    if(pid <= 1){
+        err = -ENOPERM;
+        goto _kill_end;
+    }
+        
+    err = process_send_signal(pid, signum);
     
     //if signal is sent to the caller itself then we should schedule
     if(current_process->pid == pid){
@@ -959,6 +965,7 @@ void syscall_kill(struct regs *r)
     }
 
     //if not return properly
+_kill_end:
     r->eax = err;
     return;
 }
@@ -1158,10 +1165,11 @@ int mount(const char *source, const char *target,
 #include <filesystems/fat.h>
 #include <filesystems/ext2.h>
 #include <filesystems/pts.h>
+#include <filesystems/fs.h>
 
 void syscall_mount(struct regs *r)
 {
-
+    
     char *source = (char *)r->ebx;
     char *target = (char *)r->ecx;
     char *filesystemtype = (char *)r->edx;
@@ -1169,7 +1177,14 @@ void syscall_mount(struct regs *r)
     void *data = (void *)r->edi;
 
     char *abs_source_path = vfs_canonicalize_path(current_process->cwd, source);
-    char *abs_target_path = vfs_canonicalize_path(current_process->cwd, target);
+    char *abs_target_path;
+
+    if(!memcmp(target, "/", 2)){
+        abs_target_path = "/";
+    }
+    else{
+        abs_target_path = vfs_canonicalize_path(current_process->cwd, target);
+    }
 
     fb_console_printf(
         "syscall_mount :      \n"
@@ -1186,7 +1201,7 @@ void syscall_mount(struct regs *r)
 
     if (!mountflags)
     { // create a new node
-
+        
         if (!strcmp(source, "devfs"))
         {
 
@@ -1228,8 +1243,31 @@ void syscall_mount(struct regs *r)
 
             if (devnode->flags == FS_BLOCKDEVICE)
             {
+                if( fs_get_by_name(filesystemtype)){
+                    //a candidate 
+                    filesystem_t* fs = fs_get_by_name(filesystemtype);
+                    if(fs->probe && !fs->probe(devnode)){
+                        r->eax = -ENOENT;
+                        goto mount_end;
+                    }
 
-                if (!strcmp(filesystemtype, "fat"))
+                    if(!fs->mount){
+                        r->eax = -EIO;
+                        goto mount_end;
+                    }
+
+                    fs_node_t* root = fs->mount(devnode, abs_target_path);
+                    if(!root){
+                        r->eax = -EIO;
+                        goto mount_end;
+                    }
+                
+                    vfs_mount(abs_target_path, root);
+                    r->eax = 0;
+                    goto mount_end;
+
+                }
+                else if (!strcmp(filesystemtype, "fat"))
                 {
 
                     fs_node_t *node = fat_node_create(devnode);
@@ -1408,13 +1446,7 @@ void syscall_ioctl(struct regs *r)
 
     fs_node_t *node = (fs_node_t *)file->f_inode;
 
-    if (node->ioctl){
-        r->eax = node->ioctl(node, request, argp);
-    }
-    else{
-        r->eax = -ENOTTY;
-    }
-
+    r->eax = ioctl_fs(node, request, argp);
     return;
 }
 
@@ -1515,15 +1547,20 @@ void syscall_fcntl(struct regs *r){ //max  6 arg so
 }
 
 void syscall_pause(struct regs *r){
-    //maybe somehow add a flag to specify that it is interrupted
+    
     //pauses current ttask until a signal is received thus return EINTR
     save_context(r , current_process);
+    // save_current_context(current_process);
 
     current_process->state = TASK_INTERRUPTIBLE;
     current_process->syscall_number = r->eax;
     current_process->syscall_state = SYSCALL_STATE_PENDING;
 
     schedule(r);
+    // // restore_cpu_context(&current_process->regs);
+    // sleep_on(NULL);
+    
+
     return;
 }
 
@@ -1593,3 +1630,119 @@ void syscall_setsid(struct regs* r){
     r->eax = proc->pid;
     return;
 }
+
+typedef long time_t;
+struct timespec {
+    time_t tv_sec;   // seconds
+    long   tv_nsec;  // nanoseconds (0 to 999,999,999)
+};
+
+void syscall_nanosleep(struct regs* r){
+
+    const struct timespec* req = (const void*)r->ebx;
+    struct timespec* rem = (void*)r->ecx;
+
+    if(!req || !is_virtaddr_mapped((void*)req)){
+        r->eax = -EFAULT;
+    }
+
+    if(req->tv_nsec < 0 || req->tv_nsec > 999999999){
+        r->eax = -EINVAL;
+    }
+
+    // //since my timer has resolution of a ms
+    size_t ms_ticks = (req->tv_sec * 1000) + (req->tv_nsec / 1000000);
+
+    list_t l = list_create();
+    current_process->itimer = timer_register(ms_ticks, 0, NULL, NULL);
+    timer_event_t* timer = timer_get_by_index(current_process->itimer);
+
+    sleep_on(&timer->wait_queue);
+
+    current_process->itimer = -1;
+    r->eax = 0;
+    return;
+
+}
+
+
+void syscall_sched_yield(struct regs* r){
+    save_context(r, current_process);
+    schedule(r);
+}
+
+
+void poll_qproc(struct fs_node* n, list_t *wq, struct poll_table *pt) {
+    // Add current task to this wait queue
+    list_insert_end(wq, current_process);
+}
+
+
+void poll_wait(struct fs_node* f, list_t *wq, struct poll_table *pt) {
+    if (pt && pt->qproc)
+        pt->qproc(f, wq, pt);
+}
+
+void syscall_poll(struct regs* r){
+    
+    struct pollfd *fds = (struct pollfd *)r->ebx;
+    size_t nfds = (size_t)r->ecx;
+    int timeout = (int)r->edx; //in miliseconds perfect
+
+    struct poll_table pt;
+    pt.qproc = poll_qproc;
+
+
+    for(;;){
+        
+        int ready = 0;
+        for(size_t i = 0; i < nfds; ++i){
+            
+            file_t* file = get_file(fds[i].fd);
+            if(!file){
+                fds[i].revents = POLLNVAL;
+                continue;
+            }
+            
+            fs_node_t* fnode = (fs_node_t*)file->f_inode;
+            if(!fnode->ops.poll){
+                fds[i].revents = POLLIN | POLLOUT;
+                ready++;
+                continue;
+            }
+            
+            short mask = fnode->ops.poll(fnode, &pt);
+            fds[i].revents = mask & fds[i].events;
+            if(fds[i].revents) ready++;
+        }
+
+        if(ready > 0){
+            r->eax = ready;
+            break;
+        }
+
+        if(timeout < 0){ //block indefinetly
+            current_process->state = TASK_INTERRUPTIBLE;
+            _schedule();
+        }
+        else if(timeout == 0){ //non_bocking
+            r->eax = ready;
+            break;
+        }
+        else{
+
+            int t = timer_register(timeout, 0, NULL, NULL);
+            timer_event_t* timer = timer_get_by_index(t);
+            sleep_on(&timer->wait_queue);
+
+            //if i wakeup early then
+            if(timer_is_pending(timer))
+                timer_destroy_timer(timer);
+
+            timeout = 0;
+        }        
+    }
+    
+    return;
+}
+

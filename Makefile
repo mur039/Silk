@@ -77,6 +77,7 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/timer.c -o $(BUILD_DIR)/timer.o
 	i686-elf-gcc $(CFLAGS) ./src/socket.c -o $(BUILD_DIR)/socket.o
 	
+	i686-elf-gcc $(CFLAGS) ./src/filesystems/fs.c -o $(BUILD_DIR)/fs.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/tar.c -o $(BUILD_DIR)/tar.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/vfs.c -o $(BUILD_DIR)/vfs.o
 	i686-elf-gcc $(CFLAGS) ./src/filesystems/ata.c -o $(BUILD_DIR)/ata.o
@@ -112,17 +113,25 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/network/udp.c -o $(BUILD_DIR)/udp.o
 	i686-elf-gcc $(CFLAGS) ./src/network/tcp.c -o $(BUILD_DIR)/tcp.o
 
+	i686-elf-gcc $(CFLAGS) ./src/sound/ac97.c -o $(BUILD_DIR)/ac97.o
+
+	i686-elf-gcc $(CFLAGS) ./src/module.c -o $(BUILD_DIR)/module.o
+	i686-elf-gcc $(CFLAGS) ./src/loop.c -o $(BUILD_DIR)/loop.o
+	i686-elf-gcc $(CFLAGS) ./src/ptrace.c -o $(BUILD_DIR)/ptrace.o
+
 
 	cd $(BUILD_DIR) && i686-elf-ld -o ../kernel.elf -T ../linker.ld  \
 		boot.o lkmain.o \
 		kmain.o str.o uart.o acpi.o idt.o isr.o isr_asm.o irq.o irq_asm.o \
 		pmm.o pit.o gdt.o misc_asm.o ps2.o kb.o timer.o tar.o glyph.o fb.o syscalls.o \
 		v86.o pci.o process.o vfs.o g_list.o circular_buffer.o ps2_mouse.o dev.o \
-		ata.o cmos.o virtio.o pipe.o vmm.o queue.o semaphore.o g_tree.o nulldev.o proc.o \
-		fat.o ext2.o tmpfs.o tty.o char.o bosch_vga.o \
+		ata.o cmos.o virtio.o pipe.o vmm.o queue.o semaphore.o g_tree.o nulldev.o  \
+		proc.o fat.o ext2.o tmpfs.o pts.o \
+		tty.o char.o bosch_vga.o \
 		socket.o unix_domain_socket.o  inet_socket.o \
 		netif.o route.o e1000.o arp.o ipv4.o udp.o tcp.o \
-		vt.o pts.o fpu.o
+		vt.o  fpu.o module.o fs.o loop.o \
+		ac97.o ptrace.o
 
 	
 debug_kernel:kernel.elf
@@ -157,4 +166,16 @@ run_network_user:
 	-drive file=bootable.iso,media=cdrom,index=1 \
 	-drive file=blk_file.iso,media=disk,index=0,format=raw \
 	-boot d
+
+#qemu-system-i386  -audiodev id=snd0,driver=alsa -drive file=bootable.iso -device AC97,audiodev=snd0
+run_ac97:
+	qemu-system-i386 -m 1G \
+	-drive file=bootable.iso,media=cdrom,index=1 \
+	-drive file=blk_file.iso,media=disk,index=0,format=raw \
+	-boot d \
+	-audiodev id=snd0,driver=pa \
+	-device AC97,audiodev=snd0
+
+
+
 	

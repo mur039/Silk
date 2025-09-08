@@ -1,9 +1,8 @@
-CFLAGS = -g -c -Wall -Wextra  -m32 -fno-builtin -I ../libsilk/include/
+CC=i686-pc-silk-gcc
+CFLAGS = -g -Wall -Wextra
 LDFLAGS = -T linker.ld -l:libsilk.a -L ../libsilk
 
 default: start.asm main.c
-	nasm -f elf32 -g start.asm -o start.o
-	i686-elf-gcc $(CFLAGS) main.c -o main.o
-	i686-elf-gcc $(CFLAGS) glyph.c -o glyph.o
-	i686-elf-ld start.o main.o glyph.o -o gsh $(LDFLAGS)
+	
+	$(CC) $(CFLAGS) main.c glyph.c -o gsh
 	cp gsh ../../../build/init_bin/

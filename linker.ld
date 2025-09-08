@@ -19,11 +19,21 @@ SECTIONS {
 	.text ALIGN (0x1000) : AT (ADDR (.text) - 0xC0000000)
 	{
 		*(EXCLUDE_FILE(boot.o lkmain.o) .text)                                /* all text sections from all files */
+		
+		. = ALIGN(4);
+		__inittext_start = .;
+		*(.init.text)
+		__inittext_end = .;
 	}
 
 	.rodata ALIGN (0x1000) : AT (ADDR (.rodata) - 0xC0000000)
 	{
-		*(EXCLUDE_FILE(boot.o lkmain.o) .rodata*)                             /* all read-only data sections from all files */
+		*(EXCLUDE_FILE(boot.o lkmain.o) .rodata*) /* all read-only data sections from all files */
+		
+		. = ALIGN(4);
+		__ksymtab_start = .;
+		*(.ksymtab) /*and exported kernel symbols*/
+		__ksymtab_end = .;
 	}
 
 	.data ALIGN (0x1000) : AT (ADDR (.data) - 0xC0000000)

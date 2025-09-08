@@ -80,8 +80,8 @@ fs_node_t * ext2_node_create(fs_node_t* node){
     kfree(superblock);
     fnode->device = priv;
 
-    fnode->readdir = (readdir_type_t)ext2_readdir;
-    fnode->finddir = (finddir_type_t)ext2_finddir;
+    fnode->ops.readdir = (readdir_type_t)ext2_readdir;
+    fnode->ops.finddir = (finddir_type_t)ext2_finddir;
 
 
 
@@ -216,12 +216,12 @@ struct fs_node* ext2_finddir( fs_node_t* node, char* name){
 
             if(fnode->flags == FS_DIRECTORY){
                 
-                fnode->readdir = (readdir_type_t)ext2_readdir;
-                fnode->finddir = (finddir_type_t)ext2_finddir;
+                fnode->ops.readdir = (readdir_type_t)ext2_readdir;
+                fnode->ops.finddir = (finddir_type_t)ext2_finddir;
             }
             else if(fnode->flags == FS_FILE){
                 
-                fnode->read = (read_type_t)ext2_read;
+                fnode->ops.read = (read_type_t)ext2_read;
             }
             
 

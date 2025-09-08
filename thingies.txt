@@ -1,0 +1,613 @@
+
+
+Routing table
+Destination    Netmask         Gateway        Interface
+0.0.0.0        0.0.0.0         192.168.1.1    eth0    # default
+192.168.1.0    255.255.255.0   0.0.0.0        eth0
+10.0.0.0       255.0.0.0       0.0.0.0        eth1
+
+
+netif_t* select_interface(ipv4_t dest_ip) {
+    route_t* best_match = NULL;
+
+    for (route in routing_table) {
+        if ((dest_ip & route->netmask) == (route->destination & route->netmask)) {
+            if (!best_match || route->netmask > best_match->netmask) {
+                best_match = route;
+            }
+        }
+    }
+
+    if (!best_match) best_match = find_default_route();
+    return best_match ? best_match->interface : NULL;
+}
+
+#define MAX_IP_ADDRS 4
+
+typedef struct netif {
+    char name[8];                    // e.g., "eth0"
+    uint8_t mac[6];                  // MAC address
+    ipv4_t ip_addrs[MAX_IP_ADDRS];  // Assigned IPv4 addresses
+    ipv4_t netmasks[MAX_IP_ADDRS];  // Corresponding netmasks
+    int ip_count;                   // Number of assigned IPs
+
+    ipv4_t gateway;                 // Optional gateway for this interface
+
+    void* driver_data;              // Pointer to hardware-specific context (e.g. e1000 regs)
+    int (*send)(struct netif* nif, const uint8_t* data, size_t len);  // send function
+} netif_t;
+
+
+extern netif_t netifs[];
+extern int netif_count;
+
+    void register_e1000_interface(...) {
+        netif_t* nif = &netifs[netif_count++];
+        strcpy(nif->name, "eth0");
+        memcpy(nif->mac, local_macaddress, 6);
+        nif->ip_addrs[0] = parse_ipv4("192.168.1.10");
+        nif->netmasks[0] = parse_ipv4("255.255.255.0");
+        nif->ip_count = 1;
+        nif->gateway = parse_ipv4("192.168.1.1");
+        nif->send = e1000_send_wrapper;
+        nif->driver_data = e1000_regs;
+    }
+
+netif_t* out_if = select_interface(dst_ip);
+if (out_if) {
+    out_if->send(out_if, packet, len);
+}
+
+
+typedef struct route {
+    ipv4_t destination;   // Network address
+    ipv4_t netmask;       // Netmask
+    ipv4_t gateway;       // Next hop (0.0.0.0 means direct)
+    netif_t* interface;   // Outgoing interface
+} route_t;
+
+
+#define MAX_ROUTES 16
+route_t route_table[MAX_ROUTES];
+int route_count = 0;
+
+netif_t* route_lookup(ipv4_t dest_ip, ipv4_t* out_gateway) {
+    for (int i = 0; i < route_count; ++i) {
+        route_t* r = &route_table[i];
+
+        if ((dest_ip & r->netmask) == (r->destination & r->netmask)) {
+            if (out_gateway) *out_gateway = r->gateway;
+            return r->interface;
+        }
+    }
+    return NULL; // No route found
+}
+
+void add_default_route(netif_t* nif, ipv4_t gateway) {
+    route_table[route_count++] = (route_t) {
+        .destination = 0,
+        .netmask = 0,
+        .gateway = gateway,
+        .interface = nif
+    };
+}
+
+
+/***************************************************/
+
+struct nic {
+    char name[16];                   // "lo", "eth0", etc.
+    uint8_t mac[6];                  // MAC address (if applicable)
+    uint32_t mtu;                    // Maximum transmission unit
+
+    int (*send)(struct nic *dev, const void *packet, size_t len);
+    int (*poll)(struct nic *dev);   // Optional: to pull incoming packets (used in polling model)
+    void (*handle_rx)(struct nic *dev, const void *data, size_t len);
+
+    void *priv;                     // Driver-specific data (e.g. e1000 ring buffers)
+
+    struct nic *next;               // For chaining NICs (if you want a global NIC list)
+};
+
+
+int loopback_send(struct nic *dev, const void *packet, size_t len) {
+    // Echo the packet to upper layers
+    dev->handle_rx(dev, packet, len);
+    return 0;
+}
+
+
+
+struct nic loopback_nic = {
+    .name = "lo",
+    .mtu = 65535,
+    .send = loopback_send,
+    .handle_rx = net_receive, // Your network stack's entry point
+    .priv = NULL
+};
+
+
+//drivers by name 
+struct nic_driver {
+    const char *name;
+    int (*probe)(void); // Initialize and register device(s)
+};
+
+
+
+
+/***************************** */
+o check for inserted media, use the ATAPI command:
+🎯 0x25: READ CAPACITY (10)
+
+This is a standard SCSI packet command, wrapped in ATAPI:
+
+    Issue PACKET command 0xA0
+
+    Send 12-byte SCSI command packet: 0x25 (READ CAPACITY(10))
+
+    Wait for DRQ and read 8 bytes of response:
+
+        4 bytes: last LBA
+
+        4 bytes: sector size (usually 2048 for CD-ROMs)
+
+If the device has no disc:
+
+    You'll get CHECK CONDITION
+
+    Then issue a REQUEST SENSE (0x03) command
+
+    Sense key will tell you: e.g., NOT READY - No Medium Present
+
+
+--------------------------------------
+#define ATA_REG_DATA         0x00
+#define ATA_REG_ERROR        0x01
+#define ATA_REG_FEATURES     0x01
+#define ATA_REG_SECCOUNT0    0x02
+#define ATA_REG_LBA0         0x03
+#define ATA_REG_LBA1         0x04
+#define ATA_REG_LBA2         0x05
+#define ATA_REG_DRIVE_SELECT 0x06
+#define ATA_REG_COMMAND      0x07
+#define ATA_REG_STATUS       0x07
+#define ATA_REG_ALTSTATUS    0x206
+#define ATA_REG_CONTROL      0x206
+
+#define ATA_CMD_PACKET       0xA0
+#define ATA_SR_BSY           0x80
+#define ATA_SR_DRDY          0x40
+#define ATA_SR_DRQ           0x08
+#define ATA_SR_ERR           0x01
+
+2. Build the 12-byte SCSI Command Packet (READ CAPACITY)
+
+uint8_t packet[12] = {0};
+packet[0] = 0x25; // READ CAPACITY (10)
+
+3. Send PACKET Command
+
+// 1. Select drive
+outb(iobase + ATA_REG_DRIVE_SELECT, 0xA0); // Master = 0xA0, Slave = 0xB0
+ata_400ns_delay(iobase);
+
+// 2. Set up transfer length (in bytes) — we expect 8 bytes for READ CAPACITY
+outb(iobase + ATA_REG_FEATURES, 0x00);
+outb(iobase + ATA_REG_SECCOUNT0, 0);
+outb(iobase + ATA_REG_LBA0, 0);
+outb(iobase + ATA_REG_LBA1, 0);
+outb(iobase + ATA_REG_LBA2, 0);
+
+// 3. Issue PACKET command
+outb(iobase + ATA_REG_COMMAND, ATA_CMD_PACKET);
+
+// 4. Wait for DRQ (data request), not BSY
+while (inb(iobase + ATA_REG_STATUS) & ATA_SR_BSY);
+while (!(inb(iobase + ATA_REG_STATUS) & ATA_SR_DRQ));
+
+4. Send the 12-byte SCSI Packet
+
+for (int i = 0; i < 6; ++i) {
+    uint16_t w = ((uint16_t)packet[i*2+0] << 8) | packet[i*2+1];
+    outw(iobase + ATA_REG_DATA, w);
+}
+
+5. Wait for Data
+
+// Wait for DRQ again — the device will return 8 bytes
+while (inb(iobase + ATA_REG_STATUS) & ATA_SR_BSY);
+while (!(inb(iobase + ATA_REG_STATUS) & ATA_SR_DRQ));
+
+6. Read 8-byte Response
+
+uint32_t last_lba = 0;
+uint32_t sector_size = 0;
+
+for (int i = 0; i < 4; ++i)
+    last_lba = (last_lba << 8) | inb(iobase + ATA_REG_DATA);
+for (int i = 0; i < 4; ++i)
+    sector_size = (sector_size << 8) | inb(iobase + ATA_REG_DATA);
+
+Note: You can also read with inw four times, but the byte order needs to be handled properly (big-endian).
+7. Done — Print or Store Info
+
+fb_console_printf("CD-ROM capacity: %u sectors, sector size: %u bytes\n",
+                  last_lba + 1, sector_size);
+
+
+
+
+🚨 Error Handling
+
+If any step times out or returns an error:
+
+    Issue a REQUEST SENSE (0x03) to get the error reason
+
+    Check for sense key = 0x02 (Not Ready) or 0x3A (No Medium)
+
+
+
+
+
+
+
+📦 What REQUEST SENSE Does
+
+When an ATAPI command fails (e.g. disc not inserted), the device enters a CHECK CONDITION state.
+You must send a REQUEST SENSE packet to retrieve the Sense Key, ASC, and ASCQ, which explain the failure.
+🧱 Sense Data Format (Typical)
+
+The returned sense data is 18 bytes long (but sometimes 14):
+Byte	Meaning
+0	Response code
+2	Sense Key
+7–8	Additional Sense Length
+12	Additional Sense Code (ASC)
+13	ASC Qualifier (ASCQ)
+
+You want to look at:
+
+    Sense Key (byte 2)
+
+    ASC / ASCQ (bytes 12/13)
+
+Examples:
+
+    Sense Key 0x02 = Not Ready
+
+    ASC 0x3A = No Medium Present
+
+✅ Step-by-Step: Send REQUEST SENSE
+1. Prepare the 12-byte Packet
+
+uint8_t sense_packet[12] = {0};
+sense_packet[0] = 0x03;  // REQUEST SENSE
+sense_packet[4] = 18;    // Allocation length = 18 bytes
+
+2. Send It (after failed command)
+
+// Send ATA PACKET command again
+outb(iobase + ATA_REG_COMMAND, ATA_CMD_PACKET);
+
+// Wait for DRQ
+while (inb(iobase + ATA_REG_STATUS) & ATA_SR_BSY);
+while (!(inb(iobase + ATA_REG_STATUS) & ATA_SR_DRQ));
+
+// Send the 12-byte REQUEST SENSE packet
+for (int i = 0; i < 6; ++i) {
+    uint16_t w = ((uint16_t)sense_packet[i*2+0] << 8) | sense_packet[i*2+1];
+    outw(iobase + ATA_REG_DATA, w);
+}
+
+3. Wait for Response
+
+while (inb(iobase + ATA_REG_STATUS) & ATA_SR_BSY);
+while (!(inb(iobase + ATA_REG_STATUS) & ATA_SR_DRQ));
+
+4. Read the Sense Data (18 bytes)
+
+uint8_t sense_data[18];
+for (int i = 0; i < 9; ++i) {
+    uint16_t w = inw(iobase + ATA_REG_DATA);
+    sense_data[i*2 + 0] = w >> 8;
+    sense_data[i*2 + 1] = w & 0xFF;
+}
+
+5. Interpret the Result
+
+uint8_t sense_key = sense_data[2] & 0x0F;
+uint8_t asc       = sense_data[12];
+uint8_t ascq      = sense_data[13];
+
+fb_console_printf("Sense Key: 0x%02x, ASC: 0x%02x, ASCQ: 0x%02x\n",
+                   sense_key, asc, ascq);
+
+// Example: No disc
+if (sense_key == 0x02 && asc == 0x3A) {
+    fb_console_printf("No disc inserted in drive.\n");
+}
+
+✅ Integration Flow
+
+Here’s how the full logic flows:
+
+bool atapi_read_capacity(...) {
+    send_packet(... 0x25 ...);  // READ CAPACITY
+    if (error) {
+        send_packet(... 0x03 ...);  // REQUEST SENSE
+        parse_sense_data();
+        if (sense_key == 0x02 && asc == 0x3A)
+            return false; // No media
+        else
+            return false; // Some other error
+    } else {
+        read capacity data;
+        return true;
+    }
+}
+
+
+
+
+/*********************************************************/
+struct tty_struct {
+    struct termios termios;       // terminal I/O settings (echo, canonical mode, etc.)
+    struct tty_driver *driver;    // pointer to the driver handling this TTY
+    int index;                    // index within the driver (e.g., 0 for tty0)
+    
+    circular_buffer_t read_buf;   // incoming characters (from hardware or write())
+    circular_buffer_t write_buf;  // outgoing characters (to hardware)
+
+    struct task_struct *session;  // session leader process (foreground)
+    struct task_struct *pgrp;     // process group controlling the TTY
+
+    struct wait_queue read_queue; // waiters for input availability
+    struct wait_queue write_queue;// waiters for output drain
+    struct file_ops *ops;         // read/write/ioctl hooks
+
+    // Optional: echo buffer, signal logic, etc.
+};
+
+
+
+
+struct tty_driver {
+    const char *name;
+    int num;
+    struct tty_struct **ttys;      // Array of ttys handled by this driver
+
+    int (*open)(struct tty_struct*);
+    void (*close)(struct tty_struct*);
+    void (*write)(struct tty_struct*, const char *buf, size_t len);
+    void (*put_char)(struct tty_struct*, char c);
+    void (*flush_chars)(struct tty_struct*);
+};
+struct tty_ldisc {
+    void (*receive_char)(struct tty_struct *tty, char c);
+    int  (*read)(struct tty_struct *tty, char *buf, int count);
+    int  (*write)(struct tty_struct *tty, const char *buf, int count);
+};
+
+
+🔁 Typical Flow: A Graphical Program Taking Over the VT
+Let’s assume a graphical display server (like Xorg or Wayland’s logind backend) runs on VT 7.
+🔢 1. VT Activation and Initialization
+
+    It opens /dev/tty7 and performs:
+
+    ioctl(fd, VT_GETMODE, &mode);      // Save current mode
+    ioctl(fd, VT_SETMODE, &new_mode);  // Set new mode to VT_PROCESS
+
+    VT_PROCESS tells the kernel:
+
+        "I’ll handle VT switching manually."
+
+        You (the userspace program) must now implement SIGUSR1/SIGUSR2 protocol.
+
+📺 2. Switch to Graphics Mode
+
+    Program calls:
+
+    ioctl(fd, KDSETMODE, KD_GRAPHICS);
+
+    Now the kernel stops rendering to screen, and the program can mmap framebuffer (/dev/fb0) or use DRM (/dev/dri/card0) to draw directly.
+
+🔄 VT Switching from Another Terminal (e.g., Ctrl+Alt+F1)
+
+    Kernel detects a VT switch request (e.g., user hits Ctrl+Alt+F1).
+
+    Since VT7 is in VT_PROCESS mode, the kernel sends SIGUSR1 to the graphical program.
+
+    The program must:
+
+        Unmap GPU/framebuffer resources.
+
+        Drop DRM master or release display.
+
+        Call:
+
+        ioctl(fd, VT_RELDISP, 1);  // Allow switch
+
+    Until this happens, the VT switch is blocked, and the user stays on VT7.
+
+🔁 Returning to the Graphical VT
+
+When the user switches back to VT7:
+
+    Kernel sends SIGUSR2 to the graphical program.
+
+    Program:
+
+        Re-acquires GPU/display resources (e.g., via DRM).
+
+        Redraws screen.
+
+        Calls:
+
+        ioctl(fd, VT_RELDISP, VT_ACKACQ);
+
+Now the graphical program is active again.
+🔒 Summary of Blocking
+
+A VT switch blocks when:
+
+    The program is in VT_PROCESS mode.
+
+    It hasn’t yet called VT_RELDISP after receiving SIGUSR1.
+
+This is intentional: the kernel waits for confirmation before switching to another VT. This ensures the graphical program can clean up safely before yielding control.
+
+
+
+//seperated by space, comm file name of executable it can contain spaces 
+//so it is wrapped with ()
+
+1.  pid
+2.  comm
+3.  state
+4.  ppid
+5.  pgrp
+6.  session
+7.  tty_nr
+8.  tpgid
+9.  flags
+10. minflt
+11. cminflt
+12. majflt
+13. cmajflt
+14. utime
+15. stime
+16. cutime
+17. cstime
+18. priority
+19. nice
+20. num_threads
+21. itrealvalue
+22. starttime
+23. vsize
+24. rss
+25. rsslim
+26. startcode
+27. endcode
+28. startstack
+29. kstkesp
+30. kstkeip
+31. signal
+32. blocked
+33. sigignore
+34. sigcatch
+35. wchan
+36. nswap
+37. cnswap
+38. exit_signal
+39. processor
+40. rt_priority
+41. policy
+42. delayacct_blkio_ticks
+43. guest_time
+44. cguest_time
+45. start_data
+46. end_data
+47. start_brk
+48. arg_start
+49. arg_end
+50. env_start
+51. env_end
+52. exit_code
+
+
+
+STUN for public IP??????????
+
+
+| Type      | Name               | Purpose / Description                                         |
+| --------- | ------------------ | ------------------------------------------------------------- |
+| **A**     | Address            | Maps a hostname to an **IPv4** address                        |
+| **AAAA**  | IPv6 Address       | Maps a hostname to an **IPv6** address                        |
+| **CNAME** | Canonical Name     | Alias — maps one hostname to another hostname                 |
+| **MX**    | Mail Exchange      | Specifies mail servers responsible for email for the domain   |
+| **NS**    | Name Server        | Specifies authoritative DNS servers for the domain            |
+| **SOA**   | Start of Authority | Provides administrative info about the domain zone            |
+| **PTR**   | Pointer            | Maps IP addresses to hostnames (used for reverse DNS lookups) |
+| **TXT**   | Text               | Holds arbitrary text strings, used for SPF, DKIM, etc.        |
+| **SRV**   | Service            | Specifies servers for specific services (like SIP, XMPP)      |
+
+
+
+
+
+
+
+
+
+
+
+Client                          Server
+  | ------ SYN (seq=X) ------>   |  [Step 1]
+  | <--- SYN+ACK (seq=Y, ack=X+1)|  [Step 2]
+  | ------ ACK (ack=Y+1) ----->  |  [Step 3]
+
+
+//pollint sys_poll(struct regs *r) {
+    struct pollfd *fds = (struct pollfd*) r->ebx;
+    int nfds = r->ecx;
+    int timeout = r->edx;
+
+    int count = 0;
+    for (int i = 0; i < nfds; i++) {
+        struct file *f = get_fd(current_process, fds[i].fd);
+        if (!f || !f->fops->poll) {
+            fds[i].revents = POLLNVAL;
+            continue;
+        }
+
+        struct poll_wait pw = {
+            .proc = current_process,
+            .events = fds[i].events,
+            .revents = 0
+        };
+
+        f->fops->poll(f, &pw);
+
+        fds[i].revents = pw.revents;
+        if (pw.revents)
+            count++;
+    }
+
+    if (count > 0 || timeout == 0) {
+        r->eax = count;
+        return;
+    }
+
+    // Nothing ready: sleep
+    current_process->syscall_state = SYSCALL_STATE_PENDING;
+    current_process->syscall_number = SYS_POLL;
+    current_process->poll_fds = fds;
+    current_process->poll_nfds = nfds;
+    current_process->poll_timeout_expiry = current_time() + timeout;
+    add_process_to_timer_queue(current_process, timeout);
+
+    current_process->state = TASK_INTERRUPTIBLE;
+    return; // Don't return to userspace, process is sleeping
+}
+
+
+struct poll_wait {
+    struct process *proc;
+    uint32_t events;   // POLLIN | POLLOUT | etc.
+    uint32_t revents;  // what became ready
+};
+
+
+int (*poll)(struct file *f, struct poll_wait *pw);
+
+
+| Constant   | Value (Hex) | Meaning                                                 |
+| ---------- | ----------- | ------------------------------------------------------- |
+| `POLLIN`   | `0x0001`    | Data is available to read (normal or out-of-band)       |
+| `POLLOUT`  | `0x0004`    | Writing is now possible (buffer has space)              |
+| `POLLERR`  | `0x0008`    | Error condition occurred                                |
+| `POLLHUP`  | `0x0010`    | Hangup — device disconnected (e.g., pipe writer closed) |
+| `POLLNVAL` | `0x0020`    | Invalid request (e.g., fd not open)                     |
+| `POLLPRI`  | `0x0002`    | Urgent ("out-of-band") data to read                     |

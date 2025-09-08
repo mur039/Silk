@@ -91,10 +91,9 @@ void ipv4_handle(struct nic* dev, const struct eth_frame* eth, size_t len){
         break;
 
 
+        
         case IPV4_PROTOCOL_IGMP:
         break;
-
-
 
         case IPV4_PROTOCOL_ENCAP:
         break;

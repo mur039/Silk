@@ -130,9 +130,9 @@ void ata_register_device(int bus, int drive, int sector_count, const uint8_t ser
     device_t* hd = kcalloc(1, sizeof(device_t));
     hd->name = strdup("hdxxx");
     sprintf(hd->name, "hd%c", 'a' + drive_index ); // 00 a 01 b 10 c 11 d
-
-    hd->write = (write_type_t)ata_write_fs;
-    hd->read = (read_type_t)ata_read_fs;
+    hd->ops.get_size = (get_size_type_t)ata_getsize_fs;
+    hd->ops.write = (write_type_t)ata_write_fs;
+    hd->ops.read = ata_read_fs;
     hd->dev_type = DEVICE_BLOCK;
     hd->unique_id = 3;
     
@@ -175,10 +175,11 @@ void ata_register_device(int bus, int drive, int sector_count, const uint8_t ser
 
             hda_part->name = strdup("hdap000");
             sprintf(hda_part->name, "hd%cp%u", 'a' + drive_index,i + 1);
-            hda_part->write = (write_type_t)ata_write_fs;
-            hda_part->read = (read_type_t)ata_read_fs;
+            hda_part->ops.write = (write_type_t)ata_write_fs;
+            hda_part->ops.read = &ata_read_fs;
             hda_part->dev_type = DEVICE_BLOCK;
             hda_part->unique_id = 3;
+            hda_part->ops.get_size = (get_size_type_t)ata_getsize_fs;
 
             hda_part->priv = hda_part_priv;
             *hda_part_priv = *priv;
@@ -443,10 +444,26 @@ uint32_t ata_read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* b
     return (uint32_t)ata_read(ata, offset, size, buffer);
 }
 
+int ata_getsize_fs(fs_node_t* node){
+    device_t* dev = node->device;
+    ata_device_t* ata = dev->priv;
+    return (ata->end_sector - ata->start_sector)*ATA_SECTOR_SIZE;
+}
 
-
+//hot steaming shit
 int ata_read(ata_device_t* ata, uint32_t offset, uint32_t size, uint8_t* buffer){
         
+    uint32_t total_size = (ata->end_sector - ata->start_sector) * ATA_SECTOR_SIZE;
+    if(offset >= total_size){
+        return 0;
+    }
+
+    //trim it down
+    uint32_t remaining = total_size - offset;
+    if(size > remaining){
+        size = remaining;
+    }
+
     if(size  > 512){
         //chop it off into sectors 
 		size_t amount_of_sectors = size / 512;
@@ -460,8 +477,10 @@ int ata_read(ata_device_t* ata, uint32_t offset, uint32_t size, uint8_t* buffer)
 
 		}
 
-		if(last_piece)
+		if(last_piece){
+
             ata_read(ata, offset, last_piece, buffer);
+        }
 			
 		return size;
     }
@@ -472,9 +491,18 @@ int ata_read(ata_device_t* ata, uint32_t offset, uint32_t size, uint8_t* buffer)
     sector_start += ata->start_sector;
 
     if(sector_offset + size > ATA_SECTOR_SIZE){
-        //read that spans multiple sectors just don't do it for now
-        fb_console_printf("read spans multiple sectors we don't do that here do we?\n");
-        return 0;
+        
+        size_t rem_1 = 512 - sector_offset;
+        size_t rem_2 = (sector_offset + size) % 512;
+        
+        ata_read(ata, offset, rem_1, buffer);
+        buffer += rem_1;
+        offset += rem_1;
+        size -= rem_1;
+
+        sector_start = (offset - (offset % 512)) / 512;
+        sector_offset = offset % 512;
+
     }
 
     int bus = (ata->drive_index >> 1) & 1;

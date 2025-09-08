@@ -8,22 +8,24 @@
 
 #define PS2_KEYBOARD_IRQ 1
 
-extern int ctrl_flag;
-extern int shift_flag;
-extern int alt_gr_flag;
 
 #define KBD_CTRL_FLAG 1 << 0
 #define KBD_SHIFT_FLAG 1 << 1
 #define KBD_ALT_GR_FLAG 1 << 2
-extern int key_modifiers;
 
-extern volatile int  is_kbd_pressed;
-extern char kb_ch;
-extern uint8_t kbd_scancode;
+#define PS2_SCANCODE_EXTENDED 0xE0
+#define PS2_SCANCODE_LSHIFT   0x2A
+#define PS2_SCANCODE_RSHIFT   0x36
+//has with extended otherway around
+#define PS2_SCANCODE_LCONTROL 0x1D
+#define PS2_SCANCODE_LALT     0x38
+#define PS2_SCANCODE_EXTENDED 0xE0
+#define PS2_SCANCODE_EXTENDED 0xE0
 
 extern uint32_t currently_pressed_keys[4];//bit encoded
 extern unsigned char kbdus[128] ;
 void keyboard_handler(struct regs *r);
+void ps2_kbd_handler(struct regs *r);
 void ps2_kbd_initialize();
 
 #include <process.h>

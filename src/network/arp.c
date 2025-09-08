@@ -92,7 +92,7 @@ void arp_periodic_check(void* _unused){
             }
             else if((unsigned long)e->state > ARP_STATE_END){
                 //should remove invalid state somehow?
-                fb_console_printf("!!!!INVALID ARD STATE: %u\n", e->state);
+                fb_console_printf("!!!!INVALID ARP STATE: %u\n", e->state);
             }
             
             

@@ -1,5 +1,5 @@
 #include "glyph.h"
-#include <stdint-gcc.h>
+#include <stdint.h>
 
 
 typedef enum{

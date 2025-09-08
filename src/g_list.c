@@ -1,5 +1,6 @@
 #include <g_list.h>
-
+#include <sys.h>
+#include <pmm.h>
 
 
 list_t list_create(){
@@ -51,16 +52,35 @@ listnode_t* list_pop_end(list_t* list){
     
     listnode_t* last_node = list->tail;
     
-    if(list->head == list->tail){ //only one element thus
+    list->tail = list->tail->prev;
+    list->size--;
 
-        memset(list, 0, sizeof(list_t));
+    if(list->size == 0){
+        list->head = NULL;
+        list->tail = NULL;
+    }
+    else if(list->size == 1){
+        list->tail = list->head;
+        
+        list->head->next = NULL;
+        list->head->prev = NULL;
     }
     else{
-        
-        list->tail = last_node->prev;
         list->tail->next = NULL;
-        list->size -= 1;
     }
+
+
+    // if( list->size == 1 ){ //only one element thus
+    //     list->head = NULL;
+    //     list->tail = NULL;
+    //     list->size = 0;
+    // }
+    // else{
+        
+    //     list->tail = last_node->prev;
+    //     list->tail->next = NULL;
+    //     list->size -= 1;
+    // }
 
     return last_node;
 }
@@ -181,4 +201,17 @@ int list_sort(list_t* list, int (*comparefunc)(void*, void*)) {
     } while (did_swap);
 
     return switches_occurred;
+}
+
+
+void* list_get_head_value(list_t *l, int* aux_return){
+    if(!l->size){
+        if(aux_return){
+            *aux_return = -1;
+        }
+        return NULL;
+    }
+
+    if(aux_return) *aux_return = 0;
+    return l->head->val;
 }

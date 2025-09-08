@@ -50,6 +50,10 @@
 #include <network/netif.h>
 #include <vt.h>
 #include <fpu.h>
+#include <module.h>
+#include <loop.h>
+
+#include <sound/ac97.h>
 
 extern uint32_t bootstrap_pde[1024];
 extern uint32_t bootstrap_pte1[1024];
@@ -106,6 +110,35 @@ void dump_stuck_frame(uint32_t* stack){
     }
     return;
 }
+
+void ksoftirq_n(void* data){
+    
+    
+    while(1){
+        current_process->state = TASK_INTERRUPTIBLE;
+        _schedule();
+        fb_console_printf("after the shim\n");
+    }
+    
+}
+
+int vkprintf(const char* fmt, va_list va){
+    fb_console_va_printf(fmt,va);
+    return 0;
+}
+
+int kprintf(const char* fmt, ...){
+    va_list va;
+    va_start(va, fmt);
+    vkprintf(fmt, va);
+    va_end(va);
+    return 0;
+}
+
+
+EXPORT_SYMBOL(kprintf);
+EXPORT_SYMBOL(vkprintf);
+
 
 void kmain(multiboot_info_t* mbd){ //high kernel
 
@@ -204,7 +237,6 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     irq_install();
     irq_install_handler(PS2_KEYBOARD_IRQ, keyboard_handler);
     irq_install_handler(        UART_IRQ, uart_handler);
-    irq_install_handler(   PS2_MOUSE_IRQ, ps2_mouse_handler);
     // irq_install_handler(ATA_MASTER_IRQ, ata_master_irq_handler);
 
     timer_install();
@@ -271,7 +303,7 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
     //initialize the kernel allocator
     pmm_print_usage();
-    kmalloc_init(255); // a MB at front reduces overhead
+    kmalloc_init(300); // a MB at front reduces overhead
     alloc_print_list();
     
     fb_console_printf("Initializing Device Manager...\n");
@@ -370,14 +402,7 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 		fnode->device = dev;
 
         fnode->flags   = dev->dev_type == DEVICE_CHAR?  FS_CHARDEVICE  : FS_BLOCKDEVICE;
-	    fnode->read    = dev->read;
-	    fnode->write   = dev->write;
-	    fnode->open    = dev->open;
-	    fnode->close   = dev->close;
-	    fnode->readdir = dev->readdir;
-	    fnode->finddir = dev->finddir;
-	    fnode->ioctl   = dev->ioctl;
-        
+        fnode->ops = dev->ops;
         vfs_mount("/", ext2_node_create(fnode));
         // halt();
     }
@@ -474,17 +499,22 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     install_syscall_handler( SYSCALL_GETPGRP , syscall_getpgrp);
     install_syscall_handler(SYSCALL_SETPGID , syscall_setpgid);
     install_syscall_handler(SYSCALL_SETSID , syscall_setsid);
+    install_syscall_handler(SYSCALL_NANOSLEEP , syscall_nanosleep);
+    install_syscall_handler(SYSCALL_SCHED_YIELD , syscall_sched_yield);
+    install_syscall_handler(SYSCALL_POLL, syscall_poll);
 
     initialize_sockets(32);
     initialize_netif();
-    
+    module_init();
+    module_call_all_initializers();
+
     enumerate_pci_devices();    
     fb_console_printf("Found PCI devices: %u\n", pci_devices.size);
     for(listnode_t * node = pci_devices.head; node != NULL ;node = node->next ){
         pci_device_t *dev = node->val;
 
         fb_console_printf("pci-> %u:%u:%u class_code:%x interrupt_line:%u interrupt_pin:%u\n",dev->bus, dev->slot, dev->func, dev->header.common_header.class_code ,dev->header.type_0.interrupt_line, dev->header.type_0.interrupt_pin);        
-        pci_list_capabilities(dev);
+        // pci_list_capabilities(dev);
 
         switch(dev->header.common_header.class_code){
 
@@ -503,6 +533,9 @@ void kmain(multiboot_info_t* mbd){ //high kernel
             break;
 
             case PCI_MULTIMEDIA:
+            if( dev->header.common_header.vendor_id == AC97_PCI_VENDOR_ID && dev->header.common_header.device_id == AC97_PCI_DEVICE_ID ){
+                ac97_pci_initialize(dev);
+            }
             break;
 
             case PCI_BRIDGE:
@@ -548,22 +581,21 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     create_uart_device(COM1);
     install_virtual_terminals(10, row, col);
     install_kernel_mem_devices();
-
-    install_basic_framebuffer((void*)0xfd000000, mbd->framebuffer_width, mbd->framebuffer_height, mbd->framebuffer_bpp);
     
-    // asm volatile("fninit\n\t"); //floating points or sumthin, but at the moment we don't save fpu state
+    install_basic_framebuffer((void*)0xfd000000, mbd->framebuffer_width, mbd->framebuffer_height, mbd->framebuffer_bpp);
+    loop_install();
+
     initialize_fpu();
     process_init();
     pcb_t * init =  create_process("/bin/init", (char* []){"/bin/init", NULL} );
     init->sid = 1;
     init->pgid = 1;
-
-    jump_usermode();
     
-
+    create_kernel_process(ksoftirq_n, NULL, "ksoftirq/%u", 0);
+    
+    jump_usermode();
     //we shouldn't get there //if we do.. well that's imperessive
     for(;;){   
-
     }
 
 }

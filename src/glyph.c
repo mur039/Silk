@@ -200,6 +200,95 @@ int unicode_to_glpyh(uint32_t unicode){
     return 0;
 }
 
+
+#include <stddef.h>
+
+int glyph_serialize_utf8(unsigned int symbol, char* serialization_arr) {
+    if (serialization_arr == NULL) {
+        return 0; // nothing written
+    }
+
+    if (symbol <= 0x7F) {
+        // 1-byte ASCII
+        serialization_arr[0] = (char)symbol;
+        return 1;
+    }
+    else if (symbol <= 0x7FF) {
+        // 2-byte UTF-8
+        serialization_arr[0] = (char)(0xC0 | ((symbol >> 6) & 0x1F));
+        serialization_arr[1] = (char)(0x80 | (symbol & 0x3F));
+        return 2;
+    }
+    else if (symbol <= 0xFFFF) {
+        // 3-byte UTF-8
+        serialization_arr[0] = (char)(0xE0 | ((symbol >> 12) & 0x0F));
+        serialization_arr[1] = (char)(0x80 | ((symbol >> 6) & 0x3F));
+        serialization_arr[2] = (char)(0x80 | (symbol & 0x3F));
+        return 3;
+    }
+    else if (symbol <= 0x10FFFF) {
+        // 4-byte UTF-8
+        serialization_arr[0] = (char)(0xF0 | ((symbol >> 18) & 0x07));
+        serialization_arr[1] = (char)(0x80 | ((symbol >> 12) & 0x3F));
+        serialization_arr[2] = (char)(0x80 | ((symbol >> 6) & 0x3F));
+        serialization_arr[3] = (char)(0x80 | (symbol & 0x3F));
+        return 4;
+    }
+    else {
+        // Invalid code point
+        return 0;
+    }
+}
+
+int glyph_deserialize_utf8(unsigned int *symbol, char* serialization_arr) {
+    if (symbol == NULL || serialization_arr == NULL) {
+        return 0;
+    }
+
+    unsigned char b0 = (unsigned char)serialization_arr[0];
+
+    if (b0 <= 0x7F) {
+        // 1-byte ASCII
+        *symbol = b0;
+        return 1;
+    }
+    else if ((b0 & 0xE0) == 0xC0) {
+        // 2-byte sequence
+        unsigned char b1 = (unsigned char)serialization_arr[1];
+        if ((b1 & 0xC0) != 0x80) return 0; // invalid continuation
+        *symbol = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+        return 2;
+    }
+    else if ((b0 & 0xF0) == 0xE0) {
+        // 3-byte sequence
+        unsigned char b1 = (unsigned char)serialization_arr[1];
+        unsigned char b2 = (unsigned char)serialization_arr[2];
+        if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return 0;
+        *symbol = ((b0 & 0x0F) << 12) |
+                  ((b1 & 0x3F) << 6) |
+                  (b2 & 0x3F);
+        return 3;
+    }
+    else if ((b0 & 0xF8) == 0xF0) {
+        // 4-byte sequence
+        unsigned char b1 = (unsigned char)serialization_arr[1];
+        unsigned char b2 = (unsigned char)serialization_arr[2];
+        unsigned char b3 = (unsigned char)serialization_arr[3];
+        if ((b1 & 0xC0) != 0x80 ||
+            (b2 & 0xC0) != 0x80 ||
+            (b3 & 0xC0) != 0x80) return 0;
+        *symbol = ((b0 & 0x07) << 18) |
+                  ((b1 & 0x3F) << 12) |
+                  ((b2 & 0x3F) << 6) |
+                  (b3 & 0x3F);
+        return 4;
+    }
+
+    // Invalid start byte
+    return 0;
+}
+
+
 const unsigned char consolefont_14_psf[] = {
     0x36, 0x04, 0x02, 0x0e, 0x00, 0x00, 0x00, 0x7e, 0x81, 0x99, 0xa5, 0xa1,
     0xa5, 0x99, 0x81, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7e, 0x81, 0xb9,

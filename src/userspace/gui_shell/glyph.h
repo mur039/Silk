@@ -2,7 +2,7 @@
 #define __USERSPACE_GSH_GLYPH_H__
 
 #include <unistd.h>
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 

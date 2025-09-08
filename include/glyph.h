@@ -57,7 +57,8 @@ int unicode_to_glpyh(uint32_t unicode);
 uint32_t get_glyph_size();
 uint32_t get_glyph_count();
 int glyph_get_tables(int *version, void **unicode_t, void **glyph_t);
-
+int glyph_serialize_utf8(unsigned int symbol, char* serialization_arr);
+int glyph_deserialize_utf8(unsigned int *symbol, char* serialization_arr);
 
 
 

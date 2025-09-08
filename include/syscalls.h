@@ -55,7 +55,9 @@ void syscall_getppid(struct regs *r);
 void syscall_getpgrp(struct regs *r);
 void syscall_setpgid(struct regs *r);
 void syscall_setsid(struct regs* r);
-
+void syscall_nanosleep(struct regs* r);
+void syscall_sched_yield(struct regs* r);
+void syscall_poll(struct regs* r);
 
 #define MAX_SYSCALL_NUMBER 256
 extern void (*syscall_handlers[MAX_SYSCALL_NUMBER])(struct regs *r);

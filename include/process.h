@@ -57,7 +57,7 @@ typedef enum {
 typedef uint8_t fpu_state_t[512];
 
 
-typedef struct {
+typedef struct process_struct{
     u32 state;
     int argc;
     char **argv;
@@ -79,7 +79,7 @@ typedef struct {
     list_t * mem_mapping;
     int recv_signals;
     u8 * kstack;
-    void* ctty;
+    void* ctty; //very sad situation :'(
 
     pid_t sid;
     pid_t pgid;
@@ -87,6 +87,16 @@ typedef struct {
     //syscall states no kthread no fancy things for you
     syscall_state_t syscall_state;
     unsigned long syscall_number;
+
+
+    //timers? we write it by index
+    int itimer;
+    
+    //ptrace stuff
+    int ptrace;
+    long ptrace_message;
+    struct process_struct* tracer;
+    struct process_struct* tracee;
     
 }pcb_t;
 
@@ -110,8 +120,10 @@ pcb_t * load_process(pcb_t * proc);
 
 void list_vmem_mapping(pcb_t * process);
 
-pcb_t * create_kernel_process(void (*entry)(void) );
+pcb_t * create_kernel_process(void (*entry)(void* data), void* data, const char namefmt[], ...);
 void save_current_context(pcb_t * proc);
+void restore_cpu_context(struct context *ctx);
+void copy_context_to_trap_frame(struct regs* r, struct context* ctx);
 
 void process_release_sources(pcb_t * proc);
 void inkernelstacktrace();
@@ -121,6 +133,9 @@ int process_get_empty_fd(pcb_t* proc);
 
 int process_send_signal(pid_t pid, unsigned int signum);
 int process_send_signal_pgrp(pid_t pgrp, unsigned int signum);
+
+file_t* process_get_file(pcb_t* proc, int fd);
+#define get_file(fd) process_get_file(current_process, fd)
 
 //signals
 
@@ -150,5 +165,61 @@ int process_send_signal_pgrp(pid_t pgrp, unsigned int signum);
 
 #define SIGEMT 5
 #define SIGPOLL 11
+
+
+int kernl_schedule_shim();
+int _schedule();
+
+#define interruptible_sleep_on(wait_queue, condition_expr)         \
+do {                                                               \
+    pcb_t *cur = current_process;                                  \
+    list_insert_end(wait_queue, cur);                              \
+    while (!(condition_expr)) {                                    \
+        cur->state = TASK_INTERRUPTIBLE;                           \
+        _schedule(); /* yield CPU, other tasks run */              \
+    }                                                              \
+} while(0)
+
+
+
+// #define interruptible_sleep_on(wait_queue, condition_expr)          \
+// do {                                                                 \
+//     pcb_t *cur = current_process;                                    \
+//     context_t *ctx = &cur->regs;                                     \
+//     struct regs nr;                                                 \
+//     save_current_context(cur);                                      \
+//     while (!(condition_expr)) {                                       \
+//         ctx->eip = (uint32_t)&&resume_sleep_label; /* resume point */ \
+//         copy_context_to_trap_frame(&nr, ctx);                          \
+//         cur->state = TASK_INTERRUPTIBLE;                              \
+//         schedule(&nr); /* yield CPU, other tasks run */              \
+//                                                                       \
+//     resume_sleep_label:                                               \
+//         fb_console_printf("Tumbling down tumbling down\n"); \
+//         cur->state = TASK_RUNNING;                                    \
+//                                                                       \
+//         if (cur->recv_signals) {                                      \
+//             cur->recv_signals = 0;                                    \
+//             /* optionally return -EINTR */                             \
+//         }                                                             \
+//     }                                                                 \
+// } while(0)
+
+
+
+
+
+
+
+
+
+#define sleep_on(wait_queue) \
+do { \
+    pcb_t *cur = current_process;\
+    cur->state = TASK_INTERRUPTIBLE; \
+    list_insert_end(wait_queue, cur); \
+    kernl_schedule_shim(); \
+} while(0)
+
 
 #endif

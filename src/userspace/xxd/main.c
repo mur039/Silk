@@ -19,6 +19,7 @@ enum options{
     OPTION_HELP = 0,
     OPTION_FILE_LENGTH,
     OPTION_FILE_OFFSET,
+    OPTION_COLUMN,
 
     OPTION_EOT
 };
@@ -30,6 +31,7 @@ const char* single_dash_options[] = {
     [OPTION_HELP] = "-h",
     [OPTION_FILE_LENGTH] = "-l",
     [OPTION_FILE_OFFSET] = "-o",
+    [OPTION_COLUMN] = "-c",
 
     [OPTION_EOT] = NULL
 };
@@ -39,6 +41,7 @@ const char* double_dash_options[] = {
     [OPTION_HELP] = "--help",
     [OPTION_FILE_LENGTH] = "--length",
     [OPTION_FILE_OFFSET] = "--offset",
+    [OPTION_COLUMN] = "--column",
 
     [OPTION_EOT] = NULL
 };
@@ -50,6 +53,7 @@ const int need_options_arg[] = {
     [OPTION_HELP] = 0,
     [OPTION_FILE_LENGTH] = 1,
     [OPTION_FILE_OFFSET] = 1,
+    [OPTION_COLUMN] = 1,
 
 
     [OPTION_EOT] = -1
@@ -84,6 +88,7 @@ const char help_string[] =
                             "-l, --length       specify length of the file\n"
                             "-o, --offset       specify read offset of the file\n"
                             "-h, --help         display this help\n"
+                            "-c, --column       specifies the column count\n"
                             ;
 
 void print_help_str(){
@@ -91,6 +96,7 @@ void print_help_str(){
 }
 
 
+int column = 16;
 void xxd_main(int fd, int length);
 
 int main(int argc, char ** argv){
@@ -160,6 +166,18 @@ int main(int argc, char ** argv){
                 i++;
                 offset = argv[i];
                 break;
+            
+            case OPTION_COLUMN:
+                i++;
+                {
+                    int _column = atoi(argv[i]);
+                    if(_column < 0 || _column > 16){}
+                    else{
+                        column = _column;
+                    }
+
+                }
+                
             default:break;
 
         }
@@ -238,16 +256,16 @@ void xxd_main(int fd, int length){
 
         if(tok){
             
-            if(line_index >= 16){
+            if(line_index >= column){
                 
                 line_index = 0;
-                for(int i = 0; i < 16 ; ++i){
+                for(int i = 0; i < column ; ++i){
                     if(line_buffer[i] < 0x10 ){
                         printf("0%x ", line_buffer[i]);
                     }else{printf("%x ", line_buffer[i]);}
                 }
                 puts("  ");
-                for(int i = 0; i < 16 ; ++i){
+                for(int i = 0; i < column ; ++i){
                     
                     char c = line_buffer[i];
                     if(c < 32){ putchar('.'); }
@@ -267,7 +285,7 @@ void xxd_main(int fd, int length){
                 }
 			}
 
-			for(int i = line_index; i < 16; ++i){
+			for(int i = line_index; i < column; ++i){
 				printf("   ");
 			}
 

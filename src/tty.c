@@ -17,13 +17,16 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
         circular_buffer_write(&tty->read_buffer, (void*)str, 1, nbytes);
         if(tty->termio.c_lflag & ECHO){
             
-            if(tty->driver && tty->driver->write)  tty->driver->write(tty, str, nbytes);
+            if(tty->driver && tty->driver->write){
+                
+                tty->driver->write(tty, str, nbytes);
+            }
         }
 
         return nbytes;
     }
 
-
+    int aux = 0;
     for(const char* ch = str; ch < (str + nbytes); ch++){
         size_t linebuffer_size = 0;
         switch(*ch){
@@ -32,10 +35,6 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
             //discard the linebuffer
             tty->linebuffer.read = 0;
             tty->linebuffer.write = 0;
-            
-            if(tty->termio.c_lflag & ECHO && tty->driver && tty->driver->write){
-                tty->driver->write(tty, "^C", 2); //echo it to the screen
-            }
 
             if(tty->termio.c_lflag & ISIG) 
                 process_send_signal_pgrp(tty->fg_pgrp, SIGINT);
@@ -50,12 +49,19 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
             tty->eof_pending = 1;
             process_wakeup_list(&tty->read_wait_queue);
             break;
+            
+            case CTRL('z'):
+                process_send_signal_pgrp(tty->fg_pgrp, SIGSTOP);
+            break;
 
             case 127:
             case '\b': 
-            if(!circular_buffer_avaliable(&tty->linebuffer)) 
-                break;
-    
+                aux = circular_buffer_peek_last(&tty->linebuffer);
+                if(aux < 0){ //no data
+                    continue;
+                }
+            
+
             if(tty->linebuffer.write > tty->linebuffer.read){
 
                 tty->linebuffer.write--;
@@ -64,9 +70,14 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
                 
                 tty->linebuffer.write = (tty->linebuffer.write--) % tty->linebuffer.max_size;
             }
-            if(tty->termio.c_lflag & ECHO && tty->driver && tty->driver->write){
-                tty->driver->write(tty, ch, 1); //echo it to the screen
+
+            if( aux < 32 && aux != '\n' && aux != '\r'  && aux != '\t'  ){
+                if(tty->termio.c_lflag & ECHO && tty->driver && tty->driver->write){
+        
+                    tty->driver->write(tty, "\b", 1); //extra backspace
+                }
             }
+            
             break;
 
             case '\r':
@@ -84,17 +95,26 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
                 circular_buffer_putc(&tty->read_buffer, circular_buffer_getc(&tty->linebuffer));
             }
             process_wakeup_list(&tty->read_wait_queue);
-            if(tty->termio.c_lflag & ECHO && tty->driver && tty->driver->write){
-                tty->driver->write(tty, (const char*)&nch, 1); //echo it to the screen
-            }
             break;
 
             default:
             circular_buffer_putc(&tty->linebuffer, *ch);
-            if(tty->termio.c_lflag & ECHO && tty->driver && tty->driver->write){
+            break;
+        }
+
+
+        if(tty->termio.c_lflag & ECHO && tty->driver && tty->driver->write){
+            
+            if(*ch == '\n' || *ch == '\r' || *ch =='\b' || *ch == '\t' ||*ch >= 32){
+                
                 tty->driver->write(tty, ch, 1); //echo it to the screen
             }
-            break;
+            else if(*ch < 32){
+                char ctrl_template[3] = "^@";
+                ctrl_template[1] += *ch;
+                tty->driver->write(tty, ctrl_template, 2); //echo it to the screen
+            }
+            
         }
         
     }
@@ -102,7 +122,7 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
     return nbytes;
 }
 
-void tty_open(struct fs_node* fnode, int read, int write){
+void tty_open(struct fs_node* fnode, int flags){
     
     tty_t* tty = ((device_t*)fnode->device)->priv;
     
@@ -115,7 +135,8 @@ void tty_open(struct fs_node* fnode, int read, int write){
     tty->refcount++;
 
     //so that so session leader steals the terminal
-    if( !tty->session  &&  !current_process->ctty){
+    if( !tty->session  &&  !current_process->ctty && !(flags & O_NOCTTY)){
+        
         current_process->ctty = tty;
         tty->session = current_process->sid;
         tty->fg_pgrp = current_process->pgid;
@@ -193,6 +214,22 @@ uint32_t tty_read(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t
     }
 }
 
+
+
+
+short tty_poll(struct fs_node *fn, struct poll_table* pt){
+    
+    tty_t* tty = ((device_t*)fn->device)->priv;
+    poll_wait(fn, &tty->read_wait_queue, pt);
+    
+    short mask = 0;
+    
+    if( circular_buffer_avaliable(&tty->read_buffer) ){
+        mask |= POLLIN;
+    }
+
+    return mask;
+}
 
 
 int tty_ioctl(fs_node_t* fnode, unsigned long op, void* argp){

@@ -124,9 +124,8 @@ user_mode_test:
 global resume_kthread
 resume_kthread:
 	mov eax, [esp + 4]
-	ret
+	mov esp, eax
 	
-	pop eax
 	pop gs
 	pop fs
 	pop es
@@ -140,7 +139,66 @@ resume_kthread:
 	ret
 	
 
+;it is called 
+global kernl_schedule_shim
+kernl_schedule_shim:
+  	
+	cli
+
+	pushf
+    push 0x08              ; kernel CS
+    push kernl_schedule_return ; fake EIP
+
+	push 0 ;int code 
+	push 0 ; errcode
+
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
 
 
+    mov eax, esp            ; pointer to top-of-stack pseudo-frame
+    push eax
+    call schedule
+
+kernl_schedule_return:
 	
-    
+	sti
+	ret
+
+
+
+;global kernl_schedule_shim
+;kernl_schedule_shim:
+;  	cli
+;    pushf
+;    ; push minimal iret frame for resume: CS:EIP and EFLAGS
+;    push 0x08              ; kernel CS
+;    push kernel_resume_label ; fake EIP
+;	push 0
+;	push 0
+;
+;    pusha
+;    push ds
+;    push es
+;    push fs
+;    push gs
+;
+;
+;    mov eax, esp            ; pointer to top-of-stack pseudo-frame
+;    push eax
+;    call schedule
+
+;extern halt
+;global kernel_resume_label
+;kernel_resume_label:
+;    popf
+;    pop gs
+;    pop fs
+;    pop es
+;    pop ds
+;    popa
+;    sti
+;    ret

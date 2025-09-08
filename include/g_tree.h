@@ -1,10 +1,9 @@
 #ifndef __G_TREE_H__
 #define __G_TREE_H__
 
-#include <sys.h>
-#include <pmm.h>
-
 #include <g_list.h>
+#include <stddef.h>
+#include <stdint.h>
 
 typedef struct treenode {
 	void * value;

@@ -66,6 +66,28 @@ struct tcp_pseudo_header {
     uint16_t tcp_len;
 } __attribute__((packed));
 
+
+enum tcp_states {
+    TCP_CLOSED,
+    TCP_LISTEN,
+    TCP_SYNSENT,
+    TCP_SYNRECEIVED,
+    TCP_ESTABLISHED,
+    TCP_FINWAIT1,
+    TCP_FINWAIT2,
+    TCP_CLOSEWAIT,
+    TCP_CLOSING,
+    TCP_LASTACK,
+    TCP_TIMEWAIT,
+};
+
+struct tcp_sock {
+    struct inet_sock isk;
+    enum tcp_states tcp_state;
+    
+};
+
+int tcp_create_socket(struct socket* socket);
 int tcp_net_send_socket(const struct ipv4_packet* ip, size_t len);
 uint16_t tcp_package_calc_checksum(struct tcp* package, size_t len, uint32_t src_ip, uint32_t dst_ip);
 #endif

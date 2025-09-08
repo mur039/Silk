@@ -1,5 +1,5 @@
 #include <vmm.h>
-
+#include <pmm.h>
 
 
 void * vmm_mark_allocated(list_t * map, u32 va, u32 pa, int attributes){

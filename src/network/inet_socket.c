@@ -18,7 +18,6 @@ struct socket* inet_socket_create(int type, int protocol){
             socket->type = type;
             socket->state = SS_UNCONNECTED;
             socket->flags = 0;
-            // socket->protocol_data = kcalloc(1, 1); //???????
             
             err = udp_create_sock(socket);
             if(err < 0){

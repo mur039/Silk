@@ -108,12 +108,12 @@ const char * process_attribute[] = {
 
 
 static uint32_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
-static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write);
+static void proc_pid_open(struct fs_node *node , int flags);
 static void proc_pid_close(struct fs_node *node);
 
 static struct fs_node* proc_pid_finddir(struct fs_node* node, char *name){
 
-    fb_console_printf("proc_pid_finddir: %s::%s\n", node->name, name);
+    // fb_console_printf("proc_pid_finddir: %s::%s\n", node->name, name);
 
     int  str_index = -1;
     for(int i = 0; process_attribute[i]; ++i){
@@ -136,13 +136,10 @@ static struct fs_node* proc_pid_finddir(struct fs_node* node, char *name){
 
     fnode->impl = node->impl;
     fnode->flags   = FS_FILE;
-	fnode->read    = (read_type_t) proc_pid_read;
-	fnode->write   = NULL;
-	fnode->open    = (open_type_t)proc_pid_open;
-	fnode->close   = (close_type_t)proc_pid_close;
-	fnode->readdir = NULL;
-	fnode->finddir = NULL;
-	fnode->ioctl   = NULL;
+	fnode->ops.read    = proc_pid_read;
+	fnode->ops.open    = proc_pid_open;
+	fnode->ops.close   = (close_type_t)proc_pid_close;
+	
     return fnode;    
 }
 
@@ -217,7 +214,7 @@ static uint32_t proc_pid_read(struct fs_node *node , uint32_t offset, uint32_t s
  
 #include <tty.h>
 #include <filesystems/pts.h>
-static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
+static void proc_pid_open(struct fs_node *node , int flags){
     //impl contains pid, inode contains the file index which specifies the data
     pid_t proc_pid = node->impl;
     uint32_t attr_index = node->inode;
@@ -324,11 +321,19 @@ static void proc_pid_open(struct fs_node *node , uint8_t read, uint8_t write){
             
             tty_nr = (major << 8) | minor;
         }
+
+        char task_state_ch;
+        if(proc->state == TASK_RUNNING) task_state_ch = 'R';
+        else if(proc->state == TASK_INTERRUPTIBLE) task_state_ch = 'S';
+        else if(proc->state == TASK_UNINTERRUPTIBLE) task_state_ch = 'D';
+        else if(proc->state == TASK_ZOMBIE) task_state_ch = 'Z';
+        else if(proc->state == TASK_STOPPED) task_state_ch = 'T';
+        
         file->strlen = sprintf(
                                 localbuffer, "%u (%s) %c %u %u %u %u", 
                                 proc->pid, proc->filename, 
-                                proc->state  == TASK_RUNNING ? 'R' : '?',
-                                ((pcb_t*)(proc->parent->val))->pid,
+                                task_state_ch,
+                                proc->parent ? ((pcb_t*)(proc->parent->val))->pid : 0,
                                 proc->pgid,
                                 proc->sid,
                                 tty_nr
@@ -369,7 +374,7 @@ struct fs_node* proc_finddir(struct fs_node* node, char *name){
     strcat(nname, name);
 
     
-    fb_console_printf("proc_finddir: searching for %s::%s \n", nname, name);
+    // fb_console_printf("proc_finddir: searching for %s::%s \n", nname, name);
     kfree(nname);
 
 
@@ -392,13 +397,9 @@ struct fs_node* proc_finddir(struct fs_node* node, char *name){
 	        fnode->gid = 0;
             fnode->impl = pid;
             fnode->flags   = FS_DIRECTORY;
-	        fnode->read    = NULL;
-	        fnode->write   = NULL;
-	        fnode->open    = NULL;
-	        fnode->close   = NULL;
-	        fnode->readdir = (readdir_type_t)proc_pid_readdir;
-	        fnode->finddir = (finddir_type_t)proc_pid_finddir;
-	        fnode->ioctl   = NULL;
+	        
+	        fnode->ops.readdir = (readdir_type_t)proc_pid_readdir;
+	        fnode->ops.finddir = (finddir_type_t)proc_pid_finddir;
             return fnode;
         }
         return NULL;
@@ -416,13 +417,9 @@ struct fs_node* proc_finddir(struct fs_node* node, char *name){
 	        fnode->gid = 0;
             fnode->impl = current_process->pid;
             fnode->flags   = FS_DIRECTORY;
-	        fnode->read    = NULL;
-	        fnode->write   = NULL;
-	        fnode->open    = NULL;
-	        fnode->close   = NULL;
-	        fnode->readdir = (readdir_type_t)proc_pid_readdir;
-	        fnode->finddir = (finddir_type_t)proc_pid_finddir;
-	        fnode->ioctl   = NULL;
+	        
+	        fnode->ops.readdir = (readdir_type_t)proc_pid_readdir;
+	        fnode->ops.finddir = (finddir_type_t)proc_pid_finddir;
             return fnode;
 
         }
@@ -448,15 +445,9 @@ fs_node_t * proc_create(){
 	fnode->uid = 0;
 	fnode->gid = 0;
 	fnode->flags   = FS_DIRECTORY;
-	fnode->read    = NULL;
-	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
-	fnode->readdir = (readdir_type_t)proc_readdir;
-	fnode->finddir = (finddir_type_t)proc_finddir;
-	fnode->ioctl   = NULL;
-	return fnode;
-    
-    
+	
+	fnode->ops.readdir = (readdir_type_t)proc_readdir;
+	fnode->ops.finddir = (finddir_type_t)proc_finddir;
+        
     return fnode;
 }

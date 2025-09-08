@@ -2,9 +2,12 @@
 #define __VFS_H__
 
 #include <stdint.h>
-#include <sys.h>
-#include <pmm.h>
+#include <stddef.h>
+#include <g_list.h>
 #include <g_tree.h>
+#include <sys/poll.h>
+// #include <sys.h>
+// #include <pmm.h>
 
 #define PATH_SEPARATOR '/'
 #define PATH_SEPARATOR_STRING "/"
@@ -33,9 +36,10 @@
 
 struct fs_node;
 
+
 typedef uint32_t (*read_type_t) (struct fs_node *, uint32_t, uint32_t, uint8_t *);
 typedef uint32_t (*write_type_t) (struct fs_node *, uint32_t, uint32_t, uint8_t *);
-typedef void (*open_type_t) (struct fs_node *, uint8_t read, uint8_t write);
+typedef void (*open_type_t) (struct fs_node *, int flags);
 typedef void (*close_type_t) (struct fs_node *);
 typedef struct dirent *(*readdir_type_t) (struct fs_node *, uint32_t);
 typedef struct fs_node *(*finddir_type_t) (struct fs_node *, const char *name);
@@ -45,6 +49,27 @@ typedef int (*ioctl_type_t) (struct fs_node *, unsigned long request, void * arg
 typedef int (*get_size_type_t) (struct fs_node *);
 typedef int (*unlink_type_t) (struct fs_node *, const char *name);
 typedef void* (*mmap_type_t) (struct fs_node *, size_t length, int prot, size_t offset);
+typedef void* (*truncate_type_t) (struct fs_node *, size_t length);
+typedef short (*poll_type_t) (struct fs_node *, struct poll_table*);
+
+struct fs_ops {
+	read_type_t read;
+	write_type_t write;
+	open_type_t open;
+	close_type_t close;
+	ioctl_type_t ioctl;
+	mmap_type_t mmap;
+	get_size_type_t get_size;
+	truncate_type_t truncate;
+
+	readdir_type_t readdir;
+	finddir_type_t finddir;
+	create_type_t create;
+	mkdir_type_t mkdir;
+	unlink_type_t unlink;
+
+	poll_type_t poll;
+};
 
 typedef struct fs_node {
 	char name[256];         // The filename.
@@ -66,31 +91,32 @@ typedef struct fs_node {
 	uint32_t ctime;         // Created
 
 	/* File operations */
-	read_type_t read;
-	write_type_t write;
-	open_type_t open;
-	close_type_t close;
-	ioctl_type_t ioctl;
-	mmap_type_t mmap;
-	get_size_type_t get_size;
-
-
-	readdir_type_t readdir;
-	finddir_type_t finddir;
-	create_type_t create;
-	mkdir_type_t mkdir;
-	unlink_type_t unlink;
+	struct fs_ops ops;
 
 	struct fs_node *ptr;   // Alias pointer, for symlinks.
 	uint32_t offset;       // Offset for read operations XXX move this to new "file descriptor" entry
 	int32_t shared_with;   // File descriptor sharing XXX 
+	size_t refcount;
 } fs_node_t;
 
 
 
+struct fsnode_cache_entry{
+	fs_node_t * node;
+	uint32_t key;
+	struct fsnode_cache_entry* next;
+};
+
+struct fsnode_cache {
+	size_t bucket_size;
+	struct fsnode_cache_entry **buckets;
+};
+
+
 struct vfs_entry {
 	char * name;
-	fs_node_t * file; /* Or null */
+	list_t nodes;
+	// fs_node_t * file; /* Or null */
 };
 
 
@@ -137,7 +163,7 @@ int vfs_mount(char * path, fs_node_t * local_root);
 
 
 
-void open_fs(fs_node_t *node, uint8_t read, uint8_t write);
+void open_fs(fs_node_t *node, int flags);
 void close_fs(fs_node_t *node);
 void create_fs(fs_node_t* node,  const char *name, uint16_t permissions);
 int mkdir_fs(fs_node_t* node, char *name, uint16_t permission);
@@ -146,7 +172,7 @@ uint32_t read_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffe
 fs_node_t *finddir_fs(fs_node_t *node, char *name);
 struct dirent *readdir_fs(fs_node_t *node, uint32_t index);
 int unlink_fs(fs_node_t* node, const char* name);
-
+int ioctl_fs(fs_node_t* node, unsigned long req, void* arg);
 void vfs_tree_traverse(tree_t* tree);
 fs_node_t *get_mount_point(char * path, unsigned int path_depth, char **outpath, unsigned int * outdepth);
 char* vfs_canonicalize_path(const char* cwd, const char* rpath);

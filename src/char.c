@@ -95,8 +95,8 @@ void install_kernel_mem_devices(){
     device->unique_id = 3;
     device->dev_type = DEVICE_CHAR;
 
-    device->read = (read_type_t)read_null;
-    device->write = (write_type_t)write_null;
+    device->ops.read = (read_type_t)read_null;
+    device->ops.write = (write_type_t)write_null;
     dev_register(device);
     kfree(device);
 
@@ -106,7 +106,7 @@ void install_kernel_mem_devices(){
     device->unique_id = 4;
     device->dev_type = DEVICE_CHAR;
 
-    device->ioctl = (ioctl_type_t)port_ioctl;
+    device->ops.ioctl = (ioctl_type_t)port_ioctl;
     dev_register(device);
     kfree(device);
 
@@ -116,8 +116,8 @@ void install_kernel_mem_devices(){
     device->unique_id = 5;
     device->dev_type = DEVICE_CHAR;
 
-    device->write = (write_type_t)write_null;
-    device->read = (read_type_t)read_zero;
+    device->ops.write = (write_type_t)write_null;
+    device->ops.read = (read_type_t)read_zero;
     dev_register(device);
     kfree(device);
     

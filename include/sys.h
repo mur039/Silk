@@ -2,7 +2,7 @@
 #define __SYS_H_
 
 #include <stdint.h>
-#include <stdint-gcc.h>
+// #include <stdint-gcc.h>
 #include <str.h>
 
 

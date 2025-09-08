@@ -98,11 +98,6 @@ fs_node_t * fat_node_create( fs_node_t* node){
 	fnode->gid = 0;
 	fnode->flags   = FS_DIRECTORY;
 
-	fnode->read    = NULL;
-	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
-	fnode->ioctl   = NULL;
 
     fnode->device = fat;
 	fat->root_node = fnode;
@@ -117,9 +112,9 @@ fs_node_t * fat_node_create( fs_node_t* node){
 
 		case FAT_TYPE_32:
 			;
-			fnode->readdir = (readdir_type_t)fat32_readdir;
-			fnode->finddir = (finddir_type_t)fat32_finddir;
-			fnode->mkdir   = (mkdir_type_t)fat32_mkdir;
+			fnode->ops.readdir = (readdir_type_t)fat32_readdir;
+			fnode->ops.finddir = (finddir_type_t)fat32_finddir;
+			fnode->ops.mkdir   = (mkdir_type_t)fat32_mkdir;
 			fat_bootsector_32_t* fat32_sp = fat->sector0;
 			fat->cluster_index = fat32_sp->BPB_RootClus;
 			break;
@@ -374,15 +369,15 @@ struct fs_node* fat32_finddir(struct fs_node* node, char *name){
 					if(dir.dir_attr == FAT_DIR_ATTR_DIRECTORY ){
 						
 						fnode->flags   = FS_DIRECTORY;
-						fnode->readdir = (readdir_type_t)fat32_readdir;
-						fnode->finddir = (finddir_type_t)fat32_finddir;
-						fnode->mkdir   = (mkdir_type_t)fat32_mkdir;
+						fnode->ops.readdir = (readdir_type_t)fat32_readdir;
+						fnode->ops.finddir = (finddir_type_t)fat32_finddir;
+						fnode->ops.mkdir   = (mkdir_type_t)fat32_mkdir;
 
 					}
 					else{
 						fnode->flags   = FS_FILE;
-						fnode->read = fat32_read;
-						fnode->write = fat32_write;
+						fnode->ops.read = fat32_read;
+						fnode->ops.write = fat32_write;
 					}
 
 					return fnode;

@@ -152,7 +152,7 @@ int initialize_e1000(pci_device_t* pcidev){
         uint32_t* bars = (uint32_t*)&pcidev->header.type_0.base_address_0;
         if(bars[i]){
 
-            fb_console_printf("BAR%u: %s -> %x\n", i, bars[i] & 1 ? "I/O" : "MMIO", bars[i]);
+            fb_console_printf("BAR%u: %s -> %x\n", i, bars[i] & 1 ? "I/O" : "MMIO", bars[i] & ~1ul);
         }
     }
 

@@ -187,7 +187,9 @@ struct dirent * pts_readdir(struct fs_node* fnode, size_t index){
 
 int pts_ioctl(fs_node_t* fnode, int op, void* argp){
 
+    //only slave side gets effected???
     tty_t* tty = ((device_t*)fnode->device)->priv;
+    struct ptypair* pair = masterslave_table[tty->index];
     
     switch(op){
 
@@ -203,9 +205,18 @@ int pts_ioctl(fs_node_t* fnode, int op, void* argp){
 
         case TIOCGPTLCK:
         break;
+        
+        //get size
+        case TIOCSWINSZ: __attribute__((fallthrough));
+        case TIOCGWINSZ:
+        if(is_tty_master(tty)){
+            return -ENOTTY;
+        }
+    
+        __attribute__((fallthrough));    
 
         default:
-            return tty_ioctl(fnode, op, argp);
+        return tty_ioctl(fnode, op, argp);
         break;
     }
 
@@ -226,11 +237,11 @@ struct fs_node * pts_finddir(struct fs_node* fnode, char* name){
         struct fs_node* fnode = kcalloc(1, sizeof(struct fs_node));
         sprintf(fnode->name, "ptmx");
 
-        fnode->open  = (open_type_t)tty_open;
-        fnode->close = (close_type_t)tty_close;
-        fnode->write = (write_type_t)tty_write;
-        fnode->read = (read_type_t)tty_read;
-        fnode->ioctl = (ioctl_type_t)pts_ioctl; //????
+        fnode->ops.open  = tty_open;
+        fnode->ops.close = tty_close;
+        fnode->ops.write = tty_write;
+        fnode->ops.read  = tty_read;
+        fnode->ops.ioctl = (ioctl_type_t)pts_ioctl; //????
 
         device_t* dev =  kcalloc(1, sizeof(device_t));
         dev->priv = &pair->master;
@@ -261,11 +272,11 @@ struct fs_node * pts_finddir(struct fs_node* fnode, char* name){
         struct fs_node* fnode = kcalloc(1, sizeof(struct fs_node));
         sprintf(fnode->name, "%u", index);
 
-        fnode->open  = (open_type_t)tty_open;
-        fnode->close = (close_type_t)tty_close;
-        fnode->write = (write_type_t)tty_write;
-        fnode->read = (read_type_t)tty_read;
-        fnode->ioctl = (ioctl_type_t)tty_ioctl; //????
+        fnode->ops.open  = tty_open;
+        fnode->ops.close = tty_close;
+        fnode->ops.write = tty_write;
+        fnode->ops.read  = tty_read;
+        fnode->ops.ioctl = (ioctl_type_t)tty_ioctl; //????
 
         device_t* dev =  kcalloc(1, sizeof(device_t));
         dev->priv = &pair->slave;
@@ -290,14 +301,15 @@ struct fs_node*  pts_create_node(){
         sprintf(ptsnode->name, "devpts");
         ptsnode->flags = FS_DIRECTORY;
         
-        ptsnode->readdir = (readdir_type_t)pts_readdir;
-        ptsnode->finddir = (finddir_type_t)pts_finddir;
+        ptsnode->ops.readdir = (readdir_type_t)pts_readdir;
+        ptsnode->ops.finddir = (finddir_type_t)pts_finddir;
 
-        masterslave_table = kcalloc(MAX_PTS_COUNT, sizeof(struct ptypair*));
-        if(!masterslave_table)
+        masterslave_table = kcalloc(MAX_PTS_COUNT, sizeof(struct ptypair*)); //allocate a table of double pointers
+        if(!masterslave_table){
+
             return NULL;
+        }
     }
-
 
 
     //so some init about the pts node

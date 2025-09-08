@@ -30,6 +30,7 @@ void fb_console_putchar(unsigned short c);
 void fb_console_write(void * src, uint32_t size, uint32_t nmemb);
 void fb_console_put(char * s);
 void fb_console_printf(const char * fmt, ...);
+int fb_console_get_cursor();
 
 void fb_console_blink_cursor();
 uint8_t * get_framebuffer_address(void);
@@ -38,9 +39,9 @@ uint8_t * get_framebuffer_address(void);
 uint32_t console_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer);
 uint32_t console_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer);
 uint32_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer);
+void fb_console_va_printf(const char* fmt, va_list args);
 
 void pci_disp_irq_handler(struct regs *r);
 void install_basic_framebuffer(uint32_t* base, uint32_t width, uint32_t height, uint32_t bpp);
-
 
 #endif

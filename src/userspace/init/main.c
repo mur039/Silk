@@ -71,11 +71,11 @@ int main(int _argc, char * _argv[]){
 
     pid = create_child_terminal("/bin/dash", "/dev/tty0");
     if(pid < 0){
-        return 2;
+        puts("Failed to fork, exitting...\n");
+        return 1;
     }
 
-
-
+    
     
     while(1){
 

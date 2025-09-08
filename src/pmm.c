@@ -1,5 +1,6 @@
 #include <pmm.h>
 #include <fb.h>
+#include <module.h>
 
 extern uint32_t bootstrap_pde[1024];
 extern uint32_t bootstrap_pte1[1024];
@@ -334,34 +335,6 @@ void * kmalloc(unsigned int size){
                 
                 */
 
-                #if 0
-                // head has, header and size
-                // since it's a block the header is already allocated thus size -> new_size + header + left
-                uint8_t* byteptr = (uint8_t*)head;
-                byteptr += sizeof(block_t) + size;
-                block_t* nblock = (block_t*)byteptr;
-                
-                head->is_free = KMALLOC_MAGIC | KMALLOC_ALLOCATED;
-                head->size = size;
-
-                nblock->is_free = KMALLOC_MAGIC | KMALLOC_FREE;
-                nblock->size = left;
-
-
-                nblock->next = head->next;
-                nblock->prev = head;
-                head->next = nblock;
-                if(nblock->next){
-                    nblock->next->prev = nblock;
-                }
-                else{ //possibly nblock is the last item thu
-                    malloc_last_block = nblock;
-                }
-
-                return &head[1];
-    
-            #else
-
                 uint8_t* placement = (uint8_t*)&head[1];
                 placement += size;
                 
@@ -370,6 +343,10 @@ void * kmalloc(unsigned int size){
                 next_free->size = head->size - size - sizeof(block_t);
                 next_free->prev = head;
                 next_free->next = head->next;
+
+                if (next_free->next) {
+                   next_free->next->prev = next_free;
+                }
 
                 if(!next_free->next){ //possible the last item
                     malloc_last_block = next_free;
@@ -380,10 +357,6 @@ void * kmalloc(unsigned int size){
                 head->size = size;
                 
                 return &head[1];
-
-                #endif
-
-
             }
         }
         
@@ -412,6 +385,7 @@ void * kmalloc(unsigned int size){
     return kmalloc(size);
 };
 
+EXPORT_SYMBOL(kmalloc);
 
 
 void * krealloc( void *ptr, size_t size){
@@ -437,6 +411,7 @@ void * kcalloc(uint32_t nmemb, uint32_t size){
         memset(retval, 0, nmemb * size);
     return retval;
 }
+EXPORT_SYMBOL(kcalloc);
 
 
 void * kpalloc(unsigned int npages){ //allocate page then map it to the heap.
@@ -522,34 +497,15 @@ void kfree(void * ptr){
         *----*------------
     
     */
-    
-#if 0
-    if(next && KMALLOC_IS_FREE(next->is_free)){
-        head->size += next->size + sizeof(block_t);
-        head->next = next->next;
-        if(head->next){
-            head->next->prev = head;
-        }
-    }
-
-    if(prev && KMALLOC_IS_FREE(prev->is_free)){
-        prev->size += head->size += sizeof(block_t);
-        prev->next = head->next;
-        if(prev->next){
-            prev->next->prev = prev;
-        }
-    }
-
-
-
-
-#else
+ 
     if(next){
 
         if(!is_virtaddr_mapped(next)){ //if next is not mapped than it is invalid so nullify
             uart_print(COM1, "kfree: pointer is not mapped\r\n");
             head->next = NULL;
-            head->prev->next = NULL;
+            if (head->prev) {
+               head->prev->next = NULL;
+            }
             return;
         }
         else if( !KMALLOC_IS_FREE(next->is_free) ){
@@ -576,12 +532,8 @@ void kfree(void * ptr){
             }
         }
     }
-
-    #endif
-
-
 }
-
+EXPORT_SYMBOL(kfree);
 
 
 

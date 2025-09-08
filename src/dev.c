@@ -1,5 +1,7 @@
 #include <dev.h>
 #include <uart.h>
+#include <module.h>
+
 #define MAX_DEVICE 64
 device_t devices[ MAX_DEVICE ];
 static size_t lastid = 0;
@@ -21,6 +23,8 @@ int dev_register(device_t* dev)
 	fb_console_printf("Registered Device %s (%u) as Device#%u\n", dev->name, dev->unique_id, lastid);
 	return lastid++;
 }
+
+EXPORT_SYMBOL(dev_register);
 
 void list_devices(){
     for(size_t i = 0; i < 64 && i < lastid; ++i){
@@ -65,13 +69,10 @@ fs_node_t * devfs_create() {
 	fnode->uid = 0;
 	fnode->gid = 0;
 	fnode->flags   = FS_DIRECTORY;
-	fnode->read    = NULL;
-	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
-	fnode->readdir = (readdir_type_t)devfs_readdir;
-	fnode->finddir = (finddir_type_t)devfs_finddir;
-	fnode->ioctl   = NULL;
+	
+	fnode->ops.readdir = (readdir_type_t)devfs_readdir;
+	fnode->ops.finddir = (finddir_type_t)devfs_finddir;
+	fnode->ops.ioctl   = NULL;
 	return fnode;
 }
 
@@ -130,38 +131,33 @@ uint32_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t si
 
 struct fs_node* devfs_finddir(struct fs_node* node, const char *name){
     //from here name should be ../dir/
-    fb_console_printf("devfs: path:%s\n", name);
+    // fb_console_printf("devfs: path:%s\n", name);
 
 	
     //assume we have it
     device_t* dev = dev_get_by_name(name);
+	
+	if(!dev) // does not exists
+		return NULL;
 
-    if(dev){ //found a mathc
-        // fb_console_printf("found:%s\n", dev->name);
-        struct fs_node * fnode = kcalloc(1, sizeof(struct fs_node));
-        fnode->inode = 1;
-		
-        strcpy(fnode->name, dev->name);
-        fnode->uid = 0;
-	    fnode->gid = 0;
-		fnode->device = dev;
+	int dev_index = (int)(dev - devices);
+	if(dev_index < 0) //the fuck?
+		return NULL;
+    
+    // fb_console_printf("found:%s\n", dev->name);
+    struct fs_node * fnode = kcalloc(1, sizeof(struct fs_node));
+    fnode->inode = dev_index;
+	
+    strcpy(fnode->name, dev->name);
+    fnode->uid = 0;
+	fnode->gid = 0;
+	fnode->device = dev;
+    fnode->flags   = dev->dev_type == DEVICE_CHAR?  FS_CHARDEVICE  : FS_BLOCKDEVICE;
+	fnode->ops = dev->ops;
+    return fnode;
+    
 
-        fnode->flags   = dev->dev_type == DEVICE_CHAR?  FS_CHARDEVICE  : FS_BLOCKDEVICE;
-	    fnode->read    = dev->read;
-	    fnode->write   = dev->write;
-	    fnode->open    = dev->open;
-	    fnode->close   = dev->close;
-	    fnode->readdir = dev->readdir;
-	    fnode->finddir = dev->finddir;
-	    fnode->ioctl   = dev->ioctl;
-		fnode->mmap    = dev->mmap;
-		
-        return fnode;
-        
-    }
-
-    return NULL;
-
+    
 }
  
 static struct dirent * devfs_readdir(fs_node_t *node, uint32_t index) {

@@ -94,3 +94,23 @@ int circular_buffer_avaliable(const circular_buffer_t* cb){
         return 0;
     }
 }
+
+
+int circular_buffer_peek_last(const circular_buffer_t* cb){
+
+    if(circular_buffer_avaliable(cb) == 0){
+        return -1;    
+    }
+
+    return cb->base[cb->write - 1];
+}
+
+int circular_buffer_pop_last(circular_buffer_t* cb){
+
+    if(circular_buffer_avaliable(cb) == 0){
+        return -1;    
+    }
+
+    cb->write = (cb->write +1) % cb->max_size; 
+    return cb->base[cb->write - 1];
+}

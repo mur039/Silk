@@ -1,4 +1,5 @@
 #include <str.h>
+#include <module.h>
 
 
 int sprintf(char * dest, const char *format, ...){
@@ -102,6 +103,7 @@ int va_gprintf(char (* write)(char c), const char *format, va_list args){
             ++format;
             switch (*format)
             {
+            case 'd': //32 bit unsigned integer has maximum 9,38 + 1 = 11 digits
             case 'u': //32 bit unsigned integer has maximum 9,38 + 1 = 11 digits
                 ;
                 char line_buffer[11];
@@ -201,6 +203,11 @@ void * memset(void* s, int c, uint32_t n){
     return s;
 }
 
+EXPORT_SYMBOL(memcpy);
+EXPORT_SYMBOL(memcmp);
+EXPORT_SYMBOL(memset);
+EXPORT_SYMBOL(strcpy);
+EXPORT_SYMBOL(strcmp);
 
 void * memsetw4(void* s, int c, uint32_t n){
     uint32_t * head = (uint32_t*)s;

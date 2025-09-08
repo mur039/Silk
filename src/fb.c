@@ -704,6 +704,14 @@ static char fb_console_gprintf_wrapper(char c){
     return c;
 }
 
+void fb_console_va_printf(const char* fmt, va_list args){
+    va_gprintf(
+        fb_console_gprintf_wrapper,
+        fmt,
+        args
+    );
+    return;
+}
 void fb_console_printf(const char * fmt, ...){
     va_list arg;
     va_start(arg, fmt);
@@ -715,6 +723,9 @@ void fb_console_printf(const char * fmt, ...){
     return;
 }
 
+int fb_console_get_cursor(){
+    return (fb_cursor_x & 0xff) << 16 || (fb_cursor_y & 0xff);
+}
 
 uint32_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
     (void)node;
@@ -794,10 +805,10 @@ void install_basic_framebuffer(uint32_t* base, uint32_t width, uint32_t height, 
     framebuffer.name = strdup("fbxxx");
     sprintf(framebuffer.name, "fb%u", framebuffer_id++);
 
-    framebuffer.write = (write_type_t)fb_write;
-    framebuffer.ioctl = (ioctl_type_t)framebuffer_ioctl;
-    framebuffer.close = (close_type_t)framebuffer_close;
-    framebuffer.mmap = (mmap_type_t)framebuffer_mmap;
+    framebuffer.ops.write = (write_type_t)fb_write;
+    framebuffer.ops.ioctl = (ioctl_type_t)framebuffer_ioctl;
+    framebuffer.ops.close = (close_type_t)framebuffer_close;
+    framebuffer.ops.mmap = (mmap_type_t)framebuffer_mmap;
     framebuffer.dev_type = DEVICE_CHAR;
     framebuffer.unique_id = 29;
 

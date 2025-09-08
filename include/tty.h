@@ -249,11 +249,12 @@ typedef struct tty tty_t;
 
 int tty_ld_write(tty_t* tty, const char* str, size_t nbytes);
 
-void tty_open(struct fs_node* fnode, int read, int write);
+void tty_open(struct fs_node* fnode, int flags);
 void tty_close(struct fs_node* fnode);
 uint32_t tty_write(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t* buffer);
 uint32_t tty_read(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t* buffer);
 int tty_ioctl(fs_node_t* fnode, unsigned long op, void* argp);
+short tty_poll(struct fs_node *fn, struct poll_table* pt);
 
 #define CTRL(ch) (ch & 0x1F)
 

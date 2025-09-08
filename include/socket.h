@@ -65,6 +65,7 @@ struct proto_ops {
     int (*sendmsg)(file_t *file, void *msg, size_t  len);
     int (*recvmsg)(file_t *file, struct msghdr* msg, int flags);
     int (*sendto)(file_t *file, void* buf, size_t len, int flags, const struct sockaddr* addr, socklen_t addrlen);
+    short (*poll)(file_t *file, struct poll_table* pt);
   
 };
 
@@ -153,7 +154,7 @@ void syscall_listen(struct regs* r);
 void syscall_sendto(struct regs* r);
 void syscall_setsockopt(struct regs* r);
 void syscall_recvfrom(struct regs* r);
-
+short socket_poll(struct fs_node *fn, struct poll_table* pt);
 
 
 #endif

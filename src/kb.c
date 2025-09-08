@@ -240,8 +240,11 @@ uint8_t kbd_scancode;
 
 void keyboard_handler(struct regs *r){
     
+  // ps2_kbd_handler(r);
+  // return;
+
   unsigned char scancode = inb(0x60);
-    
+  
 
     /* If the top bit of the byte we read from the keyboard is
     *  set, that means that a key has just been released */
@@ -251,6 +254,9 @@ void keyboard_handler(struct regs *r){
     left shift 0x2a
     right shift 0x36
     */
+    if(scancode == 0xe0){ //extended keycode
+      return;
+    }
 
     if (scancode & 0x80) //released
     {
@@ -301,8 +307,8 @@ void keyboard_handler(struct regs *r){
       shift_flag &= 1;
       alt_gr_flag &= 1;
 
-      vt_tty_send( kb_ch | (scancode << 8) | ( (ctrl_flag  | (shift_flag << 1) | (alt_gr_flag << 2) ) << 16) );
-      
+      vt_tty_send( kb_ch | (scancode << 8) | ( (ctrl_flag  | (shift_flag << 1) | (alt_gr_flag << 2) ) << 24) );
+      // fb_console_printf("[atkbd] scancode:=%x %u\n", scancode, (unsigned char)kb_ch);
       circular_buffer_putc(&kb_buffer, kb_ch);
       process_wakeup_list(&waiting_list);
     }
@@ -310,15 +316,74 @@ void keyboard_handler(struct regs *r){
 
 
 
+enum ps2_kbd_state{
+  PS2_KB_NORMAL = 0,
+  PS2_KB_EXTENDED,
+  PS2_KB_EXTENDED1,
+};
 
-int kbd_read(){
 
-  int val = circular_buffer_getc(&kb_buffer);
-  if(val >= 0){
-      return val;
+enum ps2_kbd_state state = PS2_KB_NORMAL;
+
+//i should have implemented passing extra parameters to interrupt handlers...
+void ps2_kbd_handler(struct regs *r){
+
+  unsigned short scancode = inb(0x60);
+  
+  if(state == PS2_KB_NORMAL && scancode == PS2_SCANCODE_EXTENDED){
+      state = PS2_KB_EXTENDED;
+      return;
   }
 
-  //if there's no data in the buffer then
-  list_insert_end(&waiting_list, current_process);
 
+  int pressed = scancode & 0x80 ? 0 : 1;
+  scancode &= 0x7f;
+  
+  //check modifiers
+  if(scancode == PS2_SCANCODE_LCONTROL){
+
+    ctrl_flag = pressed;
+    goto ps2_kbd_hand_end;
+  }
+  
+  if(scancode == PS2_SCANCODE_LSHIFT){
+
+    shift_flag = pressed;
+    goto ps2_kbd_hand_end;
+  } 
+  
+  if(scancode == PS2_SCANCODE_LALT){
+
+    alt_gr_flag = pressed;
+    goto ps2_kbd_hand_end;
+  } 
+
+
+  if(!pressed){ // if no press for non-modifier keys
+    goto ps2_kbd_hand_end;
+  }
+
+  if(state == PS2_KB_EXTENDED){
+    scancode = 0xff00 | (scancode & 0xff);
+  }
+
+  int kb_character = kbdus[scancode];
+  
+  if(ctrl_flag){
+    kb_character = CTRL(kb_character);
+  }
+
+  if(shift_flag)
+    kb_character = kbdus_shifted[scancode];
+        
+
+  if(alt_gr_flag)
+    kb_character = kbdus_altgr[ scancode];
+  
+  
+  vt_tty_send( kb_character | ((scancode ) << 8) | ( (ctrl_flag  | (shift_flag << 1) | (alt_gr_flag << 2) ) << 24) );
+
+ps2_kbd_hand_end:
+  state = PS2_KB_NORMAL;
+  return;
 }

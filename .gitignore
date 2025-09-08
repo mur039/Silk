@@ -11,3 +11,5 @@ initrd/
 initrd/*
 build/
 build/*
+modules/
+modules/*

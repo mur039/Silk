@@ -225,8 +225,8 @@ static const char *pagefault_messages[] =
 *  endless loop. All ISRs disable interrupts while they are being
 *  serviced as a 'locking' mechanism to prevent an IRQ from
 *  happening and messing up kernel data structures */
-void fault_handler(struct regs *r)
-{
+void fault_handler(struct regs *r){
+
     char buffer[72];
     uint32_t message_length = 0;
     
@@ -234,7 +234,10 @@ void fault_handler(struct regs *r)
     if (r->int_no < 32)
     {
 
-        if(r->cs & 3) save_context(r, current_process);
+        if((r->cs & 3)) {
+            save_context(r, current_process);
+        }
+        
 	    dump_registers(r);
         uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
         fb_console_printf( "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
@@ -258,6 +261,7 @@ void fault_handler(struct regs *r)
                 schedule(r);
                 return;
             }
+            halt();
             break;
 
        case 13: //general fault
@@ -334,7 +338,7 @@ out_stack_demand_page:
             }
             
             if(r->err_code & 4){ //fault happened in usermode
-
+                save_context(r, current_process);
                 print_current_process();
                 // paging_directory_list(current_process->page_dir );   
                 // uart_print(COM1, "------------------------------------------------------");

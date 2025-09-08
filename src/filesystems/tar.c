@@ -1,4 +1,5 @@
 #include <filesystems/tar.h>
+#include <filesystems/fs.h>
 #include <uart.h>
 
 static const char * type_table[23] = {
@@ -339,25 +340,25 @@ struct fs_node* tar_finddir_initrd (struct fs_node* node, const char *name){
             
             case DIRECTORY:
                 fnode->flags   = FS_DIRECTORY;
-	            fnode->read    = NULL;
-	            fnode->write   = NULL;
-	            fnode->open    = NULL;
-	            fnode->close   = NULL;
-	            fnode->readdir = (readdir_type_t)tar_readdir_initrd;
-	            fnode->finddir = (finddir_type_t)tar_finddir_initrd;
-	            fnode->ioctl   = NULL;
+	            fnode->ops.read    = NULL;
+	            fnode->ops.write   = NULL;
+	            fnode->ops.open    = NULL;
+	            fnode->ops.close   = NULL;
+	            fnode->ops.readdir = (readdir_type_t)tar_readdir_initrd;
+	            fnode->ops.finddir = (finddir_type_t)tar_finddir_initrd;
+	            fnode->ops.ioctl   = NULL;
                 break;
             
             case REGULAR_FILE:
                 fnode->length = o2d(file->size);
                 fnode->flags   = FS_FILE;
-	            fnode->read    = tar_read_initrd;
-	            fnode->write   = NULL;
-	            fnode->open    = NULL;
-	            fnode->close   = NULL;
-	            fnode->readdir = NULL;
-	            fnode->finddir = NULL;
-	            fnode->ioctl   = NULL;
+	            fnode->ops.read    = tar_read_initrd;
+	            fnode->ops.write   = NULL;
+	            fnode->ops.open    = NULL;
+	            fnode->ops.close   = NULL;
+	            fnode->ops.readdir = NULL;
+	            fnode->ops.finddir = NULL;
+	            fnode->ops.ioctl   = NULL;
                 break;
          
             case CHARACTER_SPECIAL_FILE:
@@ -396,92 +397,14 @@ fs_node_t * tar_node_create(void * tar_begin, size_t tar_size){
 	fnode->uid = 0;
 	fnode->gid = 0;
 	fnode->flags   = FS_DIRECTORY;
-	fnode->read    = NULL;
-	fnode->write   = NULL;
-	fnode->open    = NULL;
-	fnode->close   = NULL;
-	fnode->readdir = (readdir_type_t)tar_readdir_initrd;
-	fnode->finddir = (finddir_type_t)tar_finddir_initrd;
-	fnode->ioctl   = NULL;
+	fnode->ops.read    = NULL;
+	fnode->ops.write   = NULL;
+	fnode->ops.open    = NULL;
+	fnode->ops.close   = NULL;
+	fnode->ops.readdir = (readdir_type_t)tar_readdir_initrd;
+	fnode->ops.finddir = (finddir_type_t)tar_finddir_initrd;
+	fnode->ops.ioctl   = NULL;
     
 	return fnode;
 }
 
-
-#include <filesystems/tmpfs.h>
-// fs_node_t* tar_convert_tmpfs(void* tar_begin, uint32_t binary_size){
-
-//     tar_header_t* tar = tar_begin;
-//     fs_node_t* tmpfs_root = tmpfs_install();
-//     tar = tar_next(tar);
-//     for(tar_header_t* head = tar;  head ; head = tar_next(head)){
-        
-
-//         int is_dir = head->filename[strlen(head->filename) - 1] == '/';
-//         fb_console_printf(
-//             "->%s %s-> ", head->filename,    
-//             is_dir ? "dir"  : "file"
-//             );
-        
-//         char** pieces = _vfs_parse_path(&head->filename[2]);
-//         for(int i = 0; pieces[i] ; i++){
-//             fb_console_printf("%s ", pieces[i]);
-//         }
-//         fb_console_putchar('\n');
-
-
-//         //doing work
-
-//         fs_node_t* rnode = tmpfs_root;
-//         for(int i = 0; pieces[i] ; i++){
-            
-//             if(!pieces[i + 1]){
-                
-//                 switch (tar_filetype_vfs_type[tar_get_filetype(head)]){
-
-//                     case FS_DIRECTORY:
-//                         mkdir_fs(rnode, pieces[i], 0644);
-//                         break;
-
-//                     case FS_FILE:
-//                         create_fs(rnode, pieces[i], 0x644);
-//                         fs_node_t* cnode = finddir_fs(rnode, pieces[i]);
-
-//                         struct tmpfs_internal_struct* tis = cnode->device;
-// 				        tis->priv = kmalloc( o2d(head->size) );
-// 				        tis->buffer_size =  o2d(head->size);
-
-//                         memcpy(tis->priv, &head[1], o2d(head->size));
-//                         cnode->length = o2d(head->size);
-//                         // write_fs(cnode, 0, o2d(head->size), &head[1]);
-
-//                         break;
-
-//                     default:break;
-                    
-//                 }
-//                 break;
-//             }
-
-//             //check whether first folders exist for other entries   
-//             fs_node_t* dnode = finddir_fs(rnode, pieces[i]);
-//             if(!dnode){
-//                 mkdir_fs(rnode, pieces[i], 0644);
-//                 dnode = finddir_fs(tmpfs_root, pieces[i]);
-//             }  
-
-//             rnode = dnode;
-
-
-//         }
-
-
-
-
-
-
-//     }
-
-//     return tmpfs_root;
-
-// }

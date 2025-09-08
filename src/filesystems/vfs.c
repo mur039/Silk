@@ -1,7 +1,7 @@
 #include <filesystems/vfs.h>
 #include <g_tree.h>
 #include <uart.h>
-
+#include <module.h>
 
 char** _vfs_parse_path(const char * path){
     
@@ -156,6 +156,25 @@ char** _vfs_parse_path(const char * path){
 tree_t    * fs_tree = NULL; /* File system mountpoint tree */
 fs_node_t * fs_root = NULL; /* Pointer to the root mount fs_node (must be some form of filesystem, even ramdisk) */
 
+struct fsnode_cache fs_cache;
+static size_t inode_hash(void* mountpoint, size_t inode, size_t bucket_count) {
+    // combine mount pointer + inode_id into a single hash
+    uintptr_t mount_val = (uintptr_t)mountpoint;
+    return ((mount_val >> 3) ^ inode) % bucket_count;
+}
+
+void fsnode_cache_insert(struct fsnode_cache *cache, struct fs_node *node, struct fs_node *mount, uint32_t inode) {
+    size_t idx = inode_hash(mount, inode, cache->bucket_size);
+
+    struct fsnode_cache_entry *new_entry = kcalloc(1, sizeof(*new_entry));
+    new_entry->node = node;
+    new_entry->key = idx;
+    
+    new_entry->next = cache->buckets[idx];
+    cache->buckets[idx] = new_entry;
+}
+
+
 
 void vfs_install() {
 	/* Initialize the mountpoint tree */
@@ -165,11 +184,15 @@ void vfs_install() {
 	if(!root)
 		error("failed allocate for vfs_entry");
 	root->name = strdup("[root]");
-	root->file = NULL; /* Nothing mounted as root */
+	root->nodes = list_create(); /* Nothing mounted as root */
+	list_insert_end(&root->nodes, NULL);
 
 	tree_set_root(fs_tree, root);
 
-    
+	//initiailize the cache
+	fs_cache.bucket_size = 256;
+	fs_cache.buckets = kcalloc(256, sizeof(struct fsnode_cache_entry));
+
 
 }
 
@@ -270,12 +293,14 @@ int vfs_mount(char * path, fs_node_t * local_root){
 	if (*i == '\0') {
 		/* Special case, we're trying to set the root node */
 		struct vfs_entry * root = (struct vfs_entry *)root_node->value;
-		if (root->file) {
-			fb_console_printf("Path %s already mounted, unmount before trying to mount something else.\n", path);
-			ret_val = 3;
-			goto _vfs_cleanup;
-		}
-		root->file = local_root;
+
+		// if (root->file) {
+		// 	fb_console_printf("Path %s already mounted, unmount before trying to mount something else.\n", path);
+		// 	ret_val = 3;
+		// 	goto _vfs_cleanup;
+		// }
+		list_insert_end(&root->nodes, local_root);
+		// root->file = local_root;
 		/* We also keep a legacy shortcut around for that */
 		fs_root = local_root;
 
@@ -302,24 +327,26 @@ int vfs_mount(char * path, fs_node_t * local_root){
 			}
 			if (!found) {
 				fb_console_printf( "Did not find %s, making it.\n", at);
-				struct vfs_entry * ent = kmalloc(sizeof(struct vfs_entry));
+				struct vfs_entry * ent = kcalloc(1, sizeof(struct vfs_entry));
 				if(!ent)
 					error("failed allocate for vfs_entry");
 
 				ent->name = strdup(at);
-				ent->file = NULL;
+				// ent->file = NULL;
+				ent->nodes = list_create();
 				node = tree_node_insert_child(fs_tree, node, ent);
 			}
 			at = at + strlen(at) + 1;
 		}
 
 		struct vfs_entry * ent = (struct vfs_entry *)node->value;
-		if (ent->file) {
-			fb_console_printf( "Path %s already mounted, unmount before trying to mount something else.\n", path);
-			ret_val = 3;
-			goto _vfs_cleanup;
-		}
-		ent->file = local_root;
+		// if (ent->file) {
+		// 	fb_console_printf( "Path %s already mounted, unmount before trying to mount something else.\n", path);
+		// 	ret_val = 3;
+		// 	goto _vfs_cleanup;
+		// }
+		list_insert_end(&ent->nodes, local_root);
+		// ent->file = local_root;
 	}
 
 _vfs_cleanup:
@@ -340,13 +367,13 @@ static void vfs_tree_traverse_helper_func( tree_node_t * node, int height){ //sm
     }
     
     struct vfs_entry* entry = node->value;
-    if(entry->file){ //mounted
- 
-        fb_console_printf("->name:%s file:%s node_name:%s\n", entry->name, entry->file , entry->file->name );
-    }
-    else{
-        fb_console_printf("->name:%s file:(empty)\n", entry->name );
-    }
+    // if(entry->file){ //mounted
+		fs_node_t* fnode = entry->nodes.tail->val;
+        fb_console_printf("->name:%s file:%s node_name:%s\n", entry->name, fnode->name , fnode->name );
+    // }
+    // else{
+    //     fb_console_printf("->name:%s file:(empty)\n", entry->name );
+    // }
 
     for(listnode_t* lnode = node->children->head; lnode ; lnode = lnode->next){
         vfs_tree_traverse_helper_func(lnode->val, height + 1);
@@ -395,9 +422,10 @@ fs_node_t *get_mount_point(char * path, unsigned int path_depth, char **outpath,
 				found = 1;
 				node = tchild;
 				at = at + strlen(at) + 1;
-				if (ent->file) {
+				// if (ent->file) {
+				if (ent->nodes.tail) {
 					_tree_depth = _depth;
-					last = ent->file;
+					last = ent->nodes.tail->val;
 					*outpath = at;
 				}
 				break;
@@ -419,18 +447,21 @@ fs_node_t *get_mount_point(char * path, unsigned int path_depth, char **outpath,
 
 
 uint32_t read_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-	if (node->read) {
-		uint32_t ret = node->read(node, offset, size, buffer);
+	struct fs_ops *ops = &node->ops;
+	if (ops->read) {
+		uint32_t ret = ops->read(node, offset, size, buffer);
 		return ret;
 	} else {
 		return 0;
 	}
 }
 
+EXPORT_SYMBOL(read_fs);
 
 uint32_t write_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-	if (node->write) {
-		uint32_t ret = node->write(node, offset, size, buffer);
+	struct fs_ops *ops = &node->ops;
+	if (ops->write) {
+		uint32_t ret = ops->write(node, offset, size, buffer);
 		return ret;
 	} else {
 		return size;
@@ -438,9 +469,10 @@ uint32_t write_fs(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buff
 }
 
 int unlink_fs(fs_node_t* node, const char* name){
-	if(node->flags & FS_DIRECTORY && node->unlink)
+	struct fs_ops *ops = &node->ops;
+	if(node->flags & FS_DIRECTORY && ops->unlink)
 	{
-		return node->unlink(node, name);
+		return ops->unlink(node, name);
 	}
 	else{
 		return -1;
@@ -451,16 +483,18 @@ int unlink_fs(fs_node_t* node, const char* name){
 
 
 void create_fs(fs_node_t* node,  const char *name, uint16_t permissions){
-    if(node->flags & FS_DIRECTORY &&  node->create){
-        node->create(node, name, permissions);
+	struct fs_ops *ops = &node->ops;
+    if(node->flags & FS_DIRECTORY &&  ops->create){
+        ops->create(node, name, permissions);
     }
 }
 
 
 
 int mkdir_fs(fs_node_t* node, char *name, uint16_t permission){
-    if(node->flags & FS_DIRECTORY &&  node->mkdir){
-        node->mkdir(node, name, permission);
+	struct fs_ops *ops = &node->ops;
+    if(node->flags & FS_DIRECTORY &&  ops->mkdir){
+        ops->mkdir(node, name, permission);
 		return 1;
     }
 	return 0;
@@ -470,8 +504,9 @@ int mkdir_fs(fs_node_t* node, char *name, uint16_t permission){
 
 fs_node_t *finddir_fs(fs_node_t *node, char *name) {
 
-	if ((node->flags & FS_DIRECTORY) && node->finddir) {
-		fs_node_t *ret = node->finddir(node, name);
+	struct fs_ops *ops = &node->ops;
+	if ((node->flags & FS_DIRECTORY) && ops->finddir) {
+		fs_node_t *ret = ops->finddir(node, name);
 		return ret;
 	} else {
 		fb_console_printf("Node passed to finddir_fs isn't a directory!\n");
@@ -482,9 +517,9 @@ fs_node_t *finddir_fs(fs_node_t *node, char *name) {
 
 
 struct dirent *readdir_fs(fs_node_t *node, uint32_t index) {
-	
-    if ((node->flags & FS_DIRECTORY) && node->readdir) {
-		struct dirent *ret = node->readdir(node, index);
+	struct fs_ops *ops = &node->ops;
+    if ((node->flags & FS_DIRECTORY) && ops->readdir) {
+		struct dirent *ret = ops->readdir(node, index);
 
 		return ret;
 	} else {
@@ -493,24 +528,43 @@ struct dirent *readdir_fs(fs_node_t *node, uint32_t index) {
 }
 
 
-void open_fs(fs_node_t *node, uint8_t read, uint8_t write) {
-	if (node->open) {
-		node->open(node, read, write);
+void open_fs(fs_node_t *node, int flags) {
+	struct fs_ops *ops = &node->ops;
+	if (ops->open) {
+		ops->open(node, flags);
 	}
+	// node->refcount++;
 }
 
 void close_fs(fs_node_t *node) {
+	struct fs_ops *ops = &node->ops;
 	if(node == fs_root){
         uart_print(COM1, "The fuck is wrong with you\n");
     }
 
-	if (node->close) {
-		node->close(node);
+	if (ops->close) {
+		ops->close(node);	
+	}
+
+	// if(node->refcount > 0) node->refcount--;
+	// if(node->refcount == 0) kfree(node);
+
+	
+}
+
+#include <syscalls.h>
+
+int ioctl_fs(fs_node_t* node, unsigned long req, void* arg){
+	struct fs_ops* ops = &node->ops;
+	if(ops->ioctl){
+		return ops->ioctl(node, req, arg);
+	}
+	else{
+		return -ENOTTY;
 	}
 }
 
 #include <process.h>
-#include <syscalls.h>
 fs_node_t *kopen(char *filename, uint32_t flags) {
 	
     if (!fs_root || !filename) {
@@ -581,16 +635,8 @@ fs_node_t *kopen(char *filename, uint32_t flags) {
 			return NULL;
 		} else if (depth == path_depth - 1) {
 			
-            int read = 0;
-			int write = 0;
 
-			if(flags & O_RDONLY){
-				read = 1; write = 0;
-			}
-			else if(flags & O_WRONLY){ read = 0; write = 1;}
-			else if(flags & O_RDWR){ read = 1; write = 1;}
-
-			open_fs(node_ptr, read, write);
+			open_fs(node_ptr, flags);
 			kfree((void *)path);
 			return node_ptr;
 		}
@@ -659,16 +705,16 @@ void vfs_copy(fs_node_t* root_node, fs_node_t* target_node, int depth){
         if(item){
             switch(item->type){
                 case FS_FILE:
-                    // fb_console_printf("name : %s> file\n",  item->name);
+                    fb_console_printf("%s : %s> file\n", __func__,  item->name);
                     
                     //open on root node
                     rnode = finddir_fs(root_node, item->name);
-                    open_fs(rnode, 1, 0);
+                    open_fs(rnode, O_RDONLY);
                     
                     //create on target node and open it as well
                     create_fs(target_node, item->name, 0777);
                     tnode = finddir_fs(target_node, item->name);
-                    open_fs(tnode, 0, 1);
+                    open_fs(tnode, O_WRONLY | O_TRUNC);
 
                     uint32_t offset = 0;
                     uint8_t buffer;

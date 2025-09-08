@@ -211,6 +211,7 @@ int ata_wait_ready(uint16_t io_base);
 enum ata_device_type ata_determine_dev_type(int bus, int drive);
 void ata_soft_reset_bus(int bus);
 
+int ata_getsize_fs(fs_node_t* node);
 uint32_t ata_write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 uint32_t  ata_read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 int ata_read(ata_device_t* ata, uint32_t offset, uint32_t size, uint8_t* buffer);

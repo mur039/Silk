@@ -39,17 +39,15 @@ fs_node_t * tmpfs_install(){
 	fnode->gid = 0;
     
 	fnode->flags   = FS_DIRECTORY;
-	fnode->read    = NULL;
-	fnode->write   = NULL;
+
 	// fnode->open    = tmpfs_open;
 	// fnode->close   = tmpfs_close;
 
-    fnode->create  = (create_type_t)tmpfs_create;
-    fnode->mkdir   = (mkdir_type_t)tmpfs_mkdir;
-    fnode->unlink  = (unlink_type_t)tmpfs_unlink;
-	fnode->readdir = (readdir_type_t)tmpfs_readdir;
-	fnode->finddir = (finddir_type_t)tmpfs_finddir;
-	fnode->ioctl   = (ioctl_type_t)NULL;
+    fnode->ops.create  = (create_type_t)tmpfs_create;
+    fnode->ops.mkdir   = (mkdir_type_t)tmpfs_mkdir;
+    fnode->ops.unlink  = (unlink_type_t)tmpfs_unlink;
+	fnode->ops.readdir = (readdir_type_t)tmpfs_readdir;
+	fnode->ops.finddir = (finddir_type_t)tmpfs_finddir;
 
 
     tmpfs_device_t* tmpfs = kcalloc(1, sizeof(tmpfs_device_t));
@@ -98,11 +96,9 @@ struct fs_node* tmpfs_finddir (struct fs_node* node, char *name){
             fnode->impl = 9; //?
             fnode->device = _tmpfs;
 
-            fnode->read = NULL;
-            fnode->write = NULL;
-            fnode->ioctl = NULL;
-            fnode->open = (open_type_t)tmpfs_open;
-            fnode->close = (close_type_t)tmpfs_close;
+            
+            fnode->ops.open = tmpfs_open;
+            fnode->ops.close = (close_type_t)tmpfs_close;
 
             if(_tmpfs->type == FS_FILE){
                 
@@ -112,11 +108,11 @@ struct fs_node* tmpfs_finddir (struct fs_node* node, char *name){
             else{
                 
                 fnode->flags = FS_DIRECTORY;
-                fnode->mkdir   = (mkdir_type_t)tmpfs_mkdir;
-                fnode->create  = (create_type_t)tmpfs_create;
-                fnode->unlink  = (unlink_type_t)tmpfs_unlink;
-                fnode->readdir = (readdir_type_t)tmpfs_readdir;
-                fnode->finddir = (finddir_type_t)tmpfs_finddir;
+                fnode->ops.mkdir   = (mkdir_type_t)tmpfs_mkdir;
+                fnode->ops.create  = (create_type_t)tmpfs_create;
+                fnode->ops.unlink  = (unlink_type_t)tmpfs_unlink;
+                fnode->ops.readdir = (readdir_type_t)tmpfs_readdir;
+                fnode->ops.finddir = (finddir_type_t)tmpfs_finddir;
 
             }
             return fnode;
@@ -211,12 +207,13 @@ void tmpfs_mkdir(fs_node_t* node, char* name, uint16_t permissions){
     return;
 }
 
-void tmpfs_open(fs_node_t* node, uint8_t read, uint8_t write){
+void tmpfs_open(fs_node_t* node, int flags){
 
-    read &= 1;
-    write &= 1;
-    node->read  = (read_type_t)(read ?  tmpfs_read  : NULL);
-    node->write = (write_type_t)(write ? tmpfs_write : NULL);
+    int read  = flags & O_RDONLY;
+    int write = flags & O_WRONLY;
+    node->ops.read  = (read ?  tmpfs_read  : NULL);
+    node->ops.write = (write_type_t)(write ? tmpfs_write : NULL);
+    node->ops.truncate = (truncate_type_t)tmpfs_truncate;
 
     tmpfs_device_t* n = node->device;
     n->ref_count++;
@@ -226,7 +223,7 @@ void tmpfs_close(fs_node_t* node){
     
     tmpfs_device_t* n = node->device;
     n->ref_count--;
-    kfree(node);
+    // kfree(node);
     return;
 }
 
@@ -339,6 +336,60 @@ uint32_t tmpfs_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8
     }
 
     return size;
+}
+
+
+
+void tmpfs_truncate(fs_node_t* n, size_t s){
+    tmpfs_device_t* tmpfs = n->device;
+
+    if(s > tmpfs->data_size){ //extend with zero
+        
+        int old_block_count = tmpfs->data_size / 4096;
+        int old_offset      = tmpfs->data_size % 4096;
+        int old_round = old_block_count + (old_offset != 0);
+        
+        int new_block_count = s / 4096;
+        int new_offset      = s % 4096;
+        int new_round = new_block_count + (new_offset != 0);
+
+        for(int i = 0; i < (new_round - old_round); ++i ){
+
+            list_insert_end(&tmpfs->data_page_list, kpalloc(1));
+        }
+
+        tmpfs->data_size = s;
+    }
+    else{ //reduce it
+        int block_count = s / 4096;
+        int offset = s % 4096;
+        list_t original_list = tmpfs->data_page_list;
+        
+        tmpfs->data_size = s;
+        tmpfs->data_page_list = list_create();
+
+        for(int i = 0; i < block_count; ++i){
+            listnode_t* ln = list_remove(&original_list, original_list.head);
+            list_insert_end(&tmpfs->data_page_list, ln->val);
+            kfree(ln);
+        }
+
+        if(offset > 0){
+            listnode_t* ln = list_remove(&original_list, original_list.head);
+            list_insert_end(&tmpfs->data_page_list, ln->val);
+            kfree(ln);
+        }
+
+        //free the remaining data in the list
+        for(listnode_t* node = list_remove(&original_list, original_list.head) ; node ; node = list_remove(&original_list, original_list.head)){
+
+            void* page = node->val;
+            kpfree(page);
+            kfree(node);
+        }
+
+    }   
+    
 }
 
 int tmpfs_unlink(fs_node_t* node, char* name){

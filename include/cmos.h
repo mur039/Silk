@@ -44,4 +44,6 @@ Register  Contents            Range
 u8 cmos_read_register(u8 _register);
 static void cmos_set_register(u8 _register);
 
+uint32_t to_unix_timestamp(int year, int month, int day, int hour, int minute, int second);
+void read_rtc(int *year, int *month, int *day, int *hour, int *minute, int *second);
 #endif

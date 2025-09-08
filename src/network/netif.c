@@ -25,7 +25,7 @@ void initialize_netif(void){
             head = head->next;
     }
 
-    timer_register(333, 333, arp_periodic_check, NULL);
+    timer_register(333, 333, arp_periodic_check, (void*)1);
     
     //initialize the lo?
     // struct nic* lo = netif_allocate();

@@ -3,7 +3,7 @@
 #include <process.h>
 uint32_t read_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 uint32_t write_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
-void open_pipe(fs_node_t *node, uint8_t read, uint8_t write);
+void open_pipe(fs_node_t *node, int flags);
 void close_pipe(fs_node_t *node);
 
 
@@ -124,7 +124,7 @@ uint32_t write_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *bu
 
 
 
-void open_pipe(fs_node_t * node, uint8_t read, uint8_t write) {
+void open_pipe(fs_node_t * node, int flags) {
 	
 	// fb_console_printf("open_pipe: %x %u %u\n", node, read, write);
     if(!node->device){
@@ -135,18 +135,17 @@ void open_pipe(fs_node_t * node, uint8_t read, uint8_t write) {
 	pipe_device_t * pipe = (pipe_device_t *)node->device;
 
 	//well assumption that only one of them is 1 at a time so
-
-	if(read){
-		node->write = NULL;
-		node->read = read_pipe;
-		pipe->readrefcount++;
-		return;
+	pipe->readrefcount++;
+	
+	node->ops.write = write_pipe;
+	node->ops.read = read_pipe;
+	
+	if(flags & (O_RDONLY)){ //readonly
+		node->ops.write = NULL;
 	}
 	
-	if(write){
-		node->write = write_pipe;
-		node->read = NULL;
-		pipe->writerefcount++;
+	if(flags & (O_WRONLY)){
+		node->ops.read = NULL;
 	}
 
 	return;
@@ -158,12 +157,12 @@ void close_pipe(fs_node_t * node) {
 	
 	// fb_console_printf("close_pipe: %x ", node);	
 
-	if(node->read){
+	if(node->ops.read){
 		// fb_console_printf(" read\n");	
 		pipe->readrefcount--;
 	}
 
-	if(node->write){
+	if(node->ops.write){
 		// fb_console_printf(" write\n");	
 		pipe->writerefcount--;
 	}
@@ -191,14 +190,10 @@ fs_node_t* create_pipe(size_t size){
 	fnode->gid   = 0;
 	fnode->flags = FS_PIPE;
 
-	fnode->read  = NULL;
-	fnode->write = NULL;
-	fnode->open  = open_pipe;
-	fnode->close = close_pipe;
-	fnode->readdir = NULL;
-	fnode->finddir = NULL;
-	fnode->ioctl   = NULL; /* TODO ioctls for pipes? maybe */
-	fnode->get_size = pipe_size;
+	
+	fnode->ops.open  = open_pipe;
+	fnode->ops.close = close_pipe;
+	fnode->ops.get_size = pipe_size;
 
 	fnode->atime = (uint32_t)get_ticks();
 	fnode->mtime = fnode->atime;

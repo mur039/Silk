@@ -1,6 +1,10 @@
+#include <network/inet_socket.h>
 #include <network/tcp.h>
+#include <syscalls.h>
 
 static uint32_t tcp_port_bitmap[2048];
+static list_t tcp_bound_sockets = {.head = NULL, .tail = NULL, .size = 0};
+
 
 static int tcp_is_port_bound(int port){
     
@@ -82,6 +86,8 @@ int tcp_net_send_socket(const struct ipv4_packet* ip, size_t len){
         
         return -1; //upper layer have more information
     }
+
+
     
 
 }
@@ -114,4 +120,114 @@ uint16_t tcp_package_calc_checksum(struct tcp* package, size_t len, uint32_t src
 
     return  compute_checksum((uint16_t*)buf, total_len);
 
+}
+
+
+
+
+
+//proto_ops
+int tcp_proto_ops_bind(file_t* file, struct sockaddr* addr, socklen_t len){
+
+    struct fs_node* fnode = (struct fs_node*)file->f_inode;
+    struct socket* socket = fnode->device;
+    struct tcp_sock *tsk = socket->protocol_data;
+    struct inet_sock* isk = &tsk->isk;
+
+    struct sockaddr_in* iaddr = (struct sockaddr_in*)addr;
+    if(socket->state != SS_UNCONNECTED){
+        return -EINVAL;
+    }
+
+    uint32_t ip_addr = ntohl(iaddr->sin_addr);
+    uint32_t port = ntohs(iaddr->sin_port);
+    
+    //check the port
+    int word_i = port / 32;
+    int bit_i = port % 32;
+    if(GET_BIT(tcp_port_bitmap[word_i], bit_i)){ //port already boun
+        return -EADDRINUSE;
+    }
+
+    tcp_port_bitmap[word_i] |=  1 << bit_i;
+    isk->bound_ip = ip_addr;
+    isk->bound_port = port;
+
+    socket->iconn = (void*)list_insert_end(&tcp_bound_sockets, socket); //wonky ass shit
+    
+    return 0;
+}
+
+int tcp_proto_ops_accept(file_t* file, struct sockaddr* addr, socklen_t* len){
+    return -EINVAL;
+}
+
+int tcp_proto_ops_connect(file_t* file, struct sockaddr* addr, socklen_t len){
+    return -EINVAL;
+}
+
+int tcp_proto_ops_sendmsg(file_t* file, void* addr, size_t len){
+    return -EINVAL;
+}
+
+int tcp_proto_ops_recvmsg(file_t *file, struct msghdr* msg, int flags){
+    return -EINVAL;
+}
+
+int tcp_proto_ops_sendto(file_t* file, void* buf, size_t len, int flags, const struct sockaddr* addr, socklen_t addrlen){
+    return -EINVAL;
+}
+
+
+
+
+struct proto_ops tcp_proto_ops = {
+    .bind = (void*)tcp_proto_ops_bind,
+    .accept = (void*)tcp_proto_ops_accept,
+    .connect = (void*)tcp_proto_ops_connect,
+    .sendmsg = (void*)tcp_proto_ops_sendmsg,
+    .recvmsg = (void*)tcp_proto_ops_recvmsg,
+    .sendto = (void*)tcp_proto_ops_sendto
+};
+
+
+
+//proto
+int tcp_proto_disconnect(struct sock *sk, int flags){
+    return -EINVAL;
+}
+
+void tcp_proto_destroy(struct sock *sk){
+    return;
+}
+
+struct proto tcp_proto = {
+    .disconnect = tcp_proto_disconnect,
+    .destroy = tcp_proto_destroy,
+};
+
+
+
+int tcp_create_socket(struct socket* socket){
+
+    struct tcp_sock *tsk = kcalloc(1, sizeof(struct inet_sock));
+    if(!tsk){
+        return -ENOMEM;
+    }
+
+    struct sock* sk = &tsk->isk.sk;
+    sk->sk_refcount++;
+    sk->sk_socket = socket;
+    sk->sk_proc = current_process->pid;
+
+    sk->recv = circular_buffer_create(4096);
+    sk->pending_reads = list_create();
+    sk->pending_writes = list_create();
+
+    socket->protocol_data = sk;
+    
+    sk->sk_prot = &tcp_proto;
+    socket->ops = &tcp_proto_ops;
+    
+    return 0;
 }

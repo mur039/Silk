@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
-
+#include <sys/socket.h>
 
 int daemonize(){
 
@@ -47,37 +47,42 @@ int daemonize(){
 
 jmp_buf buf;
 
-
-// int main() {
-//     int ret = setjmp(buf);
-//     if (ret == 0) {
-//         printf("First time through setjmp, ret = %d\n", ret);
-//         test();  // longjmp from here is safe
-//     } else {
-//         printf("Returned via longjmp, ret = %d\n", ret);
-//     }
-//     return 0;
-// }
-
-
-
-
-
 int main(int  argc, char* argv[]){
     
-    if(daemonize() < -1){
-        printf("Failed to daemonize");
+    int err;
+    int sockfd;
+    struct sockaddr_in server_addr;
+    socklen_t socklen = sizeof(server_addr);
+
+        // Create UDP socket
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
         return 1;
     }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(128);
+    server_addr.sin_addr = 0;
+
+    err = bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    if(err < 0){
+        return 1;
+    }
+
+    unsigned char buffer[64];
+    
+    //simple echo server
+    while(1){
+
+        err = recvfrom(sockfd, &buffer, 64, 0, (struct sockaddr*)&server_addr, &socklen);
+        if(err < 0){
+            return 1;
+        }
+
+        sendto(sockfd, buffer, err, 0, (struct sockaddr*)&server_addr, socklen);
+    }
+
     
 
-    int fd = open("/dev/tty1", O_RDWR | O_NOCTTY);
-    if(fd < 0){
-        return 1;
-    }
-
-    while(1){
-        write(fd, "Fly me to the moon\n", 20);
-    }
 
 }   

@@ -351,6 +351,26 @@ int udp_proto_ops_recvmsg(file_t *file, struct msghdr* msg, int flags){
     return 0;
 }
 
+
+short udp_proto_ops_poll(file_t* file, struct poll_table* pt){
+    
+    struct fs_node* fnode = (struct fs_node*)file->f_inode;
+    struct socket* socket = fnode->device;
+    struct udp_sock* usk = socket->protocol_data;
+
+    int min_size = sizeof(struct udp_recv); //least 2 bytes?
+    int remaining = circular_buffer_avaliable(&usk->isk.sk.recv);
+    //i do some ape shit here so i will just
+
+    short mask = POLLOUT;
+    if(remaining){
+        mask |= POLLIN;
+    }
+   
+    return mask;
+}
+
+
 //proto
 int udp_proto_disconnect(struct sock *sk, int flags){
     //disconnect from what?
@@ -407,18 +427,21 @@ void udp_proto_destroy(struct sock* sk){
 
 
 
+
 struct proto_ops udp_proto_ops = {
     .bind = udp_proto_ops_bind,
     .accept = udp_proto_ops_accept,
     .connect = udp_proto_ops_connect,
     .sendmsg = udp_proto_ops_sendmsg,
     .recvmsg = udp_proto_ops_recvmsg,
-    .sendto = udp_proto_ops_sendto
+    .sendto = udp_proto_ops_sendto,
+    .poll = udp_proto_ops_poll
+
 };
 
 struct proto udp_prot = {
     .disconnect = udp_proto_disconnect,
-    .destroy = udp_proto_destroy
+    .destroy = udp_proto_destroy,
 };
 
 

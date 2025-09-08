@@ -16,9 +16,12 @@ static struct vt* vt_get_from_tty( struct tty* tty){
 
 int vt_tty_send(int _scancode){
 
-    char kb_character = _scancode & 0xFF;
-    int scancode = (_scancode >> 8) & 0xFF;
-    int modifier = (_scancode >> 16) & 0xFF;
+    unsigned char kb_character = _scancode & 0xFF;
+    uint16_t scancode = (_scancode >> 8) & 0xFFFF;
+    uint8_t modifier = (_scancode >> 24) & 0xFF;
+
+
+
 
     int ctrl, alt, shift;
 
@@ -54,16 +57,37 @@ int vt_tty_send(int _scancode){
 
 
     struct tty* activetty = &active_vt->tty;
-
-    if( 
-        // !activetty->refcount || 
-        !activetty->session 
-    )
+    if( !activetty->session  )
     {
         return 0;
     }
 
-    return tty_ld_write(activetty, &kb_character, 1);
+    const char* tstr = &kb_character;
+    size_t len_tstr = 1;
+
+
+    switch(kb_character){
+        case 224: 
+            tstr = "\033[A";
+            len_tstr = 3;
+            break; // up
+
+        case 225: // left
+            tstr = "\033[D";
+            len_tstr = 3;
+            break;
+
+        case 226: // right
+            tstr = "\033[C";
+            len_tstr = 3;
+        break; 
+
+        case 227: // down
+            tstr = "\033[B";
+            len_tstr = 3;
+        break;
+    }
+    return tty_ld_write(activetty, tstr, len_tstr);
 }
 
 
@@ -122,7 +146,6 @@ struct tty_driver vt_driver = {
     .write =  &tty_driver_vt_write,
     .put_char = &tty_driver_vt_putchar,
     .close = &tty_driver_vt_close
-    
 };
 
 
@@ -211,7 +234,7 @@ int install_virtual_terminals(int count, int row, int cols){
         return -1;
     }   
     
-    timer_register(250, 250, vt_csr_blinker, NULL);
+    timer_register(250, 250, vt_csr_blinker, (void*)1);
 
     for(int i = 0; i < count ; ++i){
         device_t dev;
@@ -220,11 +243,12 @@ int install_virtual_terminals(int count, int row, int cols){
         sprintf(dev.name, "tty%u", i);
         dev.unique_id = i;
 
-        dev.open  = (open_type_t)tty_open;
-        dev.close = (close_type_t)tty_close;
-        dev.write = (write_type_t)tty_write;
-        dev.read = (read_type_t)tty_read;
-        dev.ioctl = (ioctl_type_t)vt_ioctl; //????
+        dev.ops.open  = tty_open;
+        dev.ops.close = (close_type_t)tty_close;
+        dev.ops.write = (write_type_t)tty_write;
+        dev.ops.read = (read_type_t)tty_read;
+        dev.ops.ioctl = (ioctl_type_t)vt_ioctl; //????
+        dev.ops.poll = tty_poll;
 
         struct vt* vt = &virtualterms[i];
         struct tty* tty = &vt->tty;
@@ -232,7 +256,7 @@ int install_virtual_terminals(int count, int row, int cols){
 
         vt->kmode = 0 | (1 << 1);
         vt->cursor_pos[0] = 0;
-        vt->cursor_pos[1] = 0;
+        vt->cursor_pos[1] = row - 1;
         vt->vtmode.mode = VT_AUTO;
         vt->vtmode.waitv = 0;
         vt->attribute = 0x70;
@@ -260,14 +284,50 @@ int install_virtual_terminals(int count, int row, int cols){
     return count;
 }
 
-void vt_console_putchar(unsigned short c){
+void vt_console_putchar( unsigned int c){   
 
+    
     if(active_vt->kmode & 0b100){ // if visible then
         vt_csr_blinker(NULL);
     }
 
+    c &= 0xff;
     //actually buffer for unicode as well?????
-    if(active_vt->esc_encoder[0] == '\e'){ //non empty and possiblt valid? encoder
+    if(active_vt->esc_encoder[0] & 0x80){ //UTF8
+        char leadingbyte = active_vt->esc_encoder[0];
+        size_t utf_size = 0;
+        if(leadingbyte & 192 == 192 ) {
+            utf_size = 2;
+        }
+        else if(leadingbyte & 0b1110000 == 112 ) {
+            utf_size = 3;
+        }
+        else if(leadingbyte & 0b11110000 == 240 ) {
+            utf_size = 4;
+        }
+
+        if(utf_size == 0){ //invalid leading byte
+            memset(active_vt->esc_encoder, 0, 16);
+            return;
+        }
+
+
+        active_vt->esc_encoder[strlen(active_vt->esc_encoder)] = c;
+        
+        if( strlen(active_vt->esc_encoder)  < utf_size){
+            memset(active_vt->esc_encoder, 0, sizeof(active_vt->esc_encoder));
+            return;
+        }
+        
+        if(!glyph_deserialize_utf8(&c, active_vt->esc_encoder)){
+            memset(active_vt->esc_encoder, 0, sizeof(active_vt->esc_encoder));
+            return;    
+        }
+
+        memset(active_vt->esc_encoder, 0, sizeof(active_vt->esc_encoder));
+
+    }
+    else if(active_vt->esc_encoder[0] == '\e'){ //non empty and possiblt valid? encoder
 
         if(strlen(active_vt->esc_encoder) == 1 && c != '['){
             memset(active_vt->esc_encoder, 0, sizeof(active_vt->esc_encoder));
@@ -288,8 +348,8 @@ void vt_console_putchar(unsigned short c){
         }
 
         int opcode = c;
-        char* buffhead = &active_vt->esc_encoder[0];
-        char* bufftail = &active_vt->esc_encoder[strlen(active_vt->esc_encoder) - 1];
+        char* buffhead = active_vt->esc_encoder;
+        char* bufftail = buffhead + strlen(active_vt->esc_encoder) - 1;
 
         //sanity check wouldn't hurt anybody
         if( !(buffhead[0] == '\e'&&  buffhead[1] == '[') ){
@@ -513,6 +573,14 @@ void vt_console_putchar(unsigned short c){
     fb_bg = term_8_16_colors[ active_vt->attribute  &0xF];
     fb_fg = term_8_16_colors[ (active_vt->attribute & 0xF0) >> 4];;
 
+
+    
+    if( (c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0){ //possibly unicode character
+        
+        char character = c;
+        active_vt->esc_encoder[0] = character;
+        return;    
+    }
 
     switch (c){
 

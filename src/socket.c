@@ -124,9 +124,10 @@ void socket_close(fs_node_t* fnode){
 
 fs_node_t sock_node = {
     .flags = FS_SOCKET,
-    .read = socket_fsread,
-    .write = socket_fswrite,
-    .close = socket_close
+    .ops.read = socket_fsread,
+    .ops.write = socket_fswrite,
+    .ops.close = socket_close,
+    .ops.poll = socket_poll
 };
 
 void initialize_sockets(int max_socket_count){
@@ -196,7 +197,7 @@ void syscall_socket(struct regs* r){
             
             fnode = kcalloc(1, sizeof(fs_node_t));
             *fnode = sock_node;
-            fnode->ioctl = NULL;
+            fnode->ops.ioctl = NULL;
             fnode->device = socket;
             fnode->ctime = get_ticks();
             fnode->atime = fnode->ctime;
@@ -218,7 +219,7 @@ void syscall_socket(struct regs* r){
              
             fd = process_get_empty_fd(current_process);
             if(fd < 0){
-                r->eax = -1;
+                r->eax = -EMFILE;
                 break;
             }
 
@@ -229,7 +230,7 @@ void syscall_socket(struct regs* r){
             
             fnode = kcalloc(1, sizeof(fs_node_t));
             *fnode = sock_node;
-            fnode->ioctl = socket_inet_ioctl;
+            fnode->ops.ioctl = socket_inet_ioctl;
             fnode->device = socket;
             fnode->ctime = get_ticks();
             fnode->atime = fnode->ctime;
@@ -350,9 +351,8 @@ void syscall_accept(struct regs* r){
         //goooood
         file_t* file = &current_process->open_descriptors[err];
         fs_node_t* fnode = (fs_node_t*)file->f_inode;
-        fnode->read = sock_node.read;
-        fnode->write = sock_node.write;
-        fnode->close = sock_node.close;
+        fnode->ops  = sock_node.ops;
+        
         
         r->eax = err;
         return;
@@ -366,11 +366,21 @@ void syscall_bind(struct regs* r){
     struct sockaddr* addr = (struct sockaddr* )r->ecx;
     socklen_t addrlen = (socklen_t )r->edx;
 
+    if(fd < 0 || fd > MAX_OPEN_FILES){    
+        r->eax = -EBADF;
+        return;
+    }
+
     file_t* file = &current_process->open_descriptors[fd];
     fs_node_t* fnode = (fs_node_t*)file->f_inode;
     
+    if(!fnode){
+        r->eax = -EBADF;
+        return;
+    }
+
     if(fnode->flags  != FS_SOCKET){
-        r->eax = -8;
+        r->eax = -ENOTSOCK;
         return;
     }
 
@@ -585,4 +595,17 @@ void syscall_recvfrom(struct regs* r){
 
     r->eax = err;
     return;
+}
+
+
+
+short socket_poll(struct fs_node *fn, struct poll_table* pt){
+
+    
+    struct socket* socket = fn->device;
+    if(!socket->ops->poll){
+        return POLLIN | POLLOUT;
+    }
+
+    return socket->ops->poll(socket->file, pt);
 }

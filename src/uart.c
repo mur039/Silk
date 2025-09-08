@@ -83,10 +83,13 @@ void uart_handler(struct regs *r){
 
     //with the assumption of coming from COM1
     int port_index = 0;
-
     struct tty* tty = &serial_tty[port_index];
 
     tty_ld_write(tty, &c, 1);
+    
+    if(c == '\r'){ //hacky
+        uart_write(COM1, "\n", 1, 1);
+    }
     return;
 }
 
@@ -179,13 +182,16 @@ device_t* create_uart_device(int port){
     tty->linebuffer = circular_buffer_create(512);
     tty->driver = &serial_driver;
 
-    dev->open  = (open_type_t)tty_open;
-    dev->close = (close_type_t)tty_close;
-    dev->write = (write_type_t)tty_write;
-    dev->read = (read_type_t)tty_read;
-    dev->ioctl = (ioctl_type_t)tty_ioctl;
+    struct fs_ops uops = {
+                            .open = (open_type_t)tty_open, 
+                            .close = (close_type_t)tty_close, 
+                            .write = (write_type_t)tty_write,
+                            .read = (read_type_t)tty_read, 
+                            .ioctl = (ioctl_type_t)tty_ioctl
+                        };
+    dev->ops = uops;
+    
     dev->dev_type = DEVICE_CHAR;
-
     dev->unique_id = pindex;
       
     dev_register(dev);

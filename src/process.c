@@ -8,6 +8,8 @@
 #include <syscalls.h>
 #include <fpu.h>
 
+#include <ptrace.h>
+
 
 queue_t ready_queue;
 queue_t blocked_queue;
@@ -46,9 +48,11 @@ void process_init() {
 
     ready_queue = queue_create(-1); //no limit
     blocked_queue = queue_create(-1); //no limit
-    timer_register(10, 10, ( void (*)(void*))schedule, NULL);
+    // timer_register(10, 10, ( void (*)(void*))schedule, NULL);
     
     task0 = create_idle_task();
+
+    ptrace_initialize();
     return;
 }
 
@@ -84,9 +88,12 @@ void schedule(struct regs * r){
         // ktty();
         halt();
     }
-        
-    if(current_process == NULL) 
+    
+    int first_time = 0;
+    if(current_process == NULL){
+        first_time = 1;
         current_process = process_list->head->val;
+    }
 
 
     switch(current_process->state){
@@ -97,18 +104,22 @@ void schedule(struct regs * r){
                 current_process->state = TASK_RUNNING;
                 break;
             }
-
+     
             load_process(current_process);
             break;
 
         case TASK_RUNNING:
-            save_context(r, current_process);
+            if( !first_time ){
+
+                save_context(r, current_process);
+            }
             break;
         
         case TASK_LOADING:
             break;
         
         case TASK_INTERRUPTIBLE: 
+            save_context(r, current_process);
             break;
 
     }
@@ -127,46 +138,13 @@ void schedule(struct regs * r){
 
     if(!candinate){
 
-        if(current_process == task0) return;
+        // if(current_process == task0) return;
         current_process = task0;
     }
 
-
     context_switch_into_process(r, current_process);
 
-    if(current_process->recv_signals){
-        
-        //well i should only one bit set so...
-        unsigned int sig_num = 0;
-        
-        for(unsigned int i = current_process->recv_signals; i > 1 ; i >>= 1){
-            sig_num++;
-        }
-        
-        current_process->recv_signals = 0;
-
-
-        uart_print(COM1, "signal number that is : %u\n", sig_num);
-        //run the signal handler somehow
-
-        if(current_process->syscall_state == SYSCALL_STATE_PENDING) {
-            current_process->syscall_state = SYSCALL_STATE_NONE;
-            r->eax = -EINTR;
-            return;
-        }
-    }
-
-    //now if syscall_state is pending then
-    if(current_process->syscall_state == SYSCALL_STATE_PENDING){
-
-        current_process->syscall_state = SYSCALL_STATE_NONE;
-        syscall_handlers[current_process->syscall_number](r);
-        
-        
-        //if it still pending then, i hope this won't come around and bite me in the ass :/
-        if(current_process->syscall_state == SYSCALL_STATE_PENDING)
-            schedule(r); //schedule again
-    }
+    __builtin_unreachable();
     return;
 }
 
@@ -205,7 +183,7 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     // 4kb initial stack
     p1->stack_top = (void*)0xC0000000;
-    p1->stack_bottom = p1->stack_top - 4096;
+    p1->stack_bottom = p1->stack_top - (4096 * 4);
     p1->regs.esp = (0xC0000000);
     p1->regs.ebp = 0; //for stack trace
 
@@ -258,6 +236,8 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     p1->syscall_state =  SYSCALL_STATE_NONE;
     p1->syscall_number = 0;
+    
+    p1->itimer = -1;
 
 
     //initialize the fpu as well
@@ -361,14 +341,18 @@ pcb_t * load_process(pcb_t * proc){
 
     proc->regs.eip = (uint32_t)elf_header.e_entry;
 
-    void * stack_page = allocate_physical_page();//kpalloc(1);//allocate_physical_page();
-    map_virtaddr( (void *)proc->regs.esp - 0x1000, stack_page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-    
-    mp.vmem = proc->regs.esp - 0x1000;
-    mp.phymem = (u32)stack_page;
-    mp.attributes = (1 << 20);
-    vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
+    //allocating user stack 16kB
+    for(int i = 0; i < 4; ++i){
 
+        void * stack_page = allocate_physical_page();//kpalloc(1);//allocate_physical_page();
+        map_virtaddr( (void *)proc->regs.esp - (i * 0x1000), stack_page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+        
+        mp.vmem = proc->regs.esp - (i * 0x1000);
+        mp.phymem = (u32)stack_page;
+        mp.attributes = (1 << 20);
+        vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
+        
+    }
     
 
 
@@ -464,12 +448,42 @@ pcb_t * terminate_process(pcb_t * p){
 
     }
 
-    
+    if(p->itimer >= 0){
+        timer_event_t* e = timer_get_by_index(p->itimer);
+        timer_destroy_timer(e);
+    }
     return NULL;
 }
 
-int context_switch_into_process(struct regs  *r, pcb_t * process)
-{
+int context_switch_into_process(struct regs  *r, pcb_t * process){
+    
+
+    set_kernel_stack((uint32_t)(void*)process->kstack + 0x1000, &tss_entry);
+    set_cr3(process->regs.cr3);
+
+    current_page_dir = (uint32_t *)process->page_dir;
+    fpu_load_from_buffer(process->fpu);
+
+
+    //check if there's a ring change
+    //if we -> ring0, we use the saved frame to its stack anyway
+    //however ring0 -> ring3 transisitons, we overwrite the interrupt frame
+    //which is in the ring0's normal stack
+    
+    //coming from ring0 to ring3 task then  i must build a new interrupt frame and return from it
+    // int ring_transition = 0;
+    // if((r->cs & 3) == 0 && (process->regs.cs & 3) == 3){
+    //     ring_transition = 3;
+        
+    // }
+
+    
+    //build return frame on the kstack of the process no matter what
+    r = (void*)process->kstack;
+    // if(ring_transition && ring_transition == 3 || 1){
+    //     //build new interrupt frame on ring0 tasks kernel stack
+    // }
+
     r->eax = process->regs.eax;
     r->ebx = process->regs.ebx;
     r->ecx = process->regs.ecx;
@@ -489,54 +503,58 @@ int context_switch_into_process(struct regs  *r, pcb_t * process)
     r->es = process->regs.es;
     r->fs = process->regs.fs;
     r->gs = process->regs.gs;
-    r->ss = process->regs.ss;
-
-    r->useresp = process->regs.esp;
-
-    set_kernel_stack((uint32_t)(void*)process->kstack + 0x1000, &tss_entry);
-    asm volatile ( 
-        "movl %0, %%cr3"
-    : 
-    : "a"( process->regs.cr3) 
-    :
-    );
     
-    current_page_dir = (uint32_t *)process->page_dir;
-    fpu_load_from_buffer(process->fpu);
-
+    
     //well well well otherwise only works for ring3 tasks
     if( (process->regs.cs & 0x3) == 3){ //ring3 task
-
-        //update kernel stack for the process
-        return 0;
+        r->ss = process->regs.ss;
+        r->useresp = process->regs.esp;
     }
     else{
         
-        r->esp = process->regs.esp;
-        extern int resume_kthread(struct regs* r);
-        
-
-        return resume_kthread(r);
-        struct regs* newstack_r = (void*)r->esp;
-        newstack_r -= 1;
-        *newstack_r = *r; //copy it over
-        r->esp = (uint32_t)newstack_r;
-
-        asm volatile(
-            "mov %0, %%esp\n"
-            "pop %%gs\n"
-            "pop %%fs\n"
-            "pop %%es\n"
-            "pop %%ds\n"
-            "popa\n"
-            "add $8, %%esp\n"
-            "iret\n"
-            :
-            : "r"(r->esp)
-            : "memory"
-        );       
+        r = (void*)process->regs.esp;    
     }
     
+
+    
+    if( current_process->recv_signals){
+        
+        //well i should only one bit set so...
+        unsigned int sig_num = 0;
+        
+        for(unsigned int i = current_process->recv_signals; i > 1 ; i >>= 1){
+            sig_num++;
+        }
+        
+        current_process->recv_signals = 0;
+
+
+        uart_print(COM1, "signal number that is : %u\n", sig_num);
+        //run the signal handler somehow
+
+        if(current_process->syscall_state == SYSCALL_STATE_PENDING) {
+            current_process->syscall_state = SYSCALL_STATE_NONE;
+            r->eax = -EINTR;
+        }
+    }
+
+    //now if syscall_state is pending then
+    if(current_process->syscall_state == SYSCALL_STATE_PENDING){
+
+        current_process->syscall_state = SYSCALL_STATE_NONE;
+        syscall_handlers[current_process->syscall_number](r);
+        
+        
+        //if it still pending then, i hope this won't come around and bite me in the ass :/
+        if(current_process->syscall_state == SYSCALL_STATE_PENDING)
+            schedule(r); //schedule again
+    }
+
+    
+    extern int resume_kthread(struct regs* r);
+    return resume_kthread(r);
+    __builtin_unreachable();
+
 }
 
 void print_processes(){
@@ -601,8 +619,9 @@ void save_context(struct regs * r, pcb_t * process){
 
     process->regs.ebp = r->ebp;
 
-    if((process->regs.cs & 3) == 0){ //ring0 task
-        process->regs.esp = r->esp;
+    // if((process->regs.cs & 3) == 0 ){ //ring0 task
+    if( (r->cs & 3) == 0) {
+        process->regs.esp = (uint32_t)r;
     }
     else{ //ring3
 
@@ -611,11 +630,9 @@ void save_context(struct regs * r, pcb_t * process){
 
 
     process->regs.eip = r->eip;
-
     process->regs.cs = r->cs;
     process->regs.ds = r->ds;
     process->regs.es = r->es;
-    process->regs.ss = r->ss;
     process->regs.fs = r->fs;
     process->regs.gs = r->gs;
 
@@ -739,48 +756,54 @@ void process_release_sources(pcb_t * proc){
 
 
 //exiting 
-static int kernel_thread_prologue(){
+static void kernel_thread_epilogue(){
     
-    void (*foo)(void) = ( void (*)(void)  )current_process->regs.eax;
-    foo();
-    for(; ;) idle();
-
-    return 0;
+    //basically syscalls for the threads
+    asm volatile(
+        "mov $60, %eax\n"
+        "mov $0, %ebx\n"
+        "int $0x80\n"
+    );
 }
 
 static int kernel_tid = -1;
 
-pcb_t * create_kernel_process(void (*entry)(void) ){
+pcb_t * create_kernel_process(void (*entry)(void* data), void* data, const char namefmt[], ...){
 
     pcb_t *task = kcalloc(1, sizeof(pcb_t));
-
+    if(!task){
+        error("Failed to allocate pcb_t");
+        return NULL;
+    }
     // Set up process details
-    task->pid = kernel_tid--;
-    task->state = TASK_LOADING;
-    
+    task->pid = allocate_pid();
+    task->state = TASK_RUNNING;
     task->self = list_insert_end(process_list, task);
 
+    va_list va;
+    va_start(va, namefmt);
+    va_sprintf(task->filename, namefmt, va);
+    va_end(va);
 
 
     //setting up the page directory
     task->page_dir = kpalloc(1);
     task->regs.cr3 = (uint32_t)get_physaddr(task->page_dir);
+
     memset(task->page_dir, 0, 4096);
     memcpy(&task->page_dir[768], &kdir_entry[768], (1023 - 768) * 4); //mapping //except last, recursion
-    
-    //set recursive paging as well
+
     task->page_dir[RECURSIVE_PD_INDEX] = task->regs.cr3;
     task->page_dir[RECURSIVE_PD_INDEX] |= (PAGE_PRESENT | PAGE_READ_WRITE);
-
-    task->stack_top = (void*)0xD0001000;
-
+        
+    
     // Allocate a separate kernel stack for IRQs
     void *kstack = kpalloc(1);
     task->kstack = kstack;
-
+    task->stack_top = (void*)((uint32_t)kstack + 0x1000);
 
     // Set up registers
-    task->regs.eflags = 0x206;
+    task->regs.eflags = 0x202;
     task->regs.cs = (1 * 8) | 0;
     task->regs.ds = (2 * 8) | 0;
     task->regs.ss = (2 * 8) | 0;
@@ -788,21 +811,34 @@ pcb_t * create_kernel_process(void (*entry)(void) ){
     task->regs.fs = (2 * 8) | 0;
     task->regs.gs = (2 * 8) | 0;
 
-    // **Use the mapped function stack**
-    task->regs.esp = 0xD0001000;
-    task->regs.ebp = 0xD0001000;
 
-    task->regs.eip = (uint32_t)kernel_thread_prologue;
-    task->regs.eax = (uint32_t)entry; // Pass function pointer
+    unsigned int* esp = (void*)(task->stack_top);
+    esp = (unsigned int*)(uint32_t)esp - sizeof(struct regs);
+    struct regs* frame = (void*)esp;
+    memset(frame, 0, sizeof(struct regs));
+
+    //in this case the argument and return points are in 
+    // ss -> argument
+    // useresp return point
+    frame->ss = (unsigned int)data;
+    frame->useresp = (unsigned int)kernel_thread_epilogue;
+    
+    frame->gs = 0x10;
+    frame->fs = 0x10;
+    frame->es = 0x10;
+    frame->ds = 0x10;
+    frame->esp = (uint32_t)frame;
+    frame->eip = (uint32_t)entry;
+    frame->cs = 0x8;
+    frame->eflags = 0x202;
+    
+
+    task->regs.eip = (uint32_t)entry;
+    task->regs.esp = (uint32_t)esp;
+    task->regs.ebp = 0;
 
     // **Use kstack for IRQs**
     // set_kernel_stack((uint32_t)kstack + 0x1000, &tss_entry);
-
-    // Allocate stack for the function
-    void *stack = allocate_physical_page();
-    map_virtaddr((void*)0xD0000000, stack, PAGE_PRESENT | PAGE_READ_WRITE);
-    memset((void*)0xd0000000, 0, 4096);
-
 
     return task;
 }
@@ -835,11 +871,11 @@ pcb_t* create_idle_task(){
     task->page_dir[RECURSIVE_PD_INDEX] = task->regs.cr3;
     task->page_dir[RECURSIVE_PD_INDEX] |= (PAGE_PRESENT | PAGE_READ_WRITE);
 
-    task->stack_top = (void*)0xD0001000;
-
+    
     // Allocate a separate kernel stack for IRQs
     void *kstack = kpalloc(1);
     task->kstack = kstack;
+    task->stack_top = task->kstack + 0x1000;
 
     // Set up registers
     task->regs.eflags = 0x206;
@@ -850,12 +886,27 @@ pcb_t* create_idle_task(){
     task->regs.fs = (2 * 8) | 0;
     task->regs.gs = (2 * 8) | 0;
 
-    // **Use the mapped function stack**
-    task->regs.esp = (uint32_t)(task->kstack + 0x1000);
+    unsigned int* esp = (void*)(task->stack_top);
+    esp = (unsigned int*)(uint32_t)esp - sizeof(struct regs);
+    
+    struct regs* frame = (void*)esp;
+    memset(frame, 0, sizeof(struct regs));
+
+    frame->gs = 0x10;
+    frame->fs = 0x10;
+    frame->es = 0x10;
+    frame->ds = 0x10;
+    frame->esp = (uint32_t)frame;
+    frame->eip = (uint32_t)idle_task;
+    frame->cs = 0x8;
+    frame->eflags = 0x202;
+    
+
+    task->regs.esp = (uint32_t)(esp);
     task->regs.ebp = 0;
 
     task->regs.eip = (uint32_t)idle_task;
-    
+    // **Use kstack for IRQs**
     return task;
 }
 
@@ -866,54 +917,60 @@ static int _save_current_context_helper (int edi ,int esi,  int ebp,  int old_es
              int eip ,pcb_t * proc
             )
 {
-    proc->regs.eax = eax;
-    proc->regs.ebx = ebx;
-    proc->regs.ecx = ecx;
-    proc->regs.edx = edx;
+    current_process->regs.eax = eax;
+    current_process->regs.ebx = ebx;
+    current_process->regs.ecx = ecx;
+    current_process->regs.edx = edx;
 
-    proc->regs.esi = esi;
-    proc->regs.edi = edi;
+    current_process->regs.esi = esi;
+    current_process->regs.edi = edi;
 
-    proc->regs.eip = eip;
-    proc->regs.ebp = old_ebp;
-    proc->regs.esp = old_esp;
-
-
-    fb_console_printf(
-        "\teax:%x\n"
-        "\tebx:%x\n"
-        "\tecx:%x\n"
-        "\tedx:%x\n"
-        "\tesp:%x\n"
-        "\tebp:%x\n"
-        "\tesi:%x\n"
-        "\tedi:%x\n"
-        ,
-        eax,
-        ebx,
-        ecx,
-        edx,
-        old_esp,
-        ebp,
-        esi,
-        edi
-    );
-    return 0;
-    
+    current_process->regs.eip = eip;
+    current_process->regs.ebp = old_ebp;
+    current_process->regs.esp = old_esp;
+    current_process->regs.cs = (1 * 8) | 0;
+    current_process->regs.ds = (2 * 8) | 0;
+    current_process->regs.ss = (2 * 8) | 0;
+    current_process->regs.es = (2 * 8) | 0;
+    current_process->regs.fs = (2 * 8) | 0;
+    current_process->regs.gs = (2 * 8) | 0;
 
 }
 
 void save_current_context(pcb_t * proc){
-  
-   asm volatile(
+    
+    proc = current_process;
+    asm volatile(
     "pusha\n\t"
     "call _save_current_context_helper\n\t"
     "popa"
-    // "add $0x8, %esp\n\t"
     );
 
-
+    struct context *ctx = &proc->regs;
+    ctx->eip = (uint32_t)&&save_label;  // pseudo EIP
+save_label:
+    return;
 }
+
+// void restore_cpu_context(struct context *ctx) {
+//     asm volatile(
+//         "mov %0, %%eax\n\t"
+//         "mov %1, %%ebx\n\t"
+//         "mov %2, %%ecx\n\t"
+//         "mov %3, %%edx\n\t"
+//         "mov %4, %%esi\n\t"
+//         "mov %5, %%edi\n\t"
+//         "mov %6, %%ebp\n\t"
+//         "mov %7, %%esp\n\t"
+//         "push %8\n\t"
+//         "popf\n\t"
+//         "jmp *%9\n\t"
+//         :
+//         : "m"(ctx->eax), "m"(ctx->ebx), "m"(ctx->ecx), "m"(ctx->edx),
+//           "m"(ctx->esi), "m"(ctx->edi), "m"(ctx->ebp), "m"(ctx->esp),
+//           "m"(ctx->eflags), "m"(ctx->eip)
+//     );
+// }
 
 
 typedef struct stackframe {
@@ -985,27 +1042,33 @@ int process_send_signal(pid_t pid, unsigned int signum){
     
     switch(signum){
         
-        case SIGILL:         __attribute__ ((fallthrough));
-        case SIGSEGV:         __attribute__ ((fallthrough));
-        case SIGINT:         __attribute__ ((fallthrough));
-        case SIGKILL:
-        if(pid <= 1){
-
-            return -ENOPERM; //ENOPERM
-        }
+        case SIGKILL:   __attribute__ ((fallthrough));
+        case SIGSEGV:   __attribute__ ((fallthrough));
+        case SIGINT:    __attribute__ ((fallthrough));
+        case SIGILL:         
 
         proc->regs.eax = signum; //killed by signal
         terminate_process(proc);
         break;
         
         case SIGSTOP:
-            ;
-            //notify the parent as well
-            pid_t ppid = ((pcb_t*)proc->parent->val)->pid;
-            process_send_signal(ppid, SIGCHLD);
             
+
             proc->state = TASK_STOPPED;
+            proc->recv_signals = 1 << signum;
+            //notify the parent as well
+            pcb_t *p = proc->parent->val;
+            if(!p){
+                return -1;
+            }
+
+            process_send_signal(p->pid, SIGCHLD);
+                
         break;
+
+        case SIGCONT:
+            fb_console_printf("sigcont to %u:%s\n", pid, proc->filename);
+        __attribute__ ((fallthrough));
         
         default: //do nothing about it
             proc->recv_signals = 1 << signum;
@@ -1031,3 +1094,46 @@ int process_send_signal_pgrp(pid_t pgrp, unsigned int signum){
 
     return 0;
 }   
+
+void copy_context_to_trap_frame(struct regs* r, struct context* ctx){
+    r->eax = ctx->eax;
+    r->ebx = ctx->ebx;
+    r->ecx = ctx->ecx;
+    r->edx = ctx->edx;
+    r->esi = ctx->esi;
+    r->edi = ctx->edi;
+    r->ebp = ctx->ebp;
+
+    // stack pointer (only for ring0 tasks)
+    r->esp = (unsigned int)r;
+
+    // instruction pointer & flags
+    r->eip = ctx->eip;
+    r->eflags = ctx->eflags;
+
+    // code segment (kernel CS)
+    r->cs = ctx->cs;
+    // segment registers must be loaded manually before iret
+    r->ds = ctx->ds;
+    r->es = ctx->es;
+    r->fs = ctx->fs;
+    r->gs = ctx->gs;
+    return;
+}
+
+int _schedule(){
+    return kernl_schedule_shim();
+}
+
+file_t* process_get_file(pcb_t* proc, int fd){
+
+    if(fd  < 0 || fd > MAX_OPEN_FILES){
+        return NULL;
+    }
+
+    if(proc->open_descriptors[fd].f_inode){
+        return &proc->open_descriptors[fd];
+    }
+
+    return NULL;
+}
