@@ -131,7 +131,12 @@ struct sock {
     unsigned char ack_backlog;
     unsigned char max_ack_backlog;
     //internal buffer as well
-    circular_buffer_t recv;
+    // circular_buffer_t recv;
+    struct sk_buff *rx_head;
+    struct sk_buff *rx_tail;
+    list_t rx_waitqueue;
+    list_t accept_waitqueue;
+
     unsigned long state; //like TCP's state or sumthin
     
     list_t pending_writes; //for both udp and tcp, waiting until

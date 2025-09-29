@@ -1,5 +1,6 @@
 #include <network/inet_socket.h>
 #include <network/udp.h>
+#include <network/tcp.h>
 #include <syscalls.h>
 
 
@@ -29,9 +30,22 @@ struct socket* inet_socket_create(int type, int protocol){
 
 
         case SOCK_STREAM:
-            fb_console_printf("ah, a SOCK_STREAM\n");
-            socket = NULL;
+            socket = socket_allocate_socket();
+            if(!socket)
+                return NULL;
+            
+            socket->type = type;
+            socket->state = SS_UNCONNECTED;
+            socket->flags = 0;
+            
+            err = tcp_create_socket(socket);
+            if(err < 0){
+                socket->type = SS_FREE;
+                return NULL;
+            }
         break;
+
+        //well actually...
         case SOCK_RAW:
             fb_console_printf("ah, a SOCK_RAW\n");
             socket = NULL;

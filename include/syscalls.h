@@ -58,6 +58,14 @@ void syscall_setsid(struct regs* r);
 void syscall_nanosleep(struct regs* r);
 void syscall_sched_yield(struct regs* r);
 void syscall_poll(struct regs* r);
+void syscall_getuid(struct regs* r);
+void syscall_getgid(struct regs* r);
+void syscall_setuid(struct regs* r);
+void syscall_setgid(struct regs* r);
+void syscall_geteuid(struct regs* r);
+void syscall_getegid(struct regs* r);
+void syscall_ftruncate(struct regs* r);
+
 
 #define MAX_SYSCALL_NUMBER 256
 extern void (*syscall_handlers[MAX_SYSCALL_NUMBER])(struct regs *r);
@@ -106,4 +114,5 @@ int32_t open_for_process(pcb_t * process,  char * path, int flags, int mode );
 #define ENOPERM 22
 #define EFAULT 23
 #define ENXIO 24
+#define ENODEV 25
 #endif

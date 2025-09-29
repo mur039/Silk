@@ -4,25 +4,275 @@
 tty_t tty_create_device();
 
 
-int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
+int tty_ld_putchar(tty_t* tty, int ch){
+    
 
-    if(!tty->refcount && !tty->session){
-        //no need to read and write
-        return 0;    
+    if(ch == '\r'){
+        if (tty->termio.c_iflag & ICRNL){
+
+            ch = '\n';
+        }
+        else if (tty->termio.c_iflag & IGNCR){
+            return 0;
+        }
+    }
+    else if(ch == '\n'){
+        if (tty->termio.c_iflag & INLCR){
+
+            ch = '\r';
+        }
     }
 
-    if(!(tty->termio.c_lflag & ICANON) ){ //raw mode
+
+    switch(ch){
+
+        // case CTRL('@'):__attribute__((fallthrough));
+        // case CTRL('A'):__attribute__((fallthrough));
+        // case CTRL('B'):__attribute__((fallthrough));
+        // case CTRL('E'):__attribute__((fallthrough));
+        // case CTRL('F'):__attribute__((fallthrough));
+        // case CTRL('G'):__attribute__((fallthrough));
+        // case CTRL('I'):__attribute__((fallthrough));
+        // case CTRL('K'):__attribute__((fallthrough));
+        // case CTRL('L'):__attribute__((fallthrough));
+        // case CTRL('N'):__attribute__((fallthrough));
+        // case CTRL('O'):__attribute__((fallthrough));
+        // case CTRL('P'):__attribute__((fallthrough));
+        // case CTRL('Q'):__attribute__((fallthrough));
+        // case CTRL('R'):__attribute__((fallthrough));
+        // case CTRL('S'):__attribute__((fallthrough));
+        // case CTRL('T'):__attribute__((fallthrough));
+        // case CTRL('U'):__attribute__((fallthrough));
+        // case CTRL('V'):__attribute__((fallthrough));
+        // case CTRL('W'):__attribute__((fallthrough));
+        // case CTRL('X'):__attribute__((fallthrough));
+        // case CTRL('Y'):__attribute__((fallthrough));
+        // case CTRL('['):__attribute__((fallthrough));
+        // case CTRL('\\'):__attribute__((fallthrough));
+        // case CTRL(']'):__attribute__((fallthrough));
+        // case CTRL('^'):__attribute__((fallthrough));
+        // case CTRL('_'):__attribute__((fallthrough));
         
-        process_wakeup_list(&tty->read_wait_queue);
-        circular_buffer_write(&tty->read_buffer, (void*)str, 1, nbytes);
-        if(tty->termio.c_lflag & ECHO){
+        // break;
+        
+        case CTRL('Z'):
+            if(tty->termio.c_lflag & ICANON){
+                if(tty->termio.c_lflag & ISIG){
+
+                    process_send_signal_pgrp(tty->fg_pgrp, SIGSTOP);
+                }
+
+                process_wakeup_list(&tty->read_wait_queue);
+            }
+            else{
+                circular_buffer_putc(&tty->read_buffer, ch);
+                process_wakeup_list(&tty->read_wait_queue);
+                if(tty->termio.c_lflag & (ECHO)){
+                    tty->driver->write(tty, "^Z", 2);
+                }
+            }
+        break;
+
+        case CTRL('C'): 
+            if(tty->termio.c_lflag & ICANON){
+                if(tty->termio.c_lflag & ISIG) 
+                    process_send_signal_pgrp(tty->fg_pgrp, SIGINT);
+
+                process_wakeup_list(&tty->read_wait_queue);
+            }
+            else{
+                circular_buffer_putc(&tty->read_buffer, ch);
+                process_wakeup_list(&tty->read_wait_queue);
+                if(tty->termio.c_lflag & (ECHO)){
+                    tty->driver->write(tty, "^C", 2);
+                }
+            }
             
-            if(tty->driver && tty->driver->write){
-                
-                tty->driver->write(tty, str, nbytes);
+            break;
+        break;
+        case CTRL('D'):
+            if(tty->termio.c_lflag & ICANON){ //EOF
+            size_t lbsize = circular_buffer_avaliable(&tty->linebuffer);
+            for(size_t i = 0; i < lbsize; ++i){
+                circular_buffer_putc(&tty->read_buffer, circular_buffer_getc(&tty->linebuffer));
+            }
+            tty->eof_pending = 1;
+            process_wakeup_list(&tty->read_wait_queue);
+        }
+        else{
+            circular_buffer_putc(&tty->read_buffer, ch);
+            process_wakeup_list(&tty->read_wait_queue);
+            if(tty->termio.c_lflag & (ECHO)){
+                tty->driver->write(tty, "^D", 2);
             }
         }
 
+        break;
+
+
+        case 127:
+        case CTRL('H'): //'\b'
+            if(tty->termio.c_lflag & ICANON){
+                int aux = circular_buffer_peek_last(&tty->linebuffer);
+                if(aux < 0){ //no data
+                    break;
+                }
+
+                if(tty->linebuffer.write > tty->linebuffer.read){
+                    tty->linebuffer.write--;
+                }
+                else if(tty->linebuffer.write < tty->linebuffer.read){
+                    tty->linebuffer.write = (tty->linebuffer.write--) % tty->linebuffer.max_size;
+                }
+
+                if(tty->termio.c_lflag & ECHO){
+                    if( aux < 32 && aux != '\n' && aux != '\r'  && aux != '\t'  ){
+                        tty->driver->write(tty, "\b", 1); //extra backspace
+                    }
+                    tty->driver->write(tty, "\b", 1); //extra backspace
+                }
+            }
+            else{
+                circular_buffer_putc(&tty->read_buffer, ch);
+                process_wakeup_list(&tty->read_wait_queue);
+                if(tty->termio.c_lflag & (ECHO | ECHONL)){
+                    tty->driver->write(tty, "^H", 2);
+                }
+            }
+        break;
+
+        
+        case CTRL('J'):  //'\n'
+            if(tty->termio.c_lflag & ICANON){
+                circular_buffer_putc(&tty->linebuffer, ch);
+                size_t linebuffer_size = circular_buffer_avaliable(&tty->linebuffer);
+            
+                for(size_t i = 0; i < linebuffer_size; ++i){
+                    circular_buffer_putc(&tty->read_buffer, circular_buffer_getc(&tty->linebuffer));
+                }
+                
+                if(tty->termio.c_lflag & (ECHONL)){
+                    tty->driver->put_char(tty, '\n');
+                }
+                process_wakeup_list(&tty->read_wait_queue);
+            }
+            else{
+                circular_buffer_putc(&tty->read_buffer, ch);
+                process_wakeup_list(&tty->read_wait_queue);
+                
+                if(tty->termio.c_lflag & (ECHO)){
+                    if(tty->termio.c_oflag & ONLCR){
+                        ch = '\r';
+                    }
+                    tty->driver->put_char(tty, '^');
+                    tty->driver->put_char(tty, '@' + ch);
+                }
+                else if(tty->termio.c_lflag & (ECHONL)){
+                    tty->driver->put_char(tty, '\n');
+                }
+            }
+        break;
+
+        
+        case CTRL('M'): //'\r'
+            if(tty->termio.c_lflag & ICANON){
+                circular_buffer_putc(&tty->linebuffer, ch);
+            }
+            else{
+                circular_buffer_putc(&tty->read_buffer, ch);
+                process_wakeup_list(&tty->read_wait_queue);
+                
+                if(tty->termio.c_lflag & (ECHO)){
+                    tty->driver->put_char(tty, '^');
+                    tty->driver->put_char(tty, '@' + ch);
+                }
+            }
+        break;
+
+
+        default:
+            if(tty->termio.c_lflag & ICANON){
+                circular_buffer_putc(&tty->linebuffer, ch);
+            }
+            else{
+                circular_buffer_putc(&tty->read_buffer, ch);
+                process_wakeup_list(&tty->read_wait_queue);
+            }
+
+            if(tty->termio.c_lflag & ECHO){
+                if(ch >= 32){
+
+                    tty->driver->put_char(tty, ch);
+                }
+                else{
+                    tty->driver->put_char(tty, '^');
+                    tty->driver->put_char(tty, '@' + ch);
+                }
+            }
+        break;
+    }
+
+
+}
+
+
+
+
+
+int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
+
+    if(!tty->refcount && !tty->session){
+        return 0;    
+    }
+
+    for(size_t i = 0; i < nbytes; ++i){
+
+        tty_ld_putchar(tty, str[i]);
+    }
+    return nbytes;
+
+    if(!(tty->termio.c_lflag & ICANON) ){ //raw mode
+        
+        
+        for(const char* ch = str; ch < (str + nbytes); ch++){
+            int nch = *ch;
+            switch(*ch){
+            case '\r':
+            case '\n':
+                ;
+                if(nch == '\r' ){
+                    if(tty->termio.c_iflag & IGNCR){
+                        break;
+                    }
+
+                    if( tty->termio.c_iflag & ICRNL){
+
+                        nch = '\n';
+                    }
+                }
+            
+                if(nch == '\n' && tty->termio.c_iflag & INLCR){
+                    nch = '\r';
+                }
+            }
+
+
+
+            
+            circular_buffer_write(&tty->read_buffer, (void*)&nch, 1, 1);
+            if(tty->termio.c_lflag & ECHO){
+
+                if(tty->driver && tty->driver->write){
+
+                    tty->driver->write(tty, (const char*)&nch, 1);
+                }
+            }
+            else if(tty->termio.c_lflag & ECHONL){
+                tty->driver->put_char(tty, '\n');
+            }
+        }
+        
+        process_wakeup_list(&tty->read_wait_queue);
         return nbytes;
     }
 
@@ -84,8 +334,19 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
             case '\n':
             ;
             int nch = *ch;
-            if(nch == '\r' && tty->termio.c_iflag & ICRNL){
-                nch = '\n';
+            if(nch == '\r' ){
+                if(tty->termio.c_iflag & IGNCR){
+                    break;
+                }
+
+                if( tty->termio.c_iflag & ICRNL){
+
+                    nch = '\n';
+                }
+            }
+            
+            if(nch == '\n' && tty->termio.c_iflag & INLCR){
+                nch = '\r';
             }
 
             circular_buffer_putc(&tty->linebuffer, nch);
@@ -96,6 +357,9 @@ int tty_ld_write(tty_t* tty, const char* str, size_t nbytes){
             }
             process_wakeup_list(&tty->read_wait_queue);
             break;
+
+
+
 
             default:
             circular_buffer_putc(&tty->linebuffer, *ch);
@@ -197,20 +461,82 @@ uint32_t tty_read(struct fs_node* fnode, uint32_t offset, uint32_t size, uint8_t
             return remaining;
         }
         
-        list_insert_end(&tty->read_wait_queue, current_process);
+        //prevent duplition in the list
+        if(!list_find_by_val(&tty->read_wait_queue, current_process)){
+            list_insert_end(&tty->read_wait_queue, current_process);
+        }
         return -1;
 
     }
     else{ //raw mode then just give em john
-        size_t remaining = circular_buffer_avaliable(&tty->read_buffer);
-        if(remaining < size){ //not enough
 
-            list_insert_end(&tty->read_wait_queue, current_process);
-            return -1;
+        struct termios* io = &tty->termio;
+        int minimumbyte = io->c_cc[VMIN];
+        size_t milis = io->c_cc[VTIME] * 100;
+        timer_event_t* ev = NULL;
+
+        
+        if(milis > 0){ //timeout exists
+            if(minimumbyte == 0){
+                size_t avaliable = circular_buffer_avaliable(&tty->read_buffer);
+                if(avaliable){
+                    return circular_buffer_read(&tty->read_buffer, buffer, 1, size);
+                }
+
+                
+                int timer_idx = timer_register(milis, 0, NULL, NULL);
+                ev = timer_get_by_index(timer_idx);
+                sleep_on(&ev->wait_queue);
+                timer_destroy_timer(ev);
+                return circular_buffer_read(&tty->read_buffer, buffer, 1, size);
+            }
+
+        }
+        else{ //just block darling
+
+            if(minimumbyte == 0){ //return what's there
+                //the circular buffer returns what's inside, doesn't block
+                return circular_buffer_read(&tty->read_buffer, buffer, 1, size);
+            }
+            else{ //wait for some amount
+                interruptible_sleep_on(&tty->read_wait_queue, circular_buffer_avaliable(&tty->read_buffer) >= minimumbyte);
+                return circular_buffer_read(&tty->read_buffer, buffer, 1, size);
+            }
         }
 
-        return circular_buffer_read(&tty->read_buffer, buffer, 1, size);;
 
+
+        // while(1){
+        //     size_t avaliable = circular_buffer_avaliable(&tty->read_buffer);
+
+        //     if(minimumbyte == 0 && avaliable > 0){
+        //         return circular_buffer_read(&tty->read_buffer, buffer, 1, size);
+        //     }
+
+        //     if(avaliable >= minimumbyte){
+        //         return circular_buffer_read(&tty->read_buffer, buffer, 1, size);
+        //     }
+
+        //     //not enough
+        //     if(milis > 0){
+        //         if(!ev){ //say if we already have a timer or not
+        //             int timerindex = timer_register(milis, 0, NULL, NULL);
+        //             if(timerindex >= 0){ //a valid timer
+        //                 ev = timer_get_by_index(timerindex);
+        //                 list_insert_end(&ev->wait_queue, current_process);
+        //             }
+        //         }
+        //     }
+            
+        //     sleep_on(&tty->read_wait_queue);
+
+        //     //did timer expired?
+        //     if(ev && !timer_is_pending(ev)){
+        //         timer_destroy_timer(ev);
+        //         avaliable = circular_buffer_avaliable(&tty->read_buffer);
+        //         return circular_buffer_read(&tty->read_buffer, buffer, 1, avaliable);
+        //     }
+        // }
     }
 }
 

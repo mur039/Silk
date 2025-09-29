@@ -30,13 +30,6 @@ void* memset4(void* dst, uint32_t value, size_t dword_count ){
     return dst;
 }
 
-typedef enum{
-    SEEK_SET = 0,
-    SEEK_CUR = 1, 
-    SEEK_END = 2
-
-} whence_t;
-
 
 
 uint32_t frame_buffer_width = 0;

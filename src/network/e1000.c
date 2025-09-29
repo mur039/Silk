@@ -5,46 +5,6 @@
 #include "irq.h"
 
 
-struct arena_alloc{
-    void* _rawptr;
-    size_t _allocsize;
-    size_t _allocindex;
-};
-
-struct arena_alloc arena_initialize(size_t block_size){
-    struct arena_alloc retval = {._rawptr = NULL, ._allocsize = 0, ._allocindex = 0};
-    void* ptr = kcalloc(1, block_size);
-    if(!ptr){
-        return retval;
-    }
-
-    retval._rawptr = ptr;
-    retval._allocsize = block_size;
-    retval._allocindex = 0;
-    
-    return retval;
-}
-
-void* arena_allocate( struct arena_alloc *block, size_t size){
-
-    size_t remaining = block->_allocsize - block->_allocindex;
-    if( remaining < size) 
-        return NULL;
-    
-    uint8_t *byteptr = block->_rawptr;
-    byteptr += block->_allocindex;
-    block->_allocindex += size;
-    return byteptr;
-}
-
-void arena_reset(struct arena_alloc* block){
-    block->_allocindex = 0;
-    return;
-}
-
-//package builder
-static struct arena_alloc package_builder;
-
 static struct nic *e1000_nic = NULL;
 
 
@@ -130,8 +90,6 @@ static void e1000e_int_handler(struct regs* r){
         rx_descs[current_rx].status = 0;
         e1000_regs[E1000_REG_RDT / 4] = current_rx;
         current_rx = (current_rx + 1) % RX_DESC_COUNT;
-
-        arena_reset(&package_builder);
     }
 
     return;
@@ -182,9 +140,6 @@ int initialize_e1000(pci_device_t* pcidev){
 
     irq_install_handler(irq, e1000e_int_handler);
 
-    //there initialize the package builder
-    package_builder = arena_initialize(2048);
-
 
     //register interface
     struct e1000_priv* priv = kcalloc(1, sizeof(struct e1000_priv));
@@ -199,6 +154,7 @@ int initialize_e1000(pci_device_t* pcidev){
     nic->priv = priv;
     nic->handle_rx = net_receive;
     nic->send = e1000_nic_send;
+    nic->output = eth_output;
     nic->poll = NULL;
     nic->mtu = 2048;
     e1000_read_MAC(pcidev, nic->mac);
@@ -271,83 +227,3 @@ int e1000_recv(volatile uint32_t* regs, uint8_t *buf, size_t max_len) {
 
 
 
-// void send_udp_package(uint8_t* target_mac, uint8_t* ipaddress, uint16_t sourceport, uint16_t desport, uint8_t* data, uint16_t data_length){
-    
-
-//     //before doing any schietze let's check if given ip adress is in multi-cast region
-    
-//     // Convert IP to host-order for easier checking
-//     uint32_t ip = (ipaddress[0] << 24) | (ipaddress[1] << 16) | (ipaddress[2] << 8) | ipaddress[3];
-
-    
-//     uint8_t multicast_mac[6]; //if ip is muticast
-//     // Multicast IP range: 224.0.0.0 to 239.255.255.255
-//     if ((ip & 0xF0000000) == 0xE0000000) {
-        
-//         // It's a multicast IP
-//         multicast_mac[0] = 0x01;
-//         multicast_mac[1] = 0x00;
-//         multicast_mac[2] = 0x5e;
-//         multicast_mac[3] = ipaddress[1] & 0x7F;  // lower 7 bits of second byte
-//         multicast_mac[4] = ipaddress[2];
-//         multicast_mac[5] = ipaddress[3];
-
-//         // Replace target_mac with multicast_mac
-//         target_mac = multicast_mac;
-//     }
-
-
-//     /*
-//         +--------------+
-//         |  ETH FRAME   |
-//         +--------------+
-//         | IPV4 FRAME   |
-//         +--------------+
-//         |  UDP FRAME   |
-//         +--------------+
-//     */
-
-//     size_t total_length = sizeof(struct eth_frame) + sizeof(struct ipv4_packet) + sizeof(struct udp_packet) + data_length;
-    
-//     struct eth_frame *eth= arena_allocate(&package_builder, total_length);//kcalloc(1, total_length);
-//     struct ipv4_packet *ipv4 = (struct ipv4_packet* )eth->payload;
-//     struct udp_packet *udp = (struct udp_packet*)ipv4->payload;
-//     uint8_t* udp_data = udp->data;
-
-//     //constract the frames
-//     //eth:
-//     memcpy(eth->src_mac, local_macaddress, 6);
-//     memcpy(eth->dst_mac, target_mac, 6); //for know we know target mac
-//     eth->ethertype = htons(ETHERFRAME_IPV4);
-
-//     ipv4->version_ihl = 0x45;
-//     ipv4->TOS = 0;
-//     ipv4->total_length = htons(sizeof(struct ipv4_packet) + sizeof(struct udp_packet) + data_length);
-//     ipv4->identification = htons(ip_ident_counter++);
-
-//     uint8_t flags = 0x02 << 5;
-//     uint16_t frag_offset = 0;
-//     ipv4->flags_fragoffset = (flags | (frag_offset << 3));
-
-//     ipv4->ttl = 64;
-//     ipv4->protocol = IPV4_PROTOCOL_UDP;
-
-//     memcpy(ipv4->tpa, ipaddress, 4);
-//     memcpy(ipv4->spa, myip, 4);
-
-//     ipv4->header_checksum = 0;
-//     ipv4->header_checksum = compute_checksum((uint16_t*)ipv4, sizeof(struct ipv4_packet));
-
-//     udp->dport = htons(desport);
-//     udp->sport = htons(sourceport);
-//     udp->length = htons(sizeof(struct udp_packet) + data_length);
-//     udp->checksum = 0; //for ipv4 don't use checksum
-//     memcpy(udp->data, data, data_length);
-
-
-//     udp_calculate_checksum(udp, ipaddress, myip);
-    
-//     e1000_send(e1000_regs, (uint8_t*)eth, total_length);
-//     arena_reset(&package_builder);
-//     return;
-// }

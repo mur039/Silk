@@ -1,28 +1,9 @@
 
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <signals.h>
-
-
-
-int puts(const char * dst){
-    write( FILENO_STDOUT, dst, strlen(dst));
-    return 0;
-}
-
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-int getchar(){
-    uint8_t ch = 0;
-    int ret = read(FILENO_STDIN, &ch, 1);
-    return ret ?  ch : -1;
-}
-
 
 enum options{
     
@@ -31,7 +12,6 @@ enum options{
 
     OPTION_EOT
 };
-
 
 
 
@@ -188,7 +168,7 @@ int main(int argc, char **argv){
     }
 
     int src_file_type = src_stat.st_mode >> 16;
-    if(src_file_type != REGULAR_FILE){
+    if(!S_ISREG(src_file_type)){
         
         printf("source is not a regular file\n");
         return 1;

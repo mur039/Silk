@@ -20,7 +20,7 @@ static int is_tty_master(tty_t* tty){
 }
 
 void pts_driver_close(struct tty* tty){
-     
+    
     int index = tty->index;
     struct ptypair* pair = masterslave_table[index];
     tty_t *master, *slave;
@@ -29,9 +29,9 @@ void pts_driver_close(struct tty* tty){
 
     
     if(tty->refcount == 0){
-        circular_buffer_destroy(&tty->linebuffer);
-        circular_buffer_destroy(&tty->read_buffer);
-        circular_buffer_destroy(&tty->write_buffer);
+        // circular_buffer_destroy(&tty->linebuffer);
+        // circular_buffer_destroy(&tty->read_buffer);
+        // circular_buffer_destroy(&tty->write_buffer);
 
 
         if(tty == master){
@@ -144,6 +144,7 @@ struct ptypair* pts_allocate_slot(){
     pair->slave.size.ws_row = 25;
     pair->slave.index = index;
     pair->slave.termio.c_lflag = ISIG | ICANON | ECHO ;
+    pair->slave.termio.c_cc[VMIN] = 1;
     pair->slave.read_wait_queue = list_create();
     pair->slave.read_buffer = circular_buffer_create(4096);
     pair->slave.write_buffer = circular_buffer_create(4096);
@@ -241,6 +242,7 @@ struct fs_node * pts_finddir(struct fs_node* fnode, char* name){
         fnode->ops.close = tty_close;
         fnode->ops.write = tty_write;
         fnode->ops.read  = tty_read;
+        fnode->ops.poll  = tty_poll;
         fnode->ops.ioctl = (ioctl_type_t)pts_ioctl; //????
 
         device_t* dev =  kcalloc(1, sizeof(device_t));
@@ -276,6 +278,7 @@ struct fs_node * pts_finddir(struct fs_node* fnode, char* name){
         fnode->ops.close = tty_close;
         fnode->ops.write = tty_write;
         fnode->ops.read  = tty_read;
+        fnode->ops.poll  = tty_poll;
         fnode->ops.ioctl = (ioctl_type_t)tty_ioctl; //????
 
         device_t* dev =  kcalloc(1, sizeof(device_t));
@@ -315,3 +318,28 @@ struct fs_node*  pts_create_node(){
     //so some init about the pts node
     return ptsnode;
 }
+
+
+
+
+struct fs_node* pts_mount(fs_node_t* nodev, const char* option){
+    return pts_create_node();
+}
+
+
+int pts_probe(fs_node_t* nodev){
+    return 1;
+}
+
+struct filesystem pts_fs = {
+    .fs_name = "devpts",
+    .probe = &pts_probe,
+    .mount = &pts_mount,
+};
+
+static int pts_module_init(){
+    fs_register_filesystem(&pts_fs);
+    return 1;
+}
+
+MODULE_INIT(pts_module_init);

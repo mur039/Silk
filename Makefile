@@ -3,7 +3,6 @@ CFLAGS = -ffreestanding -m32 -g -c -Wextra -I./include -DDEBUG
 CFLAGS += -Werror
 default: 
 	make kernel
-	make libsilk
 	make userspace
 	make iso -B
 
@@ -19,9 +18,6 @@ init: ./initrd
 	cp $(BUILD_DIR)/v86.bin ./initrd/tar_files/bin/v86.bin
 	cd initrd && make
 	
-
-libsilk:
-	make -C ./src/userspace/libsilk
 
 iso:
 	make init
@@ -112,12 +108,19 @@ kernel:
 	i686-elf-gcc $(CFLAGS) ./src/network/inet_socket.c -o $(BUILD_DIR)/inet_socket.o
 	i686-elf-gcc $(CFLAGS) ./src/network/udp.c -o $(BUILD_DIR)/udp.o
 	i686-elf-gcc $(CFLAGS) ./src/network/tcp.c -o $(BUILD_DIR)/tcp.o
+	i686-elf-gcc $(CFLAGS) ./src/network/lo.c -o $(BUILD_DIR)/lo.o
+	i686-elf-gcc $(CFLAGS) ./src/network/skb.c -o $(BUILD_DIR)/skb.o
+	i686-elf-gcc $(CFLAGS) ./src/network/eth.c -o $(BUILD_DIR)/eth.o
+	i686-elf-gcc $(CFLAGS) ./src/network/icmp.c -o $(BUILD_DIR)/icmp.o
 
 	i686-elf-gcc $(CFLAGS) ./src/sound/ac97.c -o $(BUILD_DIR)/ac97.o
 
 	i686-elf-gcc $(CFLAGS) ./src/module.c -o $(BUILD_DIR)/module.o
 	i686-elf-gcc $(CFLAGS) ./src/loop.c -o $(BUILD_DIR)/loop.o
 	i686-elf-gcc $(CFLAGS) ./src/ptrace.c -o $(BUILD_DIR)/ptrace.o
+	i686-elf-gcc $(CFLAGS) ./src/fuse.c -o $(BUILD_DIR)/fuse.o
+	i686-elf-gcc $(CFLAGS) ./src/sharedmem.c -o $(BUILD_DIR)/sharedmem.o
+	i686-elf-gcc $(CFLAGS) ./src/krand.c -o $(BUILD_DIR)/krand.o
 
 
 	cd $(BUILD_DIR) && i686-elf-ld -o ../kernel.elf -T ../linker.ld  \
@@ -129,9 +132,10 @@ kernel:
 		proc.o fat.o ext2.o tmpfs.o pts.o \
 		tty.o char.o bosch_vga.o \
 		socket.o unix_domain_socket.o  inet_socket.o \
-		netif.o route.o e1000.o arp.o ipv4.o udp.o tcp.o \
+		netif.o route.o e1000.o arp.o ipv4.o udp.o tcp.o lo.o\
 		vt.o  fpu.o module.o fs.o loop.o \
-		ac97.o ptrace.o
+		ac97.o ptrace.o fuse.o skb.o eth.o icmp.o \
+		sharedmem.o krand.o
 
 	
 debug_kernel:kernel.elf

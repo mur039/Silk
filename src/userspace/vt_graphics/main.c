@@ -5,6 +5,7 @@
 
 #include <termios.h>
 #include <silk/kd.h>
+#include <sys/mman.h>
 
 #define OLIVEC_IMPLEMENTATION
 #include "olive.c"
@@ -76,13 +77,13 @@ int main(){
     display0.pitch = display0.width * display0.bpp;
 
     u_int fb_size = display0.width * display0.height * display0.bpp;
-    display0.fb_addr = mmap(NULL, fb_size, 0, 0, display_fd, 0); //mapping framebuffer
+    display0.fb_addr = mmap(NULL, fb_size, PROT_READ | PROT_WRITE, MAP_SHARED, display_fd, 0); //mapping framebuffer
     if(display0.fb_addr == (void*)-1){
         puts("failed to map framebuffer");
         return 1;
     }
 
-    void* backbuffer = mmap(NULL, fb_size, 0, MAP_ANONYMOUS, -1, 0);
+    void* backbuffer = mmap(NULL, fb_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0);
     if(backbuffer == (void*)-1){
         puts("failed to allocate memory for backbuffer\n");
         return 1;
@@ -102,6 +103,8 @@ int main(){
     original = t;
 
     t.c_lflag &= ~ICANON;
+    t.c_cc[VMIN] = 0; //practically non-blocking
+    t.c_cc[VTIME] = 0;//practically non-blocking 
     tcsetattr(STDIN_FILENO, TCSANOW, &t);
 
     

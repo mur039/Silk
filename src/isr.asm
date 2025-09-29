@@ -284,38 +284,6 @@ syscall_stub:
     iret           ; pops 5 things at once: CS, EIP, EFLAGS, SS, and ESP! //only if priviliege transition occurs :/
 
 
-global special_syscall_stub
-extern special_syscall
-special_syscall_stub:
-    cli
-    push byte 0
-    push 0x81
-    
-    pusha
-    push ds
-    push es
-    push fs
-    push gs
-    mov ax, 0x10   ; Load the Kernel Data Segment descriptor!
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov eax, esp   ; Push us the stack
-    push eax
-    mov eax, special_syscall
-    call eax       ; A special call, preserves the 'eip' register
-    pop eax
-    pop gs
-    pop fs
-    pop es
-    pop ds
-    popa
-    add esp, 8     ; Cleans up the pushed error code and pushed ISR number
-    iret           ; pops 5 things at once: CS, EIP, EFLAGS, SS, and ESP!
-    
-
-
 
 ; We call a C function in here. We need to let the assembler know
 ; that '_fault_handler' exists in another file

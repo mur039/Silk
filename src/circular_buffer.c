@@ -1,4 +1,5 @@
 #include <circular_buffer.h>
+#include <module.h>
 
 
 
@@ -114,3 +115,15 @@ int circular_buffer_pop_last(circular_buffer_t* cb){
     cb->write = (cb->write +1) % cb->max_size; 
     return cb->base[cb->write - 1];
 }
+
+
+ EXPORT_SYMBOL(circular_buffer_create);
+ EXPORT_SYMBOL(circular_buffer_destroy);
+ EXPORT_SYMBOL(circular_buffer_getc);
+ EXPORT_SYMBOL(circular_buffer_putc);
+ EXPORT_SYMBOL(circular_buffer_write);
+ EXPORT_SYMBOL(circular_buffer_avaliable);
+ EXPORT_SYMBOL(circular_buffer_read);
+ EXPORT_SYMBOL(circular_buffer_peek_last);
+ EXPORT_SYMBOL(circular_buffer_pop_last);
+

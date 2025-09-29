@@ -1,4 +1,5 @@
 #include <uart.h>
+#include <stdint-gcc.h>
 #include <sys.h>
 #include <str.h>
 #include <queue.h>
@@ -176,6 +177,7 @@ device_t* create_uart_device(int port){
     tty->termio.c_lflag = ISIG | ICANON | ECHO;
     tty->termio.c_iflag = ICRNL;
     tty->termio.c_oflag = OPOST | ONLCR;
+    tty->termio.c_cc[VMIN] = 1;
     tty->read_wait_queue = list_create();
     tty->read_buffer = circular_buffer_create(4096);
     tty->write_buffer = circular_buffer_create(4096);

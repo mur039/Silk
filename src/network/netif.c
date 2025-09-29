@@ -27,20 +27,6 @@ void initialize_netif(void){
 
     timer_register(333, 333, arp_periodic_check, (void*)1);
     
-    //initialize the lo?
-    // struct nic* lo = netif_allocate();
-    // strcpy(lo->name, "lo");
-    // lo->mtu = 1500;
-    // lo->ip_addrs = 0x7F000001;
-    // lo->gateway = 0x7F000001;
-    // memset(lo->mac, 0, 6);
-    
-    // lo->next = NULL;
-    // lo->send = NULL;
-    // lo->handle_rx = NULL;
-    // lo->poll = NULL;
-    // lo->priv = NULL;
-    
 }
 
 struct nic* netif_allocate(){
@@ -77,32 +63,14 @@ int net_should_frame_receive( const struct nic* dev, const struct eth_frame* fra
 }
 
 
+//more likt ethernet_input
 //all networking entry point
 void net_receive(struct nic *dev, const void *_frame, size_t len){
 
-    // fb_console_printf("from nic %s, i received: ", dev->name);
-    struct eth_frame* frame = (struct eth_frame*)_frame;
-
-    //check the macaddr
-    //if not our mac, ethernet broadcast or multicast reject it
-    if( !net_should_frame_receive(dev, frame) ){ 
-        return;
-    }
-
-    uint16_t type = ntohs(frame->ethertype);
-
-    switch(type){
-        case ETHERFRAME_ARP:
-            arp_handle(dev, frame, len);
-        break;
-
-        case ETHERFRAME_IPV4:
-            ipv4_handle(dev, frame, len);
-        break;
-        
-        case ETHERFRAME_IPV6: break; //we don't support ipv6
-
-    }
+    struct sk_buff *skb = skb_alloc(len);
+    memcpy(skb_put(skb, len), _frame, len);
+    skb->dev = dev;
+    eth_input(skb);
     return;
 }
 

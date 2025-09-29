@@ -224,7 +224,7 @@ int main( int argc, char* argv[]){
                 for(int i = 0; i < 0xFFFFF; ++i); //timerless timeout :/
                 err = recvfrom(fd, buffer, 300, 0, (struct sockaddr*)&addr, &socklen);
                 if(err < 0){ //probablt -EGAIN
-                    printf("Waiting for offer, timeout reached defaulting to 192.168.100.3\n");
+                    puts("Waiting for offer, timeout reached defaulting to 192.168.100.3\n");
 
                     if_get_interfaces(fd, &ifc); //restore it
 
@@ -313,8 +313,8 @@ int main( int argc, char* argv[]){
 
                 
                 printf("before setting ip and gateway addr, offeredip:%x , serverip :%x\n", offerip, serverip);
-                ifr[index].ifr_addr = htonl(offerip);
-                ifr[index].ifr_map.mem_end = htonl(serverip);
+                ifr[index].ifr_addr = (offerip);
+                ifr[index].ifr_map.mem_end = (serverip);
 
                 
                 

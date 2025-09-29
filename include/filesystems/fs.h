@@ -3,6 +3,7 @@
 
 #include <filesystems/vfs.h>
 
+#define FS_FLAGS_REQDEV 1
 
 typedef struct filesystem {
     const char* fs_name;          
@@ -11,7 +12,7 @@ typedef struct filesystem {
     struct filesystem* next;
 
     //ops
-    fs_node_t* (*mount)(fs_node_t* device, const char* target_path);    
+    fs_node_t* (*mount)(fs_node_t* device, const char* option); //maybe source as well
     void (*unmount)(fs_node_t* fs_root);
 
     // optional probe function for autodetection

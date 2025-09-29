@@ -42,7 +42,10 @@ uint32_t psaux_read(fs_node_t* n, uint32_t off, uint32_t size, uint8_t *buffer){
     size_t  remaining = circular_buffer_avaliable(b);
 
     if(remaining < size){ //too much
-        list_insert_end(&wait_queue, current_process);
+        
+        if(!list_find_by_val(&wait_queue, current_process)){
+            list_insert_end(&wait_queue, current_process);
+        }
         return -1;
     }
 
@@ -63,7 +66,8 @@ short psaux_poll(struct fs_node *fn, struct poll_table* pt){
     poll_wait(fn, &wait_queue, pt);
     
     circular_buffer_t *b =  ((device_t*)fn->device)->priv;
-    if( circular_buffer_avaliable(b) ){
+    size_t avaliable = circular_buffer_avaliable(b);
+    if( avaliable >= 3){
         mask |= POLLIN;
     }
 
@@ -79,7 +83,8 @@ struct fs_ops psaux_ops = {
 
 };
 
-
+uint8_t pkt[3];
+int idx = 0;
 void ps2_mouse_handler(struct regs *r){
     (void)r; //unused
     
@@ -89,9 +94,12 @@ void ps2_mouse_handler(struct regs *r){
         return;
     }
 
-  
-    circular_buffer_write(&psaux_ib, &in, 1, 1);
-    process_wakeup_list(&wait_queue);
+    pkt[idx++] = in;
+    if(idx == 3){
+        idx = 0;
+        circular_buffer_write(&psaux_ib, pkt, 1, 3);
+        process_wakeup_list(&wait_queue);
+    }
     return;
 }
 

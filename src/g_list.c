@@ -1,7 +1,7 @@
 #include <g_list.h>
 #include <sys.h>
 #include <pmm.h>
-
+#include <module.h>
 
 list_t list_create(){
     list_t retval;
@@ -87,27 +87,13 @@ listnode_t* list_pop_end(list_t* list){
 
 
 
-
-// listnode_t * list_insert_start(list_t * list, void * val){
-//     listnode_t * t = kcalloc(sizeof(listnode_t), 1);
-//     t->val = val;
-
-//     listnode_t * head = list->head;
-//     if(head == NULL){
-//         list->head = t;
-//         t->next = NULL;
-//         t->prev = list->head;    
-//     }
-//     else{
-//         t->next = list->head;
-//         list->head->prev = t;
-//         list->head = t;
-            
-        
-//     }
-//     list->size++;
-//     return t;
-// }
+const listnode_t* list_find_by_val(list_t* list, void* val){
+    for(listnode_t* head = list->head; head ; head = head->next){
+        if(head->val == val){
+            return head;
+        }
+    }
+}
 
 listnode_t * list_remove(list_t * list, listnode_t * node){
 
@@ -215,3 +201,12 @@ void* list_get_head_value(list_t *l, int* aux_return){
     if(aux_return) *aux_return = 0;
     return l->head->val;
 }
+
+
+
+EXPORT_SYMBOL(list_create);
+EXPORT_SYMBOL(list_insert_end);
+EXPORT_SYMBOL(list_pop_end);
+EXPORT_SYMBOL(list_remove);
+EXPORT_SYMBOL(list_sort);
+EXPORT_SYMBOL(list_get_head_value);

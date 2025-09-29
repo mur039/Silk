@@ -1,79 +1,59 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdint.h>
+#include <string.h>
+#include <termios.h>
 #include <poll.h>
 #include <sys/socket.h>
 
+#define KB 1024
+#define FILE_SIZE 16 * KB
 
 int main(){
- 
+
+    int sfd = socket(AF_LOCAL, SOCK_DGRAM, 0);
+    struct sockaddr_un s;
+    s.sun_family = AF_UNIX;
+    sprintf(s.sun_path, "dispsrv");
+
+    connect(sfd, (struct sockaddr*)&s, sizeof(s));
+
+
     int err;
+    char lbuff[48];
+    while (1){
+        err = read(sfd, lbuff, 48); //DGRAM!
+        if(err < 0){
+            close(sfd);
+            exit(1);
+        }
+        printf("[client]: read \"%s\"\n", lbuff);
+        break;
+    }
     
-    int sockfd;
-    struct sockaddr_in server_addr;
-    socklen_t socklen = sizeof(server_addr);
 
-        // Create UDP socket
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-        return 1;
-    }
+    // int file = open("buff", O_RDWR | O_CREAT);
+    // if(file < 0){
+    //     perror("open");
+    //     return 1;
+    // }
 
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(128);
-    server_addr.sin_addr = 0;
-
-    err = bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
-    if(err < 0){
-        return 1;
-    }
-
-
-    while(1){
-        struct pollfd fds[2];
-
-        fds[0].events = POLLIN;
-        fds[1].events = POLLIN;
-
-        fds[0].fd = STDIN_FILENO;
-        fds[1].fd = sockfd;
+    // ftruncate(file, FILE_SIZE);
     
-        
-        int err = poll(fds, 2, 1000 ); //block
-        
-        for(int i = 0; i < 2; ++i){
-            printf("fd %u : revents %x\n", fds[i].fd, fds[i].revents);
-        }
+    // void* addr = mmap(NULL, FILE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+    // if(addr == (void*)-1){
+    //     perror("mmap");
+    //     return 1;
+    // }
 
-        
 
-        if(fds[0].revents & POLLIN){ //command line
-            
-            fds[0].revents = 0;
-            char buffer[128];
-            
-            int count = read(STDIN_FILENO, buffer, 128); //canonical mode
-            buffer[count] = '\0';
+    // //if we mapped it then lets fill it with 0x69
+    // uint8_t* d = addr;
+    // for(int i = 0; i < FILE_SIZE; ++i){
+    //     d[i] = 0x69;
+    // }
 
-            if(server_addr.sin_addr != 0){
-                sendto(sockfd, buffer, count, 0, (struct sockaddr*)&server_addr, socklen);
-            }
-        }
-        
-        if(fds[1].revents & POLLIN){ //socket
-            
-            fds[0].revents = 0;
-            unsigned char buffer[64];
-            err = recvfrom(sockfd, &buffer, 64, 0, (struct sockaddr*)&server_addr, &socklen);
-            if(err < 0){
-                return 1;
-            }
-
-            buffer[err] = '\0';
-            printf("%s", buffer);
-        }
-
-    }
 
     return 0;
 }

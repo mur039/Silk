@@ -105,10 +105,10 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode) {
     
     int result = 0;
     // Read the superblock
-    uint8_t* superblock = kmalloc(1024);
-    read_fs(node, 1024, 1024, superblock);
-    ext2_superblock_t* superblockptr = (ext2_superblock_t*)superblock;
-    int block_size = 1024 << superblockptr->s_log_block_size;
+    ext2_data_struct_t* priv = node->device;
+    fs_node_t* bdev = priv->device;
+    ext2_superblock_t* superblockptr = priv->superblock;
+    int block_size = priv->block_size;
 
 
     // Locate the block group and local index
@@ -117,12 +117,12 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode) {
 
     // Read the Block Group Descriptor Table entry for this group
     ext2_block_group_descriptor_table_t bgdt;
-    read_fs(node, block_size + (block_group * sizeof(ext2_block_group_descriptor_table_t)), 
+    read_fs(bdev, block_size + (block_group * sizeof(ext2_block_group_descriptor_table_t)), 
             sizeof(ext2_block_group_descriptor_table_t), (uint8_t*)&bgdt);
 
     // Retrieve the inode bitmap and check if the inode is allocated
     uint8_t sub_bitmap;
-    read_fs(node, (bgdt.bg_inode_bitmap * block_size) + (local_inode_index / 8), 
+    read_fs(bdev, (bgdt.bg_inode_bitmap * block_size) + (local_inode_index / 8), 
             1, &sub_bitmap);
 
     int local_bit_index = local_inode_index % 8;
@@ -130,13 +130,12 @@ int ext2_get_inode(fs_node_t* node, uint32_t inode, ext2_inode_t* outinode) {
     if (GET_BIT(sub_bitmap, local_bit_index)) { // If the inode is allocated
         // Retrieve the correct inode
         uint32_t inode_offset = (bgdt.bg_inode_table * block_size) + (local_inode_index * superblockptr->s_inode_size ); //it has variable
-        read_fs(node, inode_offset, sizeof(ext2_inode_t), (uint8_t*)outinode);
+        read_fs(bdev, inode_offset, sizeof(ext2_inode_t), (uint8_t*)outinode);
         result = 0;
     } else {
         result = 1; // Inode is not allocated
     }
 
-    kfree(superblock);
     return result;
 }
 
@@ -147,7 +146,7 @@ struct dirent* ext2_readdir( fs_node_t* node, uint32_t index){
     ext2_data_struct_t* ext2 = node->device;
     
     ext2_inode_t root_inode;
-    if(ext2_get_inode(ext2->device, node->inode, &root_inode)){ //an error
+    if(ext2_get_inode(node, node->inode, &root_inode)){ //an error
         node->offset = 0;
         return NULL;
     }
@@ -185,7 +184,7 @@ struct fs_node* ext2_finddir( fs_node_t* node, char* name){
 
     ext2_data_struct_t* ext2 = node->device;
     ext2_inode_t root_inode;
-    if(ext2_get_inode(ext2->device, node->inode, &root_inode)){ //an error
+    if(ext2_get_inode(node, node->inode, &root_inode)){ //an error
         return NULL;
     }
 
@@ -205,7 +204,7 @@ struct fs_node* ext2_finddir( fs_node_t* node, char* name){
         else if(!strncmp(name, idirent.name, idirent.name_len) ){
             
             ext2_inode_t finode;
-            ext2_get_inode(ext2->device, idirent.inode, &finode);
+            ext2_get_inode(node, idirent.inode, &finode);
             fs_node_t* fnode = kcalloc(1, sizeof(fs_node_t));
             fnode->inode = idirent.inode;
             fnode->impl = 6;
@@ -240,7 +239,7 @@ uint32_t ext2_read(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buf
 
     ext2_data_struct_t* ext2 = node->device;
     ext2_inode_t inode;
-    if(ext2_get_inode(ext2->device, node->inode, &inode)){ //an error
+    if(ext2_get_inode(node, node->inode, &inode)){ //an error
         return 0;
     }
 
@@ -286,7 +285,7 @@ mkdir_type_t ext2_mkdir(fs_node_t* node, const char* name, uint16_t permission){
 
     ext2_data_struct_t* ext2 = node->device;
     ext2_inode_t inode;
-    if(ext2_get_inode(ext2->device, node->inode, &inode)){ //an error
+    if(ext2_get_inode(node, node->inode, &inode)){ //an error
         return 0;
     }
 
@@ -294,3 +293,86 @@ mkdir_type_t ext2_mkdir(fs_node_t* node, const char* name, uint16_t permission){
     //block's directory entry
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+struct fs_node* ext2_fs_mount(fs_node_t* dev, const char* options){
+    
+    fs_node_t* fnode = kcalloc(1, sizeof(fs_node_t));
+    strcpy(fnode->name, "ext2");
+    fnode->inode  = EXT2_ROOT_DIRECTORY_INODE;
+    fnode->flags = FS_DIRECTORY;
+
+    
+    ext2_data_struct_t* priv = kcalloc(1, sizeof(ext2_data_struct_t));
+    //only 268 bytes are used so
+    priv->superblock = kmalloc(264); 
+    read_fs(dev, 1024, 264, (uint8_t*)priv->superblock);
+    
+    ext2_superblock_t* superblockptr = priv->superblock;
+    uint32_t block_size = 1024 << superblockptr->s_log_block_size;
+    uint32_t n_group_blocks = (superblockptr->s_blocks_count / superblockptr->s_blocks_per_group) + (superblockptr->s_blocks_count % superblockptr->s_blocks_per_group != 0);
+    
+    priv->block_size = block_size;
+    priv->device = dev;
+    priv->n_groups_blocks = n_group_blocks;
+
+    fnode->device = priv;
+
+    fnode->ops.readdir = (readdir_type_t)ext2_readdir;
+    fnode->ops.finddir = (finddir_type_t)ext2_finddir;
+
+    return fnode;
+}
+
+
+int ext2_fs_probe(fs_node_t* dev){
+    
+    int result = 1;
+    uint8_t* sbuff = kmalloc(1024);
+    read_fs(dev, 1024, 1024, sbuff);
+    ext2_superblock_t* sb = (ext2_superblock_t*)sbuff;
+
+    if(sb->s_magic != EXT2_SUPER_MAGIC){
+        kfree(sbuff);
+        return 0;
+    }
+
+    if(sb->s_feature_incompat & EXT2_FEATURE_INCOMPAT_COMPRESSION){
+        kfree(sbuff);
+        return 0;
+    }
+
+    return 1;
+}
+
+
+struct filesystem ext2_fs = {
+    .fs_flags = FS_FLAGS_REQDEV,
+    .fs_name = "ext2",
+    .probe = &ext2_fs_probe,
+    .mount = &ext2_fs_mount
+};
+
+
+static int ext2_module_init(){
+    fs_register_filesystem(&ext2_fs);
+    return 1;
+};
+
+MODULE_INIT(ext2_module_init);

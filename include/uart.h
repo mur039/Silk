@@ -1,7 +1,6 @@
 #ifndef __UART_H__
 #define __UART_H__
 
-#include <stdint-gcc.h>
 #include <isr.h>
 #include <circular_buffer.h>
 

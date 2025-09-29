@@ -87,8 +87,11 @@ uint32_t read_pipe(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buf
         return collected;
     }
     
-	
-    list_insert_end(pipe->wait_queue, current_process);
+	//well shit
+	if(!list_find_by_val(pipe->wait_queue, current_process)){
+
+		list_insert_end(pipe->wait_queue, current_process);
+	}
     return -1;
 
 }
@@ -135,17 +138,18 @@ void open_pipe(fs_node_t * node, int flags) {
 	pipe_device_t * pipe = (pipe_device_t *)node->device;
 
 	//well assumption that only one of them is 1 at a time so
-	pipe->readrefcount++;
 	
 	node->ops.write = write_pipe;
 	node->ops.read = read_pipe;
 	
 	if(flags & (O_RDONLY)){ //readonly
 		node->ops.write = NULL;
+		pipe->readrefcount++;
 	}
 	
 	if(flags & (O_WRONLY)){
 		node->ops.read = NULL;
+		pipe->writerefcount++;
 	}
 
 	return;

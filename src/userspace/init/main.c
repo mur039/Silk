@@ -29,9 +29,6 @@ int create_child_terminal(const char* filepath, const char* termpath){
         fcntl(FILENO_STDOUT, F_SETFL, O_WRONLY);
         fcntl(FILENO_STDERR, F_SETFL, O_WRONLY);
 
-
-        puts("As a child i execute the init program\n");
-        
         const char * program_path = filepath;
         char *const args[] = { 
                                 (char*)program_path,
@@ -61,6 +58,9 @@ int main(int _argc, char * _argv[]){
     if(getpid() != 1){
         return 1;
     }
+
+    //while there mount proc
+    mount("proc", "/proc", "proc", 0, NULL);
 
     int pid;
     pid = create_child_terminal("/bin/dash", "/dev/ttyS0");    

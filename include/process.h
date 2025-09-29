@@ -56,6 +56,15 @@ typedef enum {
 
 typedef uint8_t fpu_state_t[512];
 
+typedef unsigned long uid_t;
+typedef unsigned long gid_t;
+#define NGROUPS_MAX 8
+
+struct cred {
+    uid_t ruid, euid, suid;   // real, effective, saved user IDs
+    gid_t rgid, egid, sgid;
+    gid_t groups[NGROUPS_MAX]; // supplementary groups
+};
 
 typedef struct process_struct{
     u32 state;
@@ -76,7 +85,7 @@ typedef struct process_struct{
     listnode_t* parent;
     list_t* childs;
     char * cwd;
-    list_t * mem_mapping;
+    struct mm_struct* mm;
     int recv_signals;
     u8 * kstack;
     void* ctty; //very sad situation :'(
@@ -84,7 +93,7 @@ typedef struct process_struct{
     pid_t sid;
     pid_t pgid;
     
-    //syscall states no kthread no fancy things for you
+    struct cred creds;
     syscall_state_t syscall_state;
     unsigned long syscall_number;
 
@@ -97,11 +106,14 @@ typedef struct process_struct{
     long ptrace_message;
     struct process_struct* tracer;
     struct process_struct* tracee;
+
+    int exit_code;
+    list_t waitqueue;
     
 }pcb_t;
 
-extern list_t * process_list;
-extern pcb_t * current_process;
+// extern list_t * process_list;
+// extern pcb_t * current_process;
 
 
 void process_init();
@@ -134,11 +146,15 @@ int process_get_empty_fd(pcb_t* proc);
 int process_send_signal(pid_t pid, unsigned int signum);
 int process_send_signal_pgrp(pid_t pgrp, unsigned int signum);
 
+pcb_t* process_get_current_process();
+#define current_process (process_get_current_process())
 file_t* process_get_file(pcb_t* proc, int fd);
 #define get_file(fd) process_get_file(current_process, fd)
 
-//signals
+int process_create_proc_entry(pcb_t* proc);
+int process_delete_proc_entry(pcb_t* proc);
 
+//signals
 #define SIGHUP 1
 #define SIGINT 2
 
@@ -173,9 +189,9 @@ int _schedule();
 #define interruptible_sleep_on(wait_queue, condition_expr)         \
 do {                                                               \
     pcb_t *cur = current_process;                                  \
-    list_insert_end(wait_queue, cur);                              \
     while (!(condition_expr)) {                                    \
         cur->state = TASK_INTERRUPTIBLE;                           \
+        list_insert_end(wait_queue, cur);                              \
         _schedule(); /* yield CPU, other tasks run */              \
     }                                                              \
 } while(0)
@@ -218,7 +234,7 @@ do { \
     pcb_t *cur = current_process;\
     cur->state = TASK_INTERRUPTIBLE; \
     list_insert_end(wait_queue, cur); \
-    kernl_schedule_shim(); \
+    _schedule(); \
 } while(0)
 
 

@@ -46,7 +46,7 @@ void arp_cache_update( uint32_t ipaddr, const uint8_t macaddr[6]){
         while(e->num_waiters > 0){
             e->num_waiters--;
             if(e->waiters[e->num_waiters].callback)
-                e->waiters[e->num_waiters].callback(e);
+                e->waiters[e->num_waiters].callback(e, e->waiters[e->num_waiters].arg);
         }
     }
     else{ //does not exist so
@@ -77,6 +77,7 @@ void arp_periodic_check(void* _unused){
             if(e->state == ARP_INCOMPLETE){
 
                 e->retries--;
+
                 if(e->retries == 0 ){ //fails
                     e->state = ARP_FAILED; 
                     //somehow clean up?
@@ -84,9 +85,15 @@ void arp_periodic_check(void* _unused){
                     while(e->num_waiters > 0){
                         e->num_waiters--;
                         if(e->waiters[e->num_waiters].callback)
-                            e->waiters[e->num_waiters].callback(e);
+                            e->waiters[e->num_waiters].callback(e, e->waiters[e->num_waiters].arg);
                     }
-                    
+                    //deallocate it somehow?
+                }
+                else if(e->retries == 8){ //retry again?
+                    for(int i = 0; i < e->num_waiters; ++i){
+                        if(e->waiters[i].callback)
+                            e->waiters[i].callback(e, e->waiters[i].arg);
+                    }
                 }
 
             }
@@ -133,38 +140,14 @@ static void send_arp_reply(struct nic* dev, uint8_t *target_mac, uint8_t *target
     return;
 }
 
-
-void arp_handle(struct nic* dev, const struct eth_frame* eth, size_t len){
-
-    struct arp_packet *arp = (struct arp_packet *)eth->payload;
-    uint16_t htype, ptype, oper;
-    htype = ntohs(arp->htype);
-    ptype = ntohs(arp->ptype);
-    oper = ntohs(arp->oper);
-    
-    switch (oper){
-        case ARP_REQUEST:   
-        
-            //check if it is nic's ip address
-            if(memcmp(&dev->ip_addrs, arp->tpa, 4)) return; //not our ip
-            send_arp_reply(dev, arp->sha, arp->spa);
-        break;
-
-        case ARP_REPLY:
-            arp_cache_update( ntohl(*(uint32_t*)arp->spa), eth->src_mac);
-        break;
-    }
-
-}
-
-void arp_query_request(uint32_t ipaddr, void (*callback_func)(void*), void* callbackarg ){
+void arp_query_request(uint32_t ipaddr, void (*callback_func)(void*, void*), void* callbackarg ){
     
     struct arp_entry* e = kcalloc(sizeof(struct arp_entry), 1);
     e->ip_addr = ipaddr;
     
     e->state = ARP_INCOMPLETE;
     e->timestamp = get_ticks();
-    e->retries = 7;
+    e->retries = 16;
     e->waiters[e->num_waiters].callback = callback_func;
     e->waiters[e->num_waiters].arg = callbackarg;
     e->num_waiters++;
@@ -186,23 +169,75 @@ void arp_send_request(struct nic* dev, uint32_t ipaddr){
         struct arp_packet arp;
     } __attribute__((packed)) frame;
 
-    memset(frame.dst_mac, 0xff, 6); //arp broadcast
-    memcpy(frame.src_mac, dev->mac, 6);
-    frame.ethertype = htons(ETHERFRAME_ARP); // ARP
+    
+    if((dev->ip_addrs & 0xFFFFFF00) == (ipaddr & 0xFFFFFF00)){ //same subnet
+        
+        memset(frame.dst_mac, 0xff, 6); //arp broadcast
+        memcpy(frame.src_mac, dev->mac, 6);
+        frame.ethertype = htons(ETHERFRAME_ARP); // ARP
 
-    frame.arp.htype = htons(1);       // Ethernet
-    frame.arp.ptype = htons(0x0800);  // IPv4
-    frame.arp.hlen = 6;
-    frame.arp.plen = 4;
-    frame.arp.oper = htons(ARP_REQUEST);        // Reply
+        frame.arp.htype = htons(1);       // Ethernet
+        frame.arp.ptype = htons(0x0800);  // IPv4
+        frame.arp.hlen = 6;
+        frame.arp.plen = 4;
+        frame.arp.oper = htons(ARP_REQUEST);        // Reply
 
-    memcpy(frame.arp.sha, dev->mac, 6);
-    memcpy(frame.arp.spa, &dev->ip_addrs, 4);
-    memset(frame.arp.tha, 0, 6); //unknown mac
-    ipaddr = htonl(ipaddr);
-    memcpy(frame.arp.tpa, &ipaddr, 4);
+        memcpy(frame.arp.sha, dev->mac, 6);
+        memcpy(frame.arp.spa, &dev->ip_addrs, 4);
+        memset(frame.arp.tha, 0, 6); //unknown mac
+        ipaddr = htonl(ipaddr);
+        memcpy(frame.arp.tpa, &ipaddr, 4);
+    }
+    else{ //outside the subnet then to default gateway
 
+        struct arp_entry* e = arp_cache_lookup(dev->gateway);
+        memcpy(frame.dst_mac, e->mac, 6); //gateway
+        memcpy(frame.src_mac, dev->mac, 6);
+        frame.ethertype = htons(ETHERFRAME_ARP); // ARP
+
+        frame.arp.htype = htons(1);       // Ethernet
+        frame.arp.ptype = htons(0x0800);  // IPv4
+        frame.arp.hlen = 6;
+        frame.arp.plen = 4;
+        frame.arp.oper = htons(ARP_REQUEST);        // Reply
+
+        memcpy(frame.arp.sha, dev->mac, 6);
+        memcpy(frame.arp.spa, &dev->ip_addrs, 4);
+        memset(frame.arp.tha, 0, 6); //unknown ma
+        memcpy(frame.arp.tpa, &dev->gateway, 6); //unknown mac
+        ipaddr = htonl(ipaddr);
+        memcpy(frame.arp.tpa, &ipaddr, 4);
+    }
+    
     int index = dev->send(dev, &frame, sizeof(frame));
     return;
 
+}
+
+
+
+int arp_input(struct sk_buff* skb, const struct eth_frame* eth){
+    
+    struct arp_packet *arp = (struct arp_packet *)skb->data;
+    uint16_t htype, ptype, oper;
+    htype = ntohs(arp->htype);
+    ptype = ntohs(arp->ptype);
+    oper = ntohs(arp->oper);
+    
+    
+    unsigned int ipaddr = skb->dev->ip_addrs;
+
+
+    if(oper == ARP_REQUEST){
+        if(memcmp(&ipaddr, arp->tpa, 4)){
+            return 0;
+        }
+        send_arp_reply(skb->dev, arp->sha, arp->spa);
+    }
+    else if(oper == ARP_REPLY){
+        arp_cache_update( (*(uint32_t*)arp->spa), eth->src_mac);
+    }
+    
+
+    return 0;
 }

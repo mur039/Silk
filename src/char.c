@@ -1,4 +1,4 @@
-#include <char.h>
+    #include <char.h>
 #include <syscalls.h>
 
 uint32_t read_null(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
@@ -10,6 +10,10 @@ uint32_t write_null(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* b
 }
 
 
+uint32_t write_full(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+    return -ENOMEM;
+}
+
 uint32_t read_zero(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
     
     if(!is_virtaddr_mapped(buffer)){
@@ -19,6 +23,47 @@ uint32_t read_zero(struct fs_node *node , uint32_t offset, uint32_t size, uint8_
     memset(buffer, 0, size);
     return size;
 }
+
+
+#include <krand.h>
+uint32_t read_random(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
+    
+    if(!is_virtaddr_mapped(buffer)){
+        return -EFAULT;
+    }
+
+    uint32_t* buff = (uint32_t*)buffer;
+    uint32_t o_len = size;
+    while(o_len > 4){
+
+        *(buff++) = krand();
+        o_len -= 4;
+    }
+
+    if(!o_len){
+        return size;
+    }
+
+    uint32_t mask = 0;
+    if(o_len == 1){
+        mask = 0xff;
+    }
+    else if(o_len == 2){
+        mask = 0xffff;
+    }
+    else if(o_len == 3){
+        mask = 0xffffff;
+    }
+    else if(o_len == 4){
+        mask = 0xffffffff;
+    }
+
+    *buff = (*buff & ~mask) | krand() & mask;
+
+    return size;
+}
+
+
 
 
 enum port_ioctl_request{
@@ -118,6 +163,27 @@ void install_kernel_mem_devices(){
 
     device->ops.write = (write_type_t)write_null;
     device->ops.read = (read_type_t)read_zero;
+    dev_register(device);
+    kfree(device);
+
+    //full
+    device = kcalloc(1, sizeof(device_t));
+    device->name = strdup("full");
+    device->unique_id = 7;
+    device->dev_type = DEVICE_CHAR;
+
+    device->ops.write = (write_type_t)write_full;
+    device->ops.read = (read_type_t)read_zero;
+    dev_register(device);
+    kfree(device);
+
+    //random
+    device = kcalloc(1, sizeof(device_t));
+    device->name = strdup("random");
+    device->unique_id = 8;
+    device->dev_type = DEVICE_CHAR;
+
+    device->ops.read = (read_type_t)read_random;
     dev_register(device);
     kfree(device);
     

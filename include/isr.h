@@ -12,7 +12,9 @@ struct regs
 };
 
 
-
+static inline void int3(){
+    asm volatile("int3\t\n");
+}
 
 //eflag bits
 #define EFLAGS_INTERRUPT_ENABLE_MASK 0x200

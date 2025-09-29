@@ -1,7 +1,7 @@
 #ifndef __TOKEN_H__
 #define __TOKEN_H__
 
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

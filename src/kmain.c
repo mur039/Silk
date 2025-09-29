@@ -52,6 +52,7 @@
 #include <fpu.h>
 #include <module.h>
 #include <loop.h>
+#include <sharedmem.h>
 
 #include <sound/ac97.h>
 
@@ -242,8 +243,6 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     timer_install();
     timer_phase(TIMER_FREQUENCY); // a ms timer
     
-    idt_set_gate(0x81, (unsigned)special_syscall_stub, 0x08, 0xEE); // 0x8E); //special syscall
-    
 
     //fiz paging problems
     virt_address_t addr;
@@ -303,10 +302,11 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
     //initialize the kernel allocator
     pmm_print_usage();
-    kmalloc_init(300); // a MB at front reduces overhead
+    kmalloc_init(300); // reduces overhead
     alloc_print_list();
     
     fb_console_printf("Initializing Device Manager...\n");
+    proc_init();
     dev_init();
     
     fb_console_printf("Probing ATA Devices...\n");
@@ -404,14 +404,12 @@ void kmain(multiboot_info_t* mbd){ //high kernel
         fnode->flags   = dev->dev_type == DEVICE_CHAR?  FS_CHARDEVICE  : FS_BLOCKDEVICE;
         fnode->ops = dev->ops;
         vfs_mount("/", ext2_node_create(fnode));
-        // halt();
     }
     
 
 
 
     vfs_mount("/dev", devfs_create());
-    vfs_mount("/proc", proc_create());
 
     uart_print(COM1, "Framebuffer at %x : %u %u %ux%u\r\n", 
                 mbd->framebuffer_addr_lower,
@@ -467,7 +465,6 @@ void kmain(multiboot_info_t* mbd){ //high kernel
 
    
 // like high kevel thingy
-
     initialize_syscalls();
     install_syscall_handler(    SYSCALL_OPEN, syscall_open);
     install_syscall_handler(    SYSCALL_EXIT, syscall_exit);
@@ -497,13 +494,21 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     install_syscall_handler(   SYSCALL_PAUSE, syscall_pause);
     install_syscall_handler( SYSCALL_GETPPID, syscall_getppid);
     install_syscall_handler( SYSCALL_GETPGRP , syscall_getpgrp);
-    install_syscall_handler(SYSCALL_SETPGID , syscall_setpgid);
-    install_syscall_handler(SYSCALL_SETSID , syscall_setsid);
+    install_syscall_handler( SYSCALL_SETPGID , syscall_setpgid);
+    install_syscall_handler(  SYSCALL_SETSID , syscall_setsid);
     install_syscall_handler(SYSCALL_NANOSLEEP , syscall_nanosleep);
     install_syscall_handler(SYSCALL_SCHED_YIELD , syscall_sched_yield);
-    install_syscall_handler(SYSCALL_POLL, syscall_poll);
+    install_syscall_handler(    SYSCALL_POLL, syscall_poll);
+    install_syscall_handler(  SYSCALL_GETUID, syscall_getuid);
+    install_syscall_handler(  SYSCALL_GETGID, syscall_getgid);
+    install_syscall_handler(  SYSCALL_SETUID, syscall_setuid);
+    install_syscall_handler(  SYSCALL_SETGID, syscall_setgid);
+    install_syscall_handler( SYSCALL_GETEUID, syscall_geteuid);
+    install_syscall_handler( SYSCALL_GETEGID, syscall_getegid);
+    install_syscall_handler(    SYSCALL_TIME, syscall_time);
+    install_syscall_handler(    SYSCALL_FTRUNCATE, syscall_ftruncate);
 
-    initialize_sockets(32);
+    initialize_sockets(64);
     initialize_netif();
     module_init();
     module_call_all_initializers();
@@ -584,14 +589,16 @@ void kmain(multiboot_info_t* mbd){ //high kernel
     
     install_basic_framebuffer((void*)0xfd000000, mbd->framebuffer_width, mbd->framebuffer_height, mbd->framebuffer_bpp);
     loop_install();
+    sharedmem_initialize();
 
     initialize_fpu();
     process_init();
     pcb_t * init =  create_process("/bin/init", (char* []){"/bin/init", NULL} );
     init->sid = 1;
     init->pgid = 1;
-    
-    create_kernel_process(ksoftirq_n, NULL, "ksoftirq/%u", 0);
+    memset(&init->creds, 0, sizeof(struct cred));  //init process runs as root
+
+    // create_kernel_process(ksoftirq_n, NULL, "ksoftirq/%u", 0);
     
     jump_usermode();
     //we shouldn't get there //if we do.. well that's imperessive

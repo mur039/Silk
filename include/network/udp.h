@@ -19,10 +19,10 @@ struct udp_sock{
 };
 
 
+int udp_input(struct sk_buff* skb);
 
 int udp_create_sock(struct socket* socket);
 uint16_t udp_calculate_checksum(struct udp* udp, uint8_t* destip, uint8_t* senderip);
-int udp_net_send_socket(const struct ipv4_packet* ip, size_t len);
 int udp_get_ephemeral_port();
 
 #endif

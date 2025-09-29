@@ -84,10 +84,13 @@ enum tcp_states {
 struct tcp_sock {
     struct inet_sock isk;
     enum tcp_states tcp_state;
+    uint32_t rcv_next;
+    uint32_t snd_next;
+    uint32_t snd_una;
     
 };
 
+int tcp_input(struct sk_buff* skb);
 int tcp_create_socket(struct socket* socket);
-int tcp_net_send_socket(const struct ipv4_packet* ip, size_t len);
 uint16_t tcp_package_calc_checksum(struct tcp* package, size_t len, uint32_t src_ip, uint32_t dst_ip);
 #endif

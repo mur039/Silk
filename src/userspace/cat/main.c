@@ -3,15 +3,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-int puts(char * dst){
-    while(*(dst) != '\0') write( FILENO_STDOUT, (dst++), 1);
-    return 0;
-}
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-
 char line_buffer[64];
 int main(int argc, char ** argv){
 
@@ -37,7 +28,6 @@ int main(int argc, char ** argv){
             return 1;
         }
 
-
         stat_t st;
         if (fstat(fd_file, &st) == -1){
             printf("Failed to fstat the file\n");
@@ -45,15 +35,18 @@ int main(int argc, char ** argv){
         }
 
         int file_type = st.st_mode >> 16;
-        if(file_type == DIRECTORY){
-        printf("\"%s\" is a directory\n", file_path);
-        
-        return 1;
+        if( S_ISDIR(file_type) ){
+            printf("\"%s\" is a directory\n", file_path);
+            return 1;
         }
 
         int _byte = 0;
-        while( read(fd_file, &_byte, 1)){
-            putchar(_byte);
+        while( read(fd_file, &_byte, 1) > 0){
+
+            if(putchar(_byte) < 0){
+                perror("");
+                exit(1);
+            }
         }
 
     return 0;

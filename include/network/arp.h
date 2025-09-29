@@ -31,8 +31,9 @@ enum arp_entry_state {
     ARP_STATE_END
 };
 
+
 struct arp_waiter {
-    void (*callback)(void *arg); // function to resume (e.g., send packet)
+    void (*callback)(void* e, void *arg); // function to resume (e.g., send packet)
     void *arg;                   // context (e.g., packet, socket, etc.)
 };
 
@@ -40,7 +41,7 @@ struct arp_entry {
     struct arp_entry *next;     // For hash table chaining
     uint32_t ip_addr;           // IPv4 in network byte order
     uint8_t mac[MAC_ADDR_LEN];  // Valid if state == RESOLVED
-
+    
     enum arp_entry_state state;
     uint64_t timestamp;         // Last updated (for aging)
     int retries;                // For retrying requests
@@ -55,10 +56,11 @@ struct arp_cache {
 
 
 
-void arp_handle(struct nic* dev, const struct eth_frame* eth, size_t len);
 struct arp_entry* arp_cache_lookup(uint32_t ipaddr);
 void arp_cache_update( uint32_t ipaddr, const uint8_t macaddr[6]);
-void arp_query_request(uint32_t ipaddr, void (*callback_func)(void*), void* callbackarg );
+void arp_query_request(uint32_t ipaddr, void (*callback_func)(void*, void*), void* callbackarg );
 void arp_periodic_check(void*);
 void arp_send_request(struct nic* dev, uint32_t ipaddr);
+
+int arp_input(struct sk_buff* skb, const struct eth_frame* eth);
 #endif

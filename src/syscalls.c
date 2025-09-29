@@ -262,32 +262,36 @@ void syscall_execve(struct regs *r){
     
     cp->state = TASK_CREATED; // so that schedular can load the image
     
+    pcb_t *proc = current_process;
+    struct mm_struct* mm = proc->mm;
     while(1){
-        listnode_t* node = list_remove(cp->mem_mapping, cp->mem_mapping->head);
-        if(!node)
-            break;
         
-        vmem_map_t* map = node->val;
-        int is_alloc = (map->attributes >> 20) & 1;
-        int vattr = map->attributes & 0xfffff;
-        if(!is_alloc){
+        //pop the vma as well
+        struct vma* v = mm->mmap;
+        if(!v){   
+            break;
+        }
+        mm->mmap = v->next;
+        
+        int flags = v->flags >> 4;
+        
+        for(uintptr_t addr = v->start; addr < v->end; addr += 4096){
+            
+            if(!v->file || flags & VM_PRIVATE){
 
-            if(vattr == VMM_ATTR_PHYSICAL_PAGE){
-
-                unmap_virtaddr((void*)map->vmem);
-                deallocate_physical_page((void*)map->phymem);
+                if(v->flags & VM_GROWSDOWN){
+                    if(!is_virtaddr_mapped((void*)addr)){
+                        continue;
+                    }
+                }
+                void* phy = get_physaddr((void*)addr);
+                unmap_virtaddr((void*)addr);
+                deallocate_physical_page(phy);
             }
         }
 
-        kfree(map);
-        kfree(node);
+        kfree(v);
     }
-
-    vmem_map_t *empty_pages = kcalloc(1, sizeof(vmem_map_t));
-    empty_pages->vmem = 0;
-    empty_pages->phymem = 0xc0000000;
-    empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); // 3G -> 786432 pages
-    list_insert_end(cp->mem_mapping, empty_pages);
 
     schedule(r);
     return;
@@ -303,7 +307,7 @@ void syscall_exit(struct regs *r)
     }
 
     int exitcode = (int)r->ebx;
-    r->eax = (exitcode & 0xFF) << 8;
+    current_process->exit_code = (exitcode & 0xFF) << 8;
 
     // fb_console_printf("[*]syscall_exit: process exited with exitcode: %u\n", exitcode);
     save_context(r, current_process);
@@ -490,11 +494,13 @@ void syscall_read(struct regs *r){
         schedule(r);
         return;
     }
+    else if(result < 0){
 
+        r->eax = result;
+        return;
+    }
     r->eax = result;
     file->f_pos += r->eax;
-    return;
-
     return;
 }
 
@@ -652,6 +658,7 @@ void syscall_fstat(struct regs *r)
     }
 
     stat->st_mode <<= 16;
+    stat->st_mode = node->flags;
     stat->st_mode |= file->f_flags;
     stat->st_uid = node->uid;
     stat->st_gid = node->gid;
@@ -688,16 +695,10 @@ void syscall_fork(struct regs *r) { // the show begins
     file_t* file = child_proc->open_descriptors;
     for (int i = 0; i < MAX_OPEN_FILES; ++i)
     {
-
-        
-        fs_node_t *node = (fs_node_t *)file->f_inode;
-        
-        // empty entry
-        if (!node) continue;
-        
-
+        fs_node_t *node = (fs_node_t *)file->f_inode;        
+        if (!node) continue; // empty entry
+    
         int rmask = O_RDONLY | O_RDWR, wmask = O_WRONLY | O_RDWR;
-
         open_fs(node, file->f_flags);
         file++;
     }
@@ -710,23 +711,42 @@ void syscall_fork(struct regs *r) { // the show begins
     }
 
     // copy memory map
-    for (listnode_t *vnode = curr_proc->mem_mapping->head; vnode; vnode = vnode->next)
-    {
+    for (struct vma* v = curr_proc->mm->mmap; v; v = v->next){
 
-        vmem_map_t *mm = vnode->val;
-        if (mm->attributes >> 20)
-        { // allocated
-            // uart_print(COM1, "ALLOCATED : %x-> %x\r\n", mm->vmem, mm->phymem);
-            uint8_t *empty_page = allocate_physical_page();
-            map_virtaddr(memory_window, empty_page, PAGE_READ_WRITE | PAGE_PRESENT);
-            memcpy(memory_window, (void *)mm->vmem, 0x1000);
+        if (!v->file) { // non-file backed region
+            //actually should i implement cow?
+            if(v->flags & VM_GROWSDOWN){
+                for(uintptr_t addr = v->start; addr < v->end; addr += 4096){
+                    
+                    //if not mapped
+                    if(!is_virtaddr_mapped((void*)addr)){
+                        continue;
+                    }
 
-            map_virtaddr_d(child_proc->page_dir, (void *)mm->vmem, empty_page, get_virtaddr_flags( (void*)mm->vmem) );
-            vmm_mark_allocated(child_proc->mem_mapping, mm->vmem, (uint32_t)empty_page, VMM_ATTR_PHYSICAL_PAGE);
+                    uint8_t *empty_page = allocate_physical_page();
+                    map_virtaddr(memory_window, empty_page, PAGE_READ_WRITE | PAGE_PRESENT);
+                    memcpy(memory_window, (void *)addr, 0x1000);
+                    map_virtaddr_d(child_proc->page_dir, (void *)addr, empty_page, get_virtaddr_flags( (void*)addr));
+                }
+            }
+            else{
+                for(uintptr_t addr = v->start; addr < v->end; addr += 4096){
+                    
+                    uint8_t *empty_page = allocate_physical_page();
+                    map_virtaddr(memory_window, empty_page, PAGE_READ_WRITE | PAGE_PRESENT);
+                    memcpy(memory_window, (void *)addr, 0x1000);
+                    map_virtaddr_d(child_proc->page_dir, (void *)addr, empty_page, get_virtaddr_flags( (void*)addr));
+                }
+            }
+        
+            //insert it end of it
+            struct vma* vc = kmalloc(sizeof(struct vma));
+            *vc = *v;
+            vmm_insert_vma(child_proc->mm, vc);   
         }
         else
-        { // free
-            // uart_print(COM1, "FREE : %x-> %x\r\n", mm->vmem, mm->phymem);
+        { 
+            
         }
     }
 
@@ -738,6 +758,7 @@ void syscall_fork(struct regs *r) { // the show begins
     child_proc->sid = curr_proc->sid;
     child_proc->pgid = curr_proc->pgid;
     child_proc->ctty = curr_proc->ctty;
+    child_proc->creds = curr_proc->creds; //credentials copied
 
 
     child_proc->state = TASK_RUNNING;
@@ -811,67 +832,82 @@ void syscall_wait4(struct regs *r)
     int options = (int)r->edx;
     // rusage is ignored for now
 
-    /*
-    for now its gonna be just wait for anything and in terminate process
-    we will set status to running again when child get terminated
-    */
-    save_context(r, current_process);
-
+    
+retry:
     //if process doesn't have any child then 
     if(!current_process->childs->size){
         r->eax = -ECHILD;
         return;
     }
 
-    for (listnode_t *cnode = current_process->childs->head; cnode; cnode = cnode->next){
-        pcb_t *cproc = cnode->val;
-
-        if (cproc->state == TASK_ZOMBIE){ // yes exited fella
-            pid_t retpid = cproc->pid;
-            if (wstatus)
-                *wstatus = cproc->regs.eax;
-
-            // terminate_process(cproc);
-            process_release_sources(cproc);
-            
-
-            r->eax = retpid;
-            list_remove(current_process->childs, cnode);
-            kfree(cnode);
-            kfree(cproc);
-
-            return;
-        }
-
-        else if (cproc->state == TASK_STOPPED){ // yes stopeed fella
-            pid_t retpid = cproc->pid;
-            if (wstatus)
-                *wstatus = (SIGSTOP << 8) | 0x7f;
-
-            
-            r->eax = retpid;
-            return;
-        }
-        
-    }
-    
-    //now if we get there we need to look for options
-    if(options & WNOHANG){
-        r->eax = 0;
+    if(pid < -1){ //some precess group of abs value or something?
+        r->eax = -EINVAL;
         return;
     }
+    else if(pid == 0){ //any child process with equal process gruop id of the caller
+        r->eax = -EINVAL;
+        return;
+    }
+    else if(pid > 0){ //any child with same id;
+        r->eax = -EINVAL;
+        return;
+    }
+    else if(pid == -1){ //any child
+        
+        for (listnode_t *cnode = current_process->childs->head; cnode; cnode = cnode->next){
+            pcb_t *cproc = cnode->val;
 
+            if (cproc->state == TASK_ZOMBIE){ // yes exited fella
+                pid_t retpid = cproc->pid;
+                if (wstatus){
+                    *wstatus = cproc->exit_code;
+                }
+                process_release_sources(cproc);
+
+
+                r->eax = retpid;
+                list_remove(current_process->childs, cnode);
+                kfree(cnode);
+                kfree(cproc);
+                return;
+            } 
+            else if (cproc->state == TASK_STOPPED ){ // yes stopeed fella UNTRACED should be used as well but anyway
+                
+                if(!(options & WUNTRACED) || !cproc->exit_code) continue; //passover
+                pid_t retpid = cproc->pid;
+                if (wstatus){   
+                    *wstatus = (cproc->exit_code << 8) | 0x7f;
+                }
+                cproc->exit_code = 0; //so on the next round we don't report it again
+                r->eax = retpid;
+                return;
+            }
+
+        }
+
+        if(options & WNOHANG){ // no child has state change so don't block return mf
+            r->eax = 0;
+            return;
+        }
+
+        //hmmmmmm well we gonna block honey
+        //the children with state change will wake my queue which i sleep on
+        sleep_on(&current_process->waitqueue);
+    }
+    
+    goto retry;
+    
+    
 
     
     //if not then we set syscall_state pending and schedule to another process    
     current_process->syscall_state = SYSCALL_STATE_PENDING;
     current_process->syscall_number = r->eax;
-    current_process->state = TASK_INTERRUPTIBLE;
     schedule(r);
     return;
 }
 
-#define MAP_ANONYMOUS 1
+#define MAP_ANONYMOUS VM_PRIVATE
 
 // void *mmap(void *addr , size_t length, int prot, int flags, int fd, size_t offset)
 void syscall_mmap(struct regs *r)
@@ -886,12 +922,10 @@ void syscall_mmap(struct regs *r)
     int fd = (int)r->edi;
     int offset = (int)r->ebp;
 
-    if (fd == -1 && flags & MAP_ANONYMOUS)
-    { // practically requesting a page
+    enable_interrupts();
+    if (fd == -1 && flags & MAP_ANONYMOUS){ // practically requesting a page
         
-        enable_interrupts();    
         uint32_t nof_pages = (length / 4096) + (length % 4096 != 0);
-
         void** phypages = kcalloc(nof_pages, sizeof(void*));
         for(size_t i = 0; i < nof_pages; i++){
             void* addr = allocate_physical_page();
@@ -911,17 +945,36 @@ void syscall_mmap(struct regs *r)
             phypages[i] = addr;
         }
 
-        void *suitable_vaddr = vmm_get_empty_vpage(current_process->mem_mapping, nof_pages * 4096);
+        uintptr_t base = (uintptr_t)vmm_get_empty_vpage(current_process->mm, (uintptr_t)addr, length);
+        if((intptr_t)base < 0){
+            r->eax = -EEXIST;
+            return;
+        }
 
+        //allocate vma structure
+        struct vma* v = kcalloc(1, sizeof(struct vma));
+        if(!v){
+            r->eax = -ENOMEM;
+            return;
+        }
+
+        v->start = base;
+        v->end = base + length;
+        v->flags = (flags) | (prot & 0xf);
+        v->file_offset = offset;
+        v->file = NULL; //aka anon
+    
+        
+        
         for(size_t i = 0; i < nof_pages; ++i){
-            map_virtaddr((uint8_t*)suitable_vaddr + i*4096 , phypages[i], PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-            memset((uint8_t*)suitable_vaddr + i*4096, 0, 4096);
-            vmm_mark_allocated(current_process->mem_mapping, (u32)suitable_vaddr + i*4096, (u32)phypages[i], VMM_ATTR_PHYSICAL_PAGE);
+            map_virtaddr((uint8_t*)v->start + i*4096 , phypages[i], PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
+            memset((uint8_t*)v->start + i*4096, 0, 4096);
         }
         
         kfree(phypages);
         
-        r->eax = (u32)suitable_vaddr;
+        vmm_insert_vma(current_process->mm, v);
+        r->eax = v->start;        
         return;
     }
 
@@ -931,15 +984,50 @@ void syscall_mmap(struct regs *r)
         return;
     }
 
-    fs_node_t *device_in_question = (fs_node_t *)current_process->open_descriptors[fd].f_inode;
-
-    if(!device_in_question->ops.mmap){
-        r->eax = -1;
+    file_t *file = process_get_file(current_process, fd);
+    if(!file){
+        r->eax = -EBADF;
         return;
-    }    
+    }
 
-   
-    r->eax = (uint32_t)device_in_question->ops.mmap(device_in_question, length, prot, offset);
+    fs_node_t *node = (fs_node_t *)file->f_inode;
+    if(!node->ops.mmap){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    uintptr_t base = (uintptr_t)vmm_get_empty_vpage(current_process->mm, (uintptr_t)addr, length);
+    if((intptr_t)base < 0){
+        r->eax = -EEXIST;
+        return;
+    }
+
+    //allocate vma structure
+    struct vma* v = kcalloc(1, sizeof(struct vma));
+    if(!v){
+        r->eax = -ENOMEM;
+        return;
+    }
+
+    v->start = base;
+    v->end = base + length;
+    v->flags = (flags) | (prot & 0xf);
+    v->file_offset = offset;
+    v->file = node;
+    //ops by device, next by mm_insert
+
+    int ret =-ENODEV;
+    if(node->ops.mmap)
+        ret = node->ops.mmap(node, v);
+    
+
+    if(ret < 0){
+        kfree(v);
+        r->eax = ret;
+        return;
+    }
+    vmm_insert_vma(current_process->mm, v);
+    r->eax = v->start;
     return;
 }
 
@@ -1099,6 +1187,7 @@ uint32_t bitmap_size;
 extern page_bitmap_t highmemory;
 #endif
 
+extern list_t* process_list;
 void syscall_sysinfo(struct regs *r)
 {
 
@@ -1176,147 +1265,56 @@ void syscall_mount(struct regs *r)
     unsigned long mountflags = (unsigned long)r->esi;
     void *data = (void *)r->edi;
 
-    char *abs_source_path = vfs_canonicalize_path(current_process->cwd, source);
-    char *abs_target_path;
+    struct filesystem* fs = fs_get_by_name(filesystemtype);
+    if(!fs){ //no such filesystem
+        r->eax = -ENOENT;
+        return;
+    }
 
+    if(mountflags){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    fs_node_t* bdev = NULL;
+    if(fs->fs_flags & FS_FLAGS_REQDEV){
+        bdev = kopen(source, 0);
+        if(!bdev){
+            r->eax = -ENXIO;
+            return;
+        }
+
+        if(bdev->flags != FS_BLOCKDEVICE){
+            r->eax  -EINVAL;
+            return;
+        }
+    }
+
+    if(fs->probe && !fs->probe(bdev)){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    fs_node_t* root = fs->mount(bdev, data);
+    if(!root){
+        r->eax = -EIO;
+        return;
+    }
+
+    char* abs_target;
     if(!memcmp(target, "/", 2)){
-        abs_target_path = "/";
+        abs_target = strdup("/");
     }
     else{
-        abs_target_path = vfs_canonicalize_path(current_process->cwd, target);
+        abs_target =  vfs_canonicalize_path(current_process->cwd, target);
     }
 
-    fb_console_printf(
-        "syscall_mount :      \n"
-        "\tsource : %s        \n"
-        "\target : %s         \n"
-        "\tfilesystemtype: %s  \n"
-        "\tmountflags : %x    \n"
-        "\tdata : %x          \n",
-        source,
-        target,
-        filesystemtype,
-        mountflags,
-        data);
+    vfs_mount(abs_target, root);
+    kfree(abs_target);
+    if(bdev) 
+        close_fs(bdev);
+    r->eax = 0;
 
-    if (!mountflags)
-    { // create a new node
-        
-        if (!strcmp(source, "devfs"))
-        {
-
-            vfs_mount(abs_target_path, devfs_create());
-            r->eax = 0;
-            goto mount_end;
-        }
-        else if (!strcmp(source, "tmpfs"))
-        {
-
-            vfs_mount(abs_target_path, tmpfs_install());
-            r->eax = 0;
-            goto mount_end;
-            ;
-        }
-        else if (!strcmp(source, "devpts"))
-        {
-            fs_node_t* node = pts_create_node();
-            if(!node){
-                r->eax = -ENOENT;
-                goto mount_end;
-            }
-            vfs_mount(abs_target_path, node);
-            r->eax = 0;
-            goto mount_end;
-            ;
-        }
-        else
-        {
-
-            // a device!!!
-            // chech whether the device exists
-            fs_node_t *devnode = kopen(abs_source_path, 0);
-            if (!devnode)
-            {
-                r->eax = -6;
-                goto mount_end;
-            }
-
-            if (devnode->flags == FS_BLOCKDEVICE)
-            {
-                if( fs_get_by_name(filesystemtype)){
-                    //a candidate 
-                    filesystem_t* fs = fs_get_by_name(filesystemtype);
-                    if(fs->probe && !fs->probe(devnode)){
-                        r->eax = -ENOENT;
-                        goto mount_end;
-                    }
-
-                    if(!fs->mount){
-                        r->eax = -EIO;
-                        goto mount_end;
-                    }
-
-                    fs_node_t* root = fs->mount(devnode, abs_target_path);
-                    if(!root){
-                        r->eax = -EIO;
-                        goto mount_end;
-                    }
-                
-                    vfs_mount(abs_target_path, root);
-                    r->eax = 0;
-                    goto mount_end;
-
-                }
-                else if (!strcmp(filesystemtype, "fat"))
-                {
-
-                    fs_node_t *node = fat_node_create(devnode);
-                    if (node)
-                    {
-                        vfs_mount(abs_target_path, node);
-                        r->eax = 0;
-                    }
-                    else
-                    {
-                        r->eax = -1;
-                    }
-
-                    goto mount_end;
-                }
-                if (!strcmp(filesystemtype, "ext2"))
-                {
-
-                    fs_node_t *node = ext2_node_create(devnode);
-                    if (node)
-                    {
-                        vfs_mount(abs_target_path, node);
-                        r->eax = 0;
-                        goto mount_end;
-                        ;
-                    }
-
-                    r->eax = -3;
-                    goto mount_end;
-                    ;
-                }
-                else
-                {
-                    r->eax = -3;
-                    goto mount_end;
-                    ;
-                }
-            }
-
-            r->eax = -1;
-            goto mount_end;
-            ;
-        }
-    }
-
-    r->eax = -1;
-
-mount_end:
-    kfree(abs_source_path);
     return;
 }
 
@@ -1550,17 +1548,12 @@ void syscall_pause(struct regs *r){
     
     //pauses current ttask until a signal is received thus return EINTR
     save_context(r , current_process);
-    // save_current_context(current_process);
 
     current_process->state = TASK_INTERRUPTIBLE;
     current_process->syscall_number = r->eax;
     current_process->syscall_state = SYSCALL_STATE_PENDING;
 
     schedule(r);
-    // // restore_cpu_context(&current_process->regs);
-    // sleep_on(NULL);
-    
-
     return;
 }
 
@@ -1674,7 +1667,9 @@ void syscall_sched_yield(struct regs* r){
 
 void poll_qproc(struct fs_node* n, list_t *wq, struct poll_table *pt) {
     // Add current task to this wait queue
-    list_insert_end(wq, current_process);
+    if(!list_find_by_val(wq, current_process)){
+        list_insert_end(wq, current_process);
+    }
 }
 
 
@@ -1746,3 +1741,83 @@ void syscall_poll(struct regs* r){
     return;
 }
 
+void syscall_getuid(struct regs* r){
+    r->eax = current_process->creds.ruid;
+    return;
+}
+void syscall_getgid(struct regs* r){
+    r->eax = current_process->creds.rgid;
+    return;
+}
+
+void syscall_geteuid(struct regs* r){
+    r->eax = current_process->creds.euid;
+    return;
+}
+void syscall_getegid(struct regs* r){
+    r->eax = current_process->creds.egid;
+    return;
+}
+
+void syscall_setuid(struct regs* r){
+    
+    uid_t uid = r->ebx;
+    if(current_process->creds.euid == 0){ //root
+        current_process->creds.ruid = uid;
+        current_process->creds.euid = uid;
+        current_process->creds.suid = uid;
+        r->eax = 0;
+        return;
+    }
+    else if(current_process->creds.ruid == uid){
+        current_process->creds.euid = uid;
+        r->eax = 0;
+        return;
+    }
+    
+    //no permission
+    r->eax = -ENOPERM;
+    return;
+}
+void syscall_setgid(struct regs* r){
+    r->eax = current_process->creds.ruid;
+    return;
+}
+
+void syscall_ftruncate(struct regs* r){
+    
+    int fd = (int)r->ebx;
+    off_t length = (off_t)r->ecx;
+
+    if(fd < 0 || fd > MAX_OPEN_FILES){
+        r->eax = -EBADF;
+        return ;
+    }
+
+    file_t* file = get_file(fd);
+    if(!file){
+        r->eax = -EBADF;
+        return; 
+    }
+
+    fs_node_t* node = (fs_node_t*)file->f_inode;
+    if(node->flags != FS_FILE || !(file->f_flags & (O_WRONLY | O_RDWR))){
+        r->eax = -EINVAL;
+        return;
+    }   
+
+    if(length < 0){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    struct fs_ops* ops = &node->ops;
+    if(!ops->truncate){
+        r->eax = -EINVAL;
+        return;
+    }
+
+    ops->truncate(node, length);
+    r->eax = 0;
+    return;
+}

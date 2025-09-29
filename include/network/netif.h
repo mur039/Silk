@@ -2,6 +2,7 @@
 #define __NETIF_H__
 
 #include <sys.h>
+#include <network/eth.h>
 #include <socket.h>
 
 
@@ -16,6 +17,7 @@ struct nic {
     int (*send)(struct nic *dev, const void *packet, size_t len);
     int (*poll)(struct nic *dev);   // Optional: to pull incoming packets (used in polling model)
     void (*handle_rx)(struct nic *dev, const void *data, size_t len);
+    int (*output)(struct nic* dev, struct sk_buff* skb);
     
     void *priv;                     // Driver-specific data (e.g. e1000 ring buffers)
     
@@ -23,16 +25,6 @@ struct nic {
 };
 
 
-struct eth_frame {
-    uint8_t  dst_mac[6];
-    uint8_t  src_mac[6];
-    uint16_t ethertype;
-    uint8_t  payload[];
-} __attribute__((packed));
-
-#define ETHERFRAME_IPV4  0x0800
-#define ETHERFRAME_ARP  0x0806
-#define ETHERFRAME_IPV6  0x86DD
 
 void initialize_netif(void);
 struct nic* netif_allocate();

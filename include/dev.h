@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <filesystems/vfs.h>
+#include <filesystems/fs.h>
 #include <sys.h>
 #include <pmm.h>
 #include <str.h>
@@ -11,6 +12,7 @@ typedef enum __device_type {
 	DEVICE_UNKNOWN = 0,
 	DEVICE_CHAR = 1,
 	DEVICE_BLOCK = 2,
+	DEVICE_DIR = 3
 } device_type;
 
 
@@ -18,21 +20,14 @@ typedef struct __device_t {
 	char *name;
 	uint32_t unique_id;
 	device_type dev_type;
-	// filesystem_t * fs;
+ 
 	struct fs_ops ops;
-	// read_type_t read;
-	// write_type_t write;
-	// open_type_t open;
-	// close_type_t close;
-	// readdir_type_t readdir;
-	// finddir_type_t finddir;
-	// create_type_t create;
-	// mkdir_type_t mkdir;
-	// ioctl_type_t ioctl;
-	// get_size_type_t get_size;
-	// mmap_type_t mmap;
 	void *priv;
 } device_t;
+
+//okay i need to get some directory support
+//should i make it creatable by the user or
+//make it like classes perhaps?
 
 void dev_init();
 int dev_register(device_t* dev);

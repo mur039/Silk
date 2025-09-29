@@ -14,7 +14,7 @@ unsigned char kbdus[128] =
   'q', 'w', 'e', 'r',	't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',	/* Enter key */
     0,			/* 29   - Control */
   'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',	/* 39 */
-  '\'', '"',   0,		/* Left shift */
+  'i', '"',   0,		/* Left shift */
  '\\', 'z', 'x', 'c', 'v', 'b', 'n',			/* 49 */
   'm', ',', '.', '.',   0,				/* Right shift */
   '*',
@@ -54,7 +54,7 @@ unsigned char kbdus_shifted[128] =
   'Q', 'W', 'E', 'R',	'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\n',	/* ENTER KEY */
     0,			/* 29   - Control */
   'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';',	/* 39 */
- '\'', '`',   0,		/* Left shift */
+ 'I', '`',   0,		/* Left shift */
  '\\', 'Z', 'X', 'C', 'V', 'B', 'N',			/* 49 */
   'M', ',', '.', ':',   0,				/* Right shift */
   '*',
@@ -93,7 +93,7 @@ unsigned char kbdus_altgr[128] =
   '@', 'w', 'e', 'r',	't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',	/* Enter key */
     0,			/* 29   - Control */
   'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',	/* 39 */
-  '\'', '"',   0,		/* Left shift */
+  'I', '"',   0,		/* Left shift */
  '\\', 'z', 'x', 'c', 'v', 'b', 'n',			/* 49 */
   'm', ',', '.', '.',   0,				/* Right shift */
   '*',
@@ -174,11 +174,15 @@ void ps2_kbd_initialize(){
   ps2_controller_status_t status;
   ps2_send_command(PS2_DISABLE_FIRST_PORT);
     
-  //flush the output  
-  if(inb(PS2_COMMAND_REG) & STATUS_OUTPUT_BUFFER){
-     inb(PS2_DATA_PORT);
-  }
+  // //flush the output  
+  // if(inb(PS2_COMMAND_REG) & STATUS_OUTPUT_BUFFER){
+  //    inb(PS2_DATA_PORT);
+  // }
     
+  uint8_t tmp = inb(0x61);
+  outb(0x61, tmp | 0x80);
+  outb(0x61, tmp & 0x7F);
+  inb(0x60);
 
   // // //wait until input is ready
   // ps2_send_command(PS2_CMD_TEST_FIRST_PORT);

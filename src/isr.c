@@ -233,18 +233,21 @@ void fault_handler(struct regs *r){
     /* Is this a fault whose number is from 0 to 31? */
     if (r->int_no < 32)
     {
-
+        
         if((r->cs & 3)) {
             save_context(r, current_process);
         }
         
-	    dump_registers(r);
-        uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
-        fb_console_printf( "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
-        if(!(r->eflags & ( 1 << V86_VM_BIT)) ){ //if not a v86 task
-            print_stack_trace(10, r);
-        }
+        if(r->int_no != 14){ //for pagefaults
 
+            dump_registers(r);
+            uart_print(COM1, "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
+            fb_console_printf( "%u %s\r\n", r->int_no, exception_messages[r->int_no]);
+            if(!(r->eflags & ( 1 << V86_VM_BIT)) ){ //if not a v86 task
+                print_stack_trace(10, r);
+            }
+            
+        }
     
 
 
@@ -252,6 +255,19 @@ void fault_handler(struct regs *r){
     // print_current_process();
        switch (r->int_no)
        {
+
+        //int3
+        case 3:
+            r->es &= 0xff;
+            r->fs &= 0xff;
+            r->gs &= 0xff;
+            fb_console_printf("well int3 triggered\n");
+            dump_registers(r);
+            print_stack_trace(10,r);
+            return;
+            // halt();
+
+        break;
         case 0: //div/0
         case 6: //invalid opcode
             if( r->cs & 3) //happened in user mode
@@ -281,37 +297,15 @@ void fault_handler(struct regs *r){
             
             uint32_t cr2_reg;
             asm volatile ( "mov %%cr2, %0" : "=r"(cr2_reg) );
-
-            if(r->err_code & 4){
-
-                uint8_t* faulting_address = (uint8_t*)cr2_reg;
-
-                //check if faulting address is below stack bottom and its maz 1 page size far
-                if(faulting_address < current_process->stack_bottom && faulting_address > (current_process->stack_bottom - 0x1000)  ){
-                    
-                    size_t stack_npages = (size_t)(current_process->stack_top - current_process->stack_bottom)/0x1000;
-
-                    if( stack_npages  < 2048 ){ //what could happen right?
-
-                        current_process->stack_bottom -= 4096;
-                        void* phypage = allocate_physical_page();
-                        if(!phypage){
-                            goto out_stack_demand_page;
-                        }
-                        map_virtaddr(current_process->stack_bottom, phypage, PAGE_READ_WRITE | PAGE_USER_SUPERVISOR | PAGE_PRESENT);
-                        vmm_mark_allocated(current_process->mem_mapping, (uint32_t)current_process->stack_bottom, (uint32_t)phypage, VMM_ATTR_PHYSICAL_PAGE);
-                        return;
-                    }
-                    //it's max page reached billions must segfault
-
-                }
+            if(vmm_handle_pagefault(current_process->mm, cr2_reg, r->err_code) >= 0){
+                return;
             }
 
-out_stack_demand_page:
             fb_set_console_color((pixel_t){.blue = 0xFF, .green = 0xff, .red = 0xff}, (pixel_t){.blue = 0x69});
             // fb_console_put("\x1b[H\x1b[J");            
             
             dump_registers(r);
+            print_stack_trace(10, r);
             uart_print(0x3f8, "%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
             fb_console_printf("%s, err_code-> %x\r\n",pagefault_messages[r->err_code & 7], r->err_code);
 
@@ -340,9 +334,6 @@ out_stack_demand_page:
             if(r->err_code & 4){ //fault happened in usermode
                 save_context(r, current_process);
                 print_current_process();
-                // paging_directory_list(current_process->page_dir );   
-                // uart_print(COM1, "------------------------------------------------------");
-                // list_vmem_mapping(current_process);
                 process_send_signal(current_process->pid, SIGSEGV);
                 schedule(r);
                 return;

@@ -57,77 +57,6 @@ device_t * dev_get_by_name(const char* devname){
 
 
 
-fs_node_t * devfs_create() {
-	fs_node_t * fnode = kmalloc(sizeof(fs_node_t));
-	if(!fnode)
-		error("failed to create devfs");
-
-	memset(fnode, 0x00, sizeof(fs_node_t));
-	fnode->inode = 0;
-	
-	strcpy(fnode->name, "devfs");
-	fnode->uid = 0;
-	fnode->gid = 0;
-	fnode->flags   = FS_DIRECTORY;
-	
-	fnode->ops.readdir = (readdir_type_t)devfs_readdir;
-	fnode->ops.finddir = (finddir_type_t)devfs_finddir;
-	fnode->ops.ioctl   = NULL;
-	return fnode;
-}
-
-
-uint32_t devfs_generic_read(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
-
-	device_t * dev = node->device;
-	if(dev->dev_type == DEVICE_CHAR){
-		return 0;
-	}
-	else{ //block device
-		uint32_t * priv = dev->priv;
-		size_t max_size = priv[0];
-		uint8_t* raw_block = (void*)priv[1];
-
-		if(offset >= max_size){
-			return 0;
-		}
-
-		memcpy(buffer, &raw_block[offset], size);
-		node->offset += size;
-		return size;
-	}
-}
-
-
-
-uint32_t devfs_generic_write(struct fs_node *node , uint32_t offset, uint32_t size, uint8_t * buffer){
-
-	device_t * dev = node->device;
-	if(dev->dev_type == DEVICE_CHAR){
-		return 0;
-	}
-	else{ //block device
-
-		uint32_t * priv = dev->priv;
-		size_t max_size = priv[0];
-		uint8_t* raw_block = (void*)priv[1];
-
-
-		if(offset >= max_size){
-			return 0;
-		}
-
-		if(offset + size >= max_size){
-			size = max_size - offset;
-		}
-
-		memcpy(&raw_block[offset], buffer, size);
-		node->offset += size;
-		return size;
-	}
-}
-
-
 
 struct fs_node* devfs_finddir(struct fs_node* node, const char *name){
     //from here name should be ../dir/
@@ -188,3 +117,66 @@ static struct dirent * devfs_readdir(fs_node_t *node, uint32_t index) {
 	node->offset = 0;
 	return NULL;
 }
+
+
+fs_node_t * devfs_create() {
+	fs_node_t * fnode = kmalloc(sizeof(fs_node_t));
+	if(!fnode)
+		error("failed to create devfs");
+
+	memset(fnode, 0x00, sizeof(fs_node_t));
+	fnode->inode = 0;
+	
+	strcpy(fnode->name, "devfs");
+	fnode->uid = 0;
+	fnode->gid = 0;
+	fnode->flags   = FS_DIRECTORY;
+	
+	fnode->ops.readdir = (readdir_type_t)devfs_readdir;
+	fnode->ops.finddir = (finddir_type_t)devfs_finddir;
+	fnode->ops.ioctl   = NULL;
+	return fnode;
+}
+
+
+
+
+// fs_node_t* devfs_mount(fs_node_t* nodev, const char* options){
+// 	fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
+// 	if(!fnode)
+// 		error("failed to create devfs");
+
+	
+// 	fnode->inode = 1;
+	
+// 	strcpy(fnode->name, "devfs");
+// 	fnode->uid = 0;
+// 	fnode->gid = 0;
+// 	fnode->flags   = FS_DIRECTORY;
+	
+// 	fnode->ops.readdir = (readdir_type_t)devfs_readdir;
+// 	fnode->ops.finddir = (finddir_type_t)devfs_finddir;
+// 	fnode->ops.ioctl   = NULL;
+// }
+
+// int devfs_probe(fs_node_t* nodev){
+// 	if(nodev){
+// 		return 0;
+// 	}
+
+// 	return 1;
+// }
+
+// struct filesystem devfs_fs = {
+// 	.fs_name = "dev",
+// 	.probe = &devfs_probe,
+// 	.mount = &devfs_mount,
+// };
+
+// static int devfs_init(){
+// 	// devfs_root = tree_create();
+// 	return fs_register_filesystem(&devfs_fs);
+// }
+
+
+// MODULE_INIT(devfs_init);

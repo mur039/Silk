@@ -3,7 +3,9 @@
 
 #include <dev.h>
 #include <filesystems/vfs.h>
+#include <filesystems/fs.h>
 #include <fb.h>
+#include <module.h>
 
 
 #define EXT2_SUPER_MAGIC 0xEF53

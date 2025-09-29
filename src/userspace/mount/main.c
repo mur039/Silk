@@ -1,28 +1,10 @@
 
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <signals.h>
-
-
-
-int puts(const char * dst){
-    write( FILENO_STDOUT, dst, strlen(dst));
-    return 0;
-}
-
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-int getchar(){
-    uint8_t ch = 0;
-    int ret = read(FILENO_STDIN, &ch, 1);
-    return ret ?  ch : -1;
-}
-
+#include <signal.h>
 
 enum options{
     OPTION_HELP = 0,
@@ -182,7 +164,7 @@ int main(int argc, char **argv){
     int err_code = mount(source, target, file_system_type, 0, NULL);
     
     if(err_code < 0){ //error code
-        printf("mount: failed to mount \"%s\" to \"%s\"\n", source, target);
+        perror("mount");
         return 1;
     }
 

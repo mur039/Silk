@@ -6,6 +6,7 @@
 #include <g_list.h>
 #include <g_tree.h>
 #include <sys/poll.h>
+#include <vmm.h>
 // #include <sys.h>
 // #include <pmm.h>
 
@@ -48,7 +49,7 @@ typedef void (*mkdir_type_t) (struct fs_node *, const char *name, uint16_t permi
 typedef int (*ioctl_type_t) (struct fs_node *, unsigned long request, void * argp);
 typedef int (*get_size_type_t) (struct fs_node *);
 typedef int (*unlink_type_t) (struct fs_node *, const char *name);
-typedef void* (*mmap_type_t) (struct fs_node *, size_t length, int prot, size_t offset);
+typedef int (*mmap_type_t) (struct fs_node *, struct vma*);
 typedef void* (*truncate_type_t) (struct fs_node *, size_t length);
 typedef short (*poll_type_t) (struct fs_node *, struct poll_table*);
 
@@ -69,6 +70,12 @@ struct fs_ops {
 	unlink_type_t unlink;
 
 	poll_type_t poll;
+};
+
+//well i need mappablities for regular, and maybe block, file nodes
+struct address_space{
+	struct fs_node* host;
+	//somehow a structure to point in to the page structures
 };
 
 typedef struct fs_node {
@@ -92,6 +99,9 @@ typedef struct fs_node {
 
 	/* File operations */
 	struct fs_ops ops;
+	
+	/*mapability of the nodes*/
+	// struct address_space* mapping;
 
 	struct fs_node *ptr;   // Alias pointer, for symlinks.
 	uint32_t offset;       // Offset for read operations XXX move this to new "file descriptor" entry

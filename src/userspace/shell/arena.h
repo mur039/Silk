@@ -2,7 +2,7 @@
 #define __ARENA_H__
 
 #include <stdlib.h>
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <string.h>
 
 /*

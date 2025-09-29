@@ -1,46 +1,18 @@
 
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <signals.h>
+#include <signal.h>
 #include <dirent.h>
 
 #include <token.h>
 #include <arena.h>
 
 
-typedef enum{
-    SEEK_SET = 0,
-    SEEK_CUR = 1, 
-    SEEK_END = 2
-
-} whence_t;
-
-
-int puts(const char * dst){
-    write( FILENO_STDOUT, dst, strlen(dst));
-    return 0;
-}
-
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-int getchar(){
-    uint8_t ch = 0;
-    int ret = read(FILENO_STDIN, &ch, 1);
-
-    if(ret < 0) return -1;
-    else return ch;
-
-    if(ret == -EAGAIN) return -1;
-    else if(ret > 0) return ch;
-}
-
 //both arguments are NULL terminated
-int is_word_in(const char * word, char ** list){
+int is_word_in(const char * word, const char ** list){
     
    if(word == NULL || list == NULL) return -1; //obv
 
@@ -454,7 +426,7 @@ int _exec(char **argv){
         dup2( pipefd[0], FILENO_STDIN);
         //and child will only read so so there's no point writing back
         
-        int result = execve(
+        int result = execv(
                             argv[0],
                             argv
                             );
@@ -519,7 +491,7 @@ int _disown(char **argv){
     }
     else{
 
-        int result = execve(
+        int result = execv(
                             argv[0],
                             argv
                             );
@@ -647,7 +619,7 @@ int execute_command(char *command_buffer){
         
         break;
 
-        case LS:    return list_directory(argv); break;
+        case LS:    return list_directory((const char**)argv); break;
         case CD:    return            _cd(argv); break;
         case KILL:  return          _kill(argv); break;
         case USAGE: return          _free(argv); break;
@@ -698,7 +670,7 @@ int did_child_exited(){
     return 0;
 }
 
-int pass_key_to_child(c){
+int pass_key_to_child(int c){
     int err;
 
     switch(c){
@@ -796,7 +768,6 @@ int main(int argc, char **argv){
     int c = 0;
     shouldRun = 1;
 
-    malloc_init();
     char cwd_buf[32];
     char pb[64];
     //discard the err

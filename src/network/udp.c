@@ -3,6 +3,7 @@
 #include "network/ipv4.h"
 #include "network/arp.h"
 #include "network/route.h"
+#include <network/skb.h>
 #include <socket.h>
 #include <syscalls.h>
 #include "pmm.h"
@@ -131,161 +132,82 @@ int udp_proto_ops_connect(file_t* file, const struct sockaddr* addr, socklen_t l
     return 0;
 }
 
+
 int udp_proto_ops_sendto(file_t* file, void* buf, size_t len, int flags, const struct sockaddr* addr, socklen_t addrlen){
-    
+
+
     struct fs_node* fnode = (struct fs_node*)file->f_inode;
     struct socket* socket = fnode->device;
     struct udp_sock* usk = socket->protocol_data;
 
     struct sockaddr_in* iaddr  = (struct sockaddr_in*)addr;
     
-    uint32_t ipv4_addr = ntohl(iaddr->sin_addr);
+    uint32_t ipv4_addr = (iaddr->sin_addr);
     uint16_t port = ntohs(iaddr->sin_port);
     uint8_t* ipaddress = (uint8_t*)&ipv4_addr;
 
     
-    struct nic* dev = NULL;
-    
-    uint8_t target_mac[6];
-    if( (ipv4_addr & 0xF0000000) == 0xE0000000){ // 224.0.0.0 ... 239.255.255.255 //multicast
 
-        //we must be bound
-        if(!socket->bound_if){ //not bounded
-            fb_console_printf("Not bound to an interface\n");
-            return -EINVAL;
-        }
-
-        dev = socket->bound_if;
-
-        target_mac[0] = 0x01;
-        target_mac[1] = 0x00;
-        target_mac[2] = 0x5e;
-        target_mac[3] = ipaddress[1] & 0x7F;  // lower 7 bits of second byte
-        target_mac[4] = ipaddress[2];
-        target_mac[5] = ipaddress[3];
-    }
-    else if( ipv4_addr == 0xFFFFFFFF){ //broadcast
-        
-        //we must be bound
-        if(!socket->bound_if){ //not bounded
-            fb_console_printf("Not bound to an interface\n");
-            return -EINVAL;
-        }
-
-        dev = socket->bound_if;
-
-        memset(target_mac, 0xFF, 6);
-    }
-    else{ //  a specific ip address so arp resolution must be done
-
-        
-        const route_t* r = route_select_route(ipv4_addr);
-        
-        if(!r){
-            fb_console_printf("Failed to find route?\n");
-            return -EINVAL;
-        }
-        
-        dev = r->interface;
-        
-        struct arp_entry* e;
-        if(r->gateway){ //indirectly reachable
-            e =  arp_cache_lookup(htonl(r->gateway));
-        }else{ //directly reachable
-            e =  arp_cache_lookup(htonl(ipv4_addr));
-        }
-        
-
-        if(!e){
-            memset(target_mac, 0, 6); //for below
-        }
-        else{
-            memcpy(target_mac, e->mac, 6);
-        }
-        
+    size_t total_len = len + sizeof(struct udp);
+    struct sk_buff* skb = skb_alloc(total_len + 64);
+    if(!skb){
+        return -ENOMEM;
     }
 
-    //bind epi
-    if(!usk->isk.bound_port){
+
+    //check if socket is bound or not
+    skb->protocol = IPV4_PROTOCOL_UDP;
+    skb->dst_ip = ipv4_addr;
+    skb->dev = socket->bound_if;
+
+    //ugly as shi
+    if(usk->isk.bound_ip == 0){
+
+        if(!skb->dev){
+            const route_t* r = route_select_route(skb->dst_ip);
+            if(!r){
+                skb_free(skb);
+                return -ENOENT;
+            }
+            skb->dev = r->interface;
+        }
+        usk->isk.bound_ip = skb->dev->ip_addrs;   
+    }
+
+
+    if(usk->isk.bound_port == 0){
+
         struct sockaddr_in ead;
         int port = udp_get_ephemeral_port();
         if(port < 0){
+            skb_free(skb);
             return -EADDRINUSE;
         }
 
         ead.sin_family = AF_INET;
         ead.sin_port = htons(port);
-        ead.sin_addr = htonl(dev->ip_addrs);
+        ead.sin_addr = htonl(skb->dev->ip_addrs);
         int err = udp_proto_ops_bind(file, (struct sockaddr*)&ead, sizeof(ead) );
         if(err < 0) return err;
-        
     }
 
-    size_t total_size = sizeof(struct eth_frame) +sizeof(struct ipv4_packet) + sizeof(struct udp) + len;
+    skb->src_ip = usk->isk.bound_ip;
 
-    if(total_size > dev->mtu){
-        return -EINVAL;
-    }
 
-    //create the packet then;
-    uint8_t* raw_data = kcalloc(1, total_size);
-    struct eth_frame* eth = (struct eth_frame*)raw_data;
-    struct ipv4_packet* ip4 = (struct ipv4_packet*)eth->payload;
-    struct udp* udp =  (struct udp*)ip4->payload;
-
-    //from bottom to the top
-    memcpy(udp->data, buf, len);
+    skb_reserve(skb, 64);
+    memcpy(skb_put(skb, len), buf, len); //copy payload to its buffer
+    struct udp *udp = skb_push(skb, sizeof(struct udp));
     udp->checksum = 0;
     udp->length = htons( sizeof(struct udp) + len );
     udp->sport = htons(usk->isk.bound_port);
     udp->dport = htons(port);
 
-    uint32_t dstip = htonl(*(uint32_t*)ipaddress);
-    uint32_t senderip = (dev->ip_addrs);
+    uint32_t dstip = (*(uint32_t*)ipaddress);
+    uint32_t senderip = (skb->src_ip) ;
     udp_calculate_checksum(udp, (uint8_t*)&dstip, (uint8_t*)&senderip );
 
-    ip4->version_ihl = 0x45;
-    ip4->TOS = 0;
-    ip4->total_length = htons(sizeof(struct ipv4_packet) + sizeof(struct udp) + len );
-    ip4->identification = htons(0);
-    ip4->flags_fragoffset =  (0x02 << 5) | (0 << 3);
-    ip4->ttl = 64;
-    ip4->protocol = IPV4_PROTOCOL_UDP;
-    ip4->header_checksum = 0;
-
-    memcpy(ip4->tpa, ipaddress, 4);
-    memcpy(ip4->spa, &dev->ip_addrs, 4);
-
-    //this needs to be be
-    uint32_t* wordptr = (uint32_t*)ip4->tpa;
-    *wordptr = htonl(*wordptr);
-
-    wordptr = (uint32_t*)ip4->spa;
-    // *wordptr = htonl(*wordptr);
-
-    ip4->header_checksum = compute_checksum((uint16_t *)ip4, sizeof(struct ipv4_packet));
-
-    eth->ethertype = htons(ETHERFRAME_IPV4);
-    memcpy(eth->src_mac, dev->mac, 6);
-    memcpy(eth->dst_mac, target_mac, 6); //for know we know target mac
-
-    if(!memcmp(target_mac, "\0\0\0\0\0\0", 6)){
-        //arp lookup failed so we write it to write_buffer of this socket, then
-        //query an arp request to the network, when we got a request we send the packet with correct
-        //mac addr. For udp we don't need to notify user about unreachable host
-        list_insert_end(&usk->isk.sk.pending_writes, raw_data);
-        arp_query_request(ipv4_addr,  udp_arp_reply_callback, socket);
-        arp_send_request(dev, ipv4_addr);
-        return 0;
-    }
-
-    dev->send(dev, raw_data, total_size);
-    kfree(raw_data);
-    
-
-    return 0;
+    return ip_output(skb);
 }
-    
 
 
 int udp_proto_ops_sendmsg(file_t* file, void* addr, size_t len){
@@ -305,50 +227,55 @@ int udp_proto_ops_recvmsg(file_t *file, struct msghdr* msg, int flags){
     struct socket* socket = fnode->device;
     struct udp_sock* usk = socket->protocol_data;
 
-    int min_size = sizeof(struct udp_recv); //least 2 bytes?
-    int remaining = circular_buffer_avaliable(&usk->isk.sk.recv);
-    
-    //okay so sockaddr_in, length and 1 byte payload min remaining must be 12 + 2 + 1 = 15 bytes
-    if(remaining < min_size){ //not enough data thus
+
+    struct sk_buff* package = usk->isk.sk.rx_head;
+    if(!package){ //no message
+        list_insert_end(&usk->isk.sk.rx_waitqueue, current_process);
         return -EAGAIN;
     }
+    else{
+        //consume the package
+        if(usk->isk.sk.rx_head == usk->isk.sk.rx_tail){  //onepackage
+            usk->isk.sk.rx_head = NULL;
+            usk->isk.sk.rx_tail = NULL;
+        }
+        else{
+            usk->isk.sk.rx_head = package->next;
+        }
+
+    }
+
+    
     
     //message boundaries
-    struct sockaddr_in source;    
-    circular_buffer_read(&usk->isk.sk.recv, &source, sizeof(struct sockaddr_in), 1);
-
-    //set the msg name and len
+    struct udp* udp = (struct udp*)package->data;
     if(msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)){
-        
+        struct sockaddr_in source;    
+        source.sin_family = AF_INET;
+        source.sin_addr = package->src_ip;
+        source.sin_port = udp->sport;
+    
+        //set the msg name and len
         memcpy(msg->msg_name, &source, sizeof(struct sockaddr_in));
         msg->msg_namelen = sizeof(struct sockaddr_in);
     }
-
-    uint16_t recv_len;
-    circular_buffer_read(&usk->isk.sk.recv, &recv_len, 2, 1);
-
+    
+    
+    uint8_t* payload = (uint8_t*)skb_pull(package, sizeof(struct udp));
+    //data reading?
     uint8_t* dst = msg->msg_iov->iov_base;
     size_t req_len = msg->msg_iov->iov_len;
 
-    if(recv_len > req_len){
+    if(package->len > req_len){
         msg->msg_flags = 1; //truncated
-        circular_buffer_read(&usk->isk.sk.recv, dst, req_len, 1);
-        
-        //discard the rest
-        for(size_t i = 0; i < (recv_len - req_len) ; ++i) 
-            circular_buffer_getc(&usk->isk.sk.recv);  
-
-        return req_len;
-
     }
     else{ //smaller so rest or the data is discarded
-
-        circular_buffer_read(&usk->isk.sk.recv, dst, recv_len, 1);
-        return recv_len;
+        req_len = package->len;
     }
+    memcpy(dst, payload, req_len);
     
-
-    return 0;
+    skb_free(package);
+    return req_len;
 }
 
 
@@ -358,12 +285,12 @@ short udp_proto_ops_poll(file_t* file, struct poll_table* pt){
     struct socket* socket = fnode->device;
     struct udp_sock* usk = socket->protocol_data;
 
-    int min_size = sizeof(struct udp_recv); //least 2 bytes?
-    int remaining = circular_buffer_avaliable(&usk->isk.sk.recv);
+    
+    struct sk_buff* head = usk->isk.sk.rx_head;
     //i do some ape shit here so i will just
 
     short mask = POLLOUT;
-    if(remaining){
+    if(head != NULL){
         mask |= POLLIN;
     }
    
@@ -416,7 +343,6 @@ void udp_proto_destroy(struct sock* sk){
             kfree(node);
         }
 
-        circular_buffer_destroy(&sk->recv);
         
         memset(usk, 0, sizeof(struct udp_sock)); 
         kfree(sk);
@@ -458,7 +384,6 @@ int udp_create_sock(struct socket* socket){
     sk->sk_prot = &udp_prot;
     sk->sk_proc = current_process->pid;
 
-    sk->recv = circular_buffer_create(4096);
     sk->pending_reads = list_create();
     sk->pending_writes = list_create();
 
@@ -542,48 +467,40 @@ uint16_t udp_calculate_checksum(struct udp* udp, uint8_t* destip, uint8_t* sende
     return checksum;
 }
 
-int udp_net_send_socket(const struct ipv4_packet* ip, size_t len){
 
-    struct udp *udp = (struct udp *)((uint8_t*)ip + (ip->version_ihl & 0xF)*0x4);
-    uint8_t* recv_data = udp->data;
-    size_t recv_data_length = ntohs(udp->length) - sizeof(struct udp);
-    // kxxd(recv_data, recv_data_length);
-
-    // fb_console_printf("received an udp packet\n");
+int udp_input(struct sk_buff* skb){
+    struct ipv4_packet* ip = (struct ipv4_packet*)skb->data;
+    struct udp* udp = (struct udp*)skb_pull(skb, sizeof(struct ipv4_packet));
+    // uint8_t* payload = (uint8_t*)skb_pull(skb, sizeof(struct udp));
     
+    //look in udp sockets
     for(listnode_t* node = bound_sockets.head; node; node = node->next){
         struct socket* socket = node->val;
         struct udp_sock* usk = socket->protocol_data;
 
         if(ntohs(udp->dport) == usk->isk.bound_port){ //check port
 
-
             if(!usk->isk.bound_ip || !memcmp(&usk->isk.bound_ip, ip->tpa, 4 ) ){ //IN_ANY //any adress or the intended ip addr
-                /*
                 
-                struct sockaddr_in source;
-                uint16_t payload_len;
-                uint8_t payload[]
-                */
+                //queue it to the socket
+                if(!usk->isk.sk.rx_head){ //no message
+                    usk->isk.sk.rx_head = skb;
+                    usk->isk.sk.rx_tail = skb;
+                    skb->next = NULL;
+                }
+                else{
+                    usk->isk.sk.rx_tail->next = skb;
+                    usk->isk.sk.rx_tail = skb;
+                    skb->next = NULL;
+                }
 
-                pcb_t* proc = process_get_by_pid(usk->isk.sk.sk_proc);
-                if(proc->state == TASK_INTERRUPTIBLE)
-                    proc->state = TASK_RUNNING;
-                
-                
-                struct sockaddr_in source;
-                source.sin_family = AF_INET;
-                source.sin_port = udp->sport;
-                memcpy(&source.sin_addr, ip->spa, 4);
-                    
-                circular_buffer_write(&usk->isk.sk.recv, &source, sizeof(struct sockaddr_in), 1);
-                circular_buffer_write(&usk->isk.sk.recv, (uint16_t*)&recv_data_length, sizeof(uint16_t), 1);
-                circular_buffer_write(&usk->isk.sk.recv, recv_data, recv_data_length, 1);
-                return recv_data_length;
-
+                process_wakeup_list(&usk->isk.sk.rx_waitqueue);
+                return 1;
             }
         }
-        
     }
+
+    //not found then
+    skb_free(skb);
     return 0;
 }

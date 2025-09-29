@@ -52,19 +52,9 @@ int main(int argc, char** argv){
 
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
-    // addr.sin_port = htons(1234),
-    // addr.sin_addr = 0; //listen at all interfaces ,wwe don't have one but anyway
-
-    // err = bind(fd, (struct sockaddr*)&addr, sizeof(addr));
-    // if(err < 0){
-    //     printf("Failed to bind socket\n");
-    //     return 1;
-    // }
-    // puts("[+]Binded\n");
-
+    
     //reuse reduce
     addr.sin_port = htons(DNS_SERVER_PORT);
-    addr.sin_addr = htonl(0x0a000203); //10.0.2.3 ? 
     addr.sin_addr = htonl(0x08080808); //8.8.8.8 ? 
 
     

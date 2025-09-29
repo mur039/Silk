@@ -144,5 +144,19 @@ int pmm_alloc_is_chain_corrupted();
 
 
 
+//for error codes on pagefault
+#define PAGE_FAULT_PRESENT_SHIFT 0
+#define PAGE_FAULT_RW_SHIFT 1
+#define PAGE_FAULT_US_SHIFT 2
+#define PAGE_FAULT_RSVD_SHIFT 3
+#define PAGE_FAULT_ID_SHIFT 4
+
+#define PAGE_FAULT_PRESENT  (1 << PAGE_FAULT_PRESENT_SHIFT)
+#define PAGE_FAULT_RW  (1 << PAGE_FAULT_RW_SHIFT) //read/write
+#define PAGE_FAULT_US  (1 << PAGE_FAULT_US_SHIFT) //user/supervisor
+#define PAGE_FAULT_RSVD  (1 << PAGE_FAULT_RSVD_SHIFT) //rsvd
+#define PAGE_FAULT_ID  (1 << PAGE_FAULT_ID_SHIFT) //instruction/data access
+
+
 
 #endif

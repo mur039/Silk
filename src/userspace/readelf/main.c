@@ -1,32 +1,14 @@
 
-#include <stdint-gcc.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <signals.h>
-
-
-
-int puts(const char * dst){
-    write( FILENO_STDOUT, dst, strlen(dst));
-    return 0;
-}
-
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-int getchar(){
-    uint8_t ch = 0;
-    int ret = read(FILENO_STDIN, &ch, 1);
-    return ret ?  ch : -1;
-}
+#include <signal.h>
 
 
 enum options{
     OPTION_ONLY_HEADER = 0,
-
     OPTION_EOT
 };
 
@@ -36,21 +18,18 @@ enum options{
 const char* single_dash_options[] = {
     
     [OPTION_ONLY_HEADER] = "-h",
-
     [OPTION_EOT] = NULL
 };
 
 const char* double_dash_options[] = {
     
     [OPTION_ONLY_HEADER] = "--file-header",
-
     [OPTION_EOT] = NULL
 };
 
 const int need_options_arg[] = {
     
     [OPTION_ONLY_HEADER] = 1,
-
     [OPTION_EOT] = -1
 };
 
@@ -219,7 +198,7 @@ int main(int argc, char **argv){
     read(file_fd, header.e_ident, 16); //read e_ident first
     
 
-    uint32_t *dword_ptr = &header;
+    uint32_t *dword_ptr = (uint32_t*)&header;
     if( memcmp(header.e_ident, elf_magic_str, 4) != 0){
         puts("readelf: Error: Not an ELF executable - it doesn't contain valid magic bytes\n");
         return 1;

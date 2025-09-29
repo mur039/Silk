@@ -727,10 +727,10 @@ int fb_console_get_cursor(){
     return (fb_cursor_x & 0xff) << 16 || (fb_cursor_y & 0xff);
 }
 
-uint32_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
-    (void)node;
-    return framebuffer_raw_write(offset, buffer, size);
-}   
+
+
+
+
 
 
 
@@ -745,6 +745,28 @@ typedef struct{
 } framebuffer_t;
 
 
+#include <syscalls.h>
+uint32_t fb_write(fs_node_t * node, uint32_t offset, uint32_t size, uint8_t* buffer){
+    device_t* dev = node->device;
+    framebuffer_t* fb = dev->priv;
+
+    size_t totalsize = fb->width * fb->height * (fb->bpp / 8);
+
+    if(offset >= totalsize){
+        return -ENOBUFS; //needs ENOSPC
+    }
+
+    size_t remain = (totalsize - offset);
+    if(size > remain){
+        size = remain;
+    }
+    
+    uint8_t *dest = (uint8_t *)fb->baseaddr  + offset;
+    memcpy(dest, buffer, size);
+    return size;
+}   
+
+
 
 static int framebuffer_ioctl(fs_node_t* node, unsigned long request, void* argp){
 
@@ -757,7 +779,7 @@ static int framebuffer_ioctl(fs_node_t* node, unsigned long request, void* argp)
             lengths[0] = fb->width;
             lengths[1] = fb->height;
             break;
-
+            
         case 1:
             ;
             uint32_t* addr = argp;
@@ -775,28 +797,59 @@ void framebuffer_close(fs_node_t* node){
     return;
 }
 
-void* framebuffer_mmap(fs_node_t* node, size_t length, int prot, size_t offset){
+
+int fb_vm_fault(struct vma* v, uintptr_t addr, uint32_t err){
+    fs_node_t* fnode =  v->file;
+    device_t* dev = fnode->device;
+    framebuffer_t *fb = dev->priv;
+    
+    addr &= ~0xffful;
+    size_t offset = (addr - v->start);
+    if(!(err & PAGE_FAULT_PRESENT)){ //lazy mapping
+        uint16_t pageflag = PAGE_PRESENT | PAGE_WRITE_THROUGH | PAGE_CACHE_DISABLED | PAGE_USER_SUPERVISOR | (v->flags & VM_WRITE ? PAGE_READ_WRITE : 0);   
+        map_virtaddr( (uint8_t*)addr , (uint8_t*)fb->baseaddr + offset, pageflag );
+        return 0;
+    }
+    //if page fault occurs on a present page     
+    //and if its due to writing, we check if that segment has write flag
+    //if not then we bail out, leave rest to the page fault handler 
+    //which will kill the culprit
+    if((err & PAGE_FAULT_RW) &&  !(v->flags & VM_WRITE)){ 
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+struct vm_operations fb_vm_ops = {
+    .fault = fb_vm_fault
+};
+
+
+int framebuffer_mmap(fs_node_t* node, struct vma* v){
 
     device_t* dev = node->device;
     framebuffer_t* fb = dev->priv;
 
+    size_t size = v->end - v->start;
+    size_t fb_size = fb->height*fb->width*(fb->bpp/8u);
+
     //for now offset is ignored and length must match the framebuffer
-    if(length != fb->height*fb->width*(fb->bpp/8u) || offset != 0){
-        return (void*)-1;
+    if( v->file_offset != 0 || size > fb_size ){
+        return -1;
     }
 
-    size_t roundedup_length = ((length/4096) + (length % 4096 != 0)) * 4096;
-    void* candidate_addr = vmm_get_empty_vpage(current_process->mem_mapping, roundedup_length);
+    v->ops = &fb_vm_ops;
+    //me gonna lazy map that shi
+    //or just the first page
 
-    if(candidate_addr == (void*)-1)  
-        return (void*)-1;
-
-    for(size_t i = 0; i < roundedup_length ; i += 4096){
-        map_virtaddr( (uint8_t*)candidate_addr + i, (uint8_t*)fb->baseaddr + i, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_WRITE_THROUGH | PAGE_USER_SUPERVISOR );
-        vmm_mark_allocated(current_process->mem_mapping, (uint32_t)candidate_addr + i, (uint32_t)fb->baseaddr + i, VMM_ATTR_PHYSICAL_MMIO);
-    }
+    // uint16_t pageflag = PAGE_PRESENT | PAGE_WRITE_THROUGH | PAGE_CACHE_DISABLED | PAGE_USER_SUPERVISOR | (v->flags & VM_WRITE ? PAGE_READ_WRITE : 0);
+    // for(size_t i = 0; i < size ; i += 4096){
+    //     map_virtaddr( (uint8_t*)v->start + i, (uint8_t*)fb->baseaddr + i, pageflag );
+    //     break;
+    // }
     
-    return candidate_addr;
+    return 0;
 }
 
 void install_basic_framebuffer(uint32_t* base, uint32_t width, uint32_t height, uint32_t bpp){

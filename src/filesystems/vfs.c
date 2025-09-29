@@ -138,21 +138,6 @@ char** _vfs_parse_path(const char * path){
 // }
 
 
-
-
-// //fuck
-
-// uint32_t read_fs(fs_node_t *node, u32int offset, u32int size, u8int *buffer)
-// {
-//   // Has the node got a read callback?
-//   if (node->read != 0)
-//     return node->read(node, offset, size, buffer);
-//   else
-//     return 0;
-// } 
-
-
-
 tree_t    * fs_tree = NULL; /* File system mountpoint tree */
 fs_node_t * fs_root = NULL; /* Pointer to the root mount fs_node (must be some form of filesystem, even ramdisk) */
 
@@ -349,6 +334,9 @@ int vfs_mount(char * path, fs_node_t * local_root){
 		// ent->file = local_root;
 	}
 
+	//increment the refcount
+	local_root->refcount++;
+
 _vfs_cleanup:
 	kfree(p);
 	return ret_val;
@@ -533,23 +521,26 @@ void open_fs(fs_node_t *node, int flags) {
 	if (ops->open) {
 		ops->open(node, flags);
 	}
-	// node->refcount++;
+	node->refcount++;
 }
 
 void close_fs(fs_node_t *node) {
 	struct fs_ops *ops = &node->ops;
-	if(node == fs_root){
-        uart_print(COM1, "The fuck is wrong with you\n");
-    }
-
+	
 	if (ops->close) {
 		ops->close(node);	
 	}
-
-	// if(node->refcount > 0) node->refcount--;
-	// if(node->refcount == 0) kfree(node);
-
 	
+	if(node == fs_root){
+		// uart_print(COM1, "The fuck is wrong with you\n");
+	}
+	
+	//if reference goes to zero, then deallocate node
+	if(node->refcount > 0) 
+		node->refcount--;
+
+	// if(node->refcount == 0)
+	// 	kfree(node);
 }
 
 #include <syscalls.h>

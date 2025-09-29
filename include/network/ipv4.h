@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <sys.h>   
 #include <network/netif.h> 
+#include <network/skb.h>
 
 
 
@@ -32,7 +33,8 @@ struct ipv4_packet {
     uint8_t payload[];
 } __attribute__((packed));
 
-void ipv4_handle(struct nic* dev, const struct eth_frame* eth, size_t len);
+int ip_input(struct sk_buff* skb);
+int ip_output(struct sk_buff* skb);
 
 
 

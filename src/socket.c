@@ -32,8 +32,10 @@ uint32_t socket_fsread(fs_node_t* fnode, uint32_t offset, uint32_t length, uint8
     if(err == -EAGAIN || err == -1){
         return -1;
     }
-    
+
+    return err;
 }
+
 uint32_t socket_fswrite(fs_node_t* fnode, uint32_t offset, uint32_t length, uint8_t* buffer){
     
     struct socket* socket = fnode->device;
@@ -120,6 +122,7 @@ void socket_close(fs_node_t* fnode){
         sock->sk_prot->disconnect(sock, 0);
         sock->sk_prot->destroy(sock);
     }
+    socket->state = SS_FREE;
 }
 
 fs_node_t sock_node = {
@@ -178,18 +181,18 @@ void syscall_socket(struct regs* r){
     struct socket* socket;
     switch(domain){
         case AF_UNIX: 
+            fd = process_get_empty_fd(current_process);
+            if(fd < 0){
+                r->eax = -1;
+                break;
+            }
+            
             socket = unix_create_socket(type, protocol);
             if(!socket){
                 r->eax = -ENOBUFS;
                 return;
             }
             
-            fd = process_get_empty_fd(current_process);
-            if(fd < 0){
-                r->eax = -1;
-                break;
-            }
-
             file =  &current_process->open_descriptors[fd];
             file->f_flags = O_RDWR;
             file->f_mode = O_RDWR;
@@ -409,6 +412,7 @@ void syscall_listen(struct regs* r){
     struct sock* sock = socket->protocol_data;
 
     socket->state = SS_LISTENING;
+    sock->state = SS_LISTENING;
     sock->max_ack_backlog = backlog;
     
     r->eax = 0;

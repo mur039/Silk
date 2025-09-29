@@ -23,8 +23,8 @@ listnode_t * list_remove(list_t * list, listnode_t * node);
 listnode_t* list_pop_end(list_t* list);
 int list_sort(list_t* list,  int (*comparefunc)(void*, void*) );
 void* list_get_head_value(list_t* l, int* aux);
-// listnode_t * list_insert_front(list_t * list, void * val);
-// listnode_t * list_insert_start(list_t * list, void * val);
-// void list_delete_list(list_t * list);
+const listnode_t* list_find_by_val(list_t* list, void* val);
 
+#define foreach(list, iter) \
+	for(listnode_t* (iter) = list->head; (iter) != NULL; (iter) = (iter)->next)
 #endif

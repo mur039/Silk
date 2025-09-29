@@ -130,39 +130,26 @@ int deallocate_physical_page(void * address){ //broken af
     
     uint32_t addr = (uint32_t)address;
     
-    #if 1
-        if(addr < (uint32_t)highmemory.baseaddr || addr > (uint32_t)highmemory.endaddr){
-            fb_console_printf("Not in the managed memory range");
-            return 1;
-        }
-
-        unsigned int bits = addr - (uint32_t)highmemory.baseaddr;
-        bits /= 4096; //number of bits
-        int bit_index = bits % 8; //(8*byte_index + bit_index)
-        int byte_index = bits / 8;
-
-        if( GET_BIT(highmemory.bitmap[byte_index], bit_index) ){
-            uint8_t mask = 0xFF ^ (1 << bit_index);
-            highmemory.bitmap[byte_index] &= mask;
-        }
-        else{
-
-            fb_console_printf("Double physical page free!!\n");
-            halt();
-        }
-    #else
-    if(addr < memstart ){
-        fb_console_printf("Not in the manages memory range");
+    if(addr < (uint32_t)highmemory.baseaddr || addr > (uint32_t)highmemory.endaddr){
+        fb_console_printf("Not in the managed memory range");
+        // halt();
         return 1;
     }
-    
-    unsigned int bits = addr - (uint32_t)memstart;
+
+    unsigned int bits = addr - (uint32_t)highmemory.baseaddr;
     bits /= 4096; //number of bits
     int bit_index = bits % 8; //(8*byte_index + bit_index)
-    int byte_index = (bits - bit_index)/8;
+    int byte_index = bits / 8;
+    
+    if( GET_BIT(highmemory.bitmap[byte_index], bit_index) ){
+        uint8_t mask = 0xFF ^ (1 << bit_index);
+        highmemory.bitmap[byte_index] &= mask;
+    }
+    else{
+        fb_console_printf("Double physical page free!!\n");
+        // halt();
+    }
 
-    bitmap_start[byte_index] &= ~(1 << bit_index);
-    #endif
     return 0;
 }
 

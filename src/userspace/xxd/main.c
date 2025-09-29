@@ -5,15 +5,6 @@
 #include <sys/stat.h>
 #include <string.h>
 
-int puts(char * dst){
-    while(*(dst) != '\0') write( FILENO_STDOUT, (dst++), 1);
-    return 0;
-}
-int putchar(int c){
-    return write(FILENO_STDOUT, &c, 1);
-}
-
-
 
 enum options{
     OPTION_HELP = 0,
@@ -213,7 +204,7 @@ int main(int argc, char ** argv){
     }
 
     int file_type = st.st_mode >> 16;
-    if(file_type == DIRECTORY){
+    if(S_ISDIR(file_type)){
         printf("\"%s\" is a directory\n", file_path);
         return 1;
     }

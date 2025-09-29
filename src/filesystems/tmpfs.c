@@ -25,6 +25,55 @@ typedef struct tmpfs_device{
 } tmpfs_device_t;
 
 
+#include <syscalls.h>
+
+int tmpfs_vmop_fault(struct vma *vma, uintptr_t fault_addr, uint32_t err){
+    
+    fs_node_t* node = vma->file;
+    size_t offset = fault_addr - vma->start;
+    int page_index = offset / 4096;
+    int page_offset = offset % 4096;
+
+    
+
+    //lazy mapping
+    if(!(err & PAGE_FAULT_PRESENT)){
+
+        tmpfs_device_t* tmpfs =  node->device;
+        listnode_t* pagenode = tmpfs->data_page_list.head;
+        for(int i = 0; i < page_index; ++i) pagenode = pagenode->next;
+        uint8_t* page = pagenode->val;
+
+        void* physaddr = get_physaddr(page);
+        uint16_t pageflags = PAGE_PRESENT | PAGE_USER_SUPERVISOR;
+        if(vma->flags & VM_WRITE){
+            pageflags |= PAGE_READ_WRITE;
+        }
+        map_virtaddr((void*)(fault_addr & ~0xffful), physaddr, pageflags);
+        return 0;
+    }
+    
+    if((err & PAGE_FAULT_RW) &&  !(vma->flags & VM_WRITE)){ //pagefault due to write
+        return -EINVAL;
+    }
+
+
+
+    return 0;
+}
+
+
+struct vm_operations tmpfs_vmops = {
+    .fault = &tmpfs_vmop_fault
+};
+
+int tmpfs_mmap(fs_node_t* node, struct vma* v){
+    v->file = node;
+    v->ops = &tmpfs_vmops;
+    return 0;
+}
+
+
 fs_node_t * tmpfs_install(){
 
 	fs_node_t * fnode = kcalloc(1, sizeof(fs_node_t));
@@ -87,7 +136,7 @@ struct fs_node* tmpfs_finddir (struct fs_node* node, char *name){
         tree_node_t* ctnode = cnode->val;
         tmpfs_device_t* _tmpfs = ctnode->value;
             
-        if(!strcmp(_tmpfs->name, name)){
+        if(strcmp(name, _tmpfs->name) == 0){
             fs_node_t* fnode = kcalloc(1, sizeof(fs_node_t));
             fnode->inode = 5; //????
             strcpy(fnode->name, _tmpfs->name);
@@ -99,11 +148,11 @@ struct fs_node* tmpfs_finddir (struct fs_node* node, char *name){
             
             fnode->ops.open = tmpfs_open;
             fnode->ops.close = (close_type_t)tmpfs_close;
-
             if(_tmpfs->type == FS_FILE){
                 
                 fnode->flags = FS_FILE;
                 fnode->length = _tmpfs->data_size;
+                fnode->ops.mmap = tmpfs_mmap;
             }
             else{
                 

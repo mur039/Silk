@@ -270,7 +270,10 @@ int install_virtual_terminals(int count, int row, int cols){
         tty->size.ws_col = cols;
         tty->size.ws_row = row;
         tty->index = i;
-        tty->termio.c_lflag = ISIG | ICANON | ECHO;
+        tty->termio.c_lflag = ISIG | ICANON | ECHO | ECHONL;
+        tty->termio.c_iflag =  ICRNL | IGNCR | IGNBRK;
+        tty->termio.c_oflag = OPOST | ONLCR;
+        tty->termio.c_cc[VMIN] = 1;
         tty->read_wait_queue = list_create();
         tty->read_buffer = circular_buffer_create(4096);
         tty->write_buffer = circular_buffer_create(4096);

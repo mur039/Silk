@@ -50,7 +50,7 @@ void timer_handler(struct regs *r)
                 timer->next_tick += timer->interval;
             } else {
                 // Disable one-shot timer
-                memset(timer, 0, sizeof(timer_event_t));
+                timer->active = 0;
             }
         }
     }
@@ -72,7 +72,6 @@ void timer_install()
 {
     /* Installs 'timer_handler' to IRQ0 */
     irq_install_handler(0, timer_handler);
-    install_syscall_handler(201, syscall_time);
     int y, m, d, h, min, s;
     read_rtc(&y, &m, &d, &h, &min, &s);
     boot_epoch = to_unix_timestamp(y, m, d, h, min, s);
@@ -109,7 +108,7 @@ uint64_t get_ticks(){
 int timer_register(uint64_t delay_ticks, uint64_t interval_ticks, timer_func_t cb, void *arg)
 {
     for (int i = 0; i < MAX_TIMERS; i++) {
-        if (!timer_events[i].callback) {
+        if (!timer_events[i].callback && timer_events[i].active == 0) {
             timer_events[i].next_tick = timer_ticks + delay_ticks;
             timer_events[i].interval = interval_ticks;
             timer_events[i].callback = cb;
@@ -152,11 +151,11 @@ int timer_is_pending(timer_event_t* t){
 void syscall_time(struct regs* r){
     uint32_t* tloc = (void*)r->ebx;
 
+    //ticks has resolution of ms
     uint32_t val  = boot_epoch + (timer_ticks / 1000);
-
     r->eax = val;
 
-    if(tloc){ //NULL
+    if(tloc){ //non-NULL
         if(is_virtaddr_mapped(tloc)){
             *tloc = val;
         }

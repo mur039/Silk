@@ -9,14 +9,14 @@
 #include <fpu.h>
 
 #include <ptrace.h>
-
+#include <filesystems/proc.h>
 
 queue_t ready_queue;
 queue_t blocked_queue;
 
 list_t * process_list;
 pid_t curr_pid ;
-pcb_t * current_process;
+pcb_t * _current_process;
 
 pcb_t* task0;
 
@@ -43,7 +43,7 @@ void process_init() {
     process_list->size = 0;
     process_list->head = 0;
     process_list->tail = 0;
-    current_process = NULL;
+    _current_process = NULL;
     curr_pid = 1;
 
     ready_queue = queue_create(-1); //no limit
@@ -59,28 +59,27 @@ void process_init() {
 
 int newschedule(struct regs * r){
     fb_console_printf("How the fuck i get here?\n");
-    if(!current_process){
-        current_process = queue_dequeue_item(&ready_queue);   
+    if(!_current_process){
+        _current_process = queue_dequeue_item(&ready_queue);   
     }
 
     else{ //readl thing
-        save_context(r, current_process); //obv
-        current_process = queue_dequeue_item(&ready_queue);
-        if(!current_process){ //no bitches?
+        save_context(r, _current_process); //obv
+        _current_process = queue_dequeue_item(&ready_queue);
+        if(!_current_process){ //no bitches?
             idle();
         }
 
 
     }
 
-    context_switch_into_process(r, current_process);
+    context_switch_into_process(r, _current_process);
     return 0;
 }
 
 extern void ktty();
 void schedule(struct regs * r){
     
-    // fb_console_put("Inside the shcedule\n");
 
     if(process_list->size == 0){
         fb_console_printf("No processes, kernel panics :(\n");
@@ -90,28 +89,27 @@ void schedule(struct regs * r){
     }
     
     int first_time = 0;
-    if(current_process == NULL){
+    if(_current_process == NULL){
         first_time = 1;
-        current_process = process_list->head->val;
+        _current_process = process_list->head->val;
     }
 
 
-    switch(current_process->state){
+    switch(_current_process->state){
         case TASK_CREATED:
             ;
             //hacky but
-            if(current_process->regs.eflags & (1 << V86_VM_BIT)){ //v8086 proc
-                current_process->state = TASK_RUNNING;
+            if(_current_process->regs.eflags & (1 << V86_VM_BIT)){ //v8086 proc
+                _current_process->state = TASK_RUNNING;
                 break;
             }
-     
-            load_process(current_process);
+            load_process(_current_process);
             break;
 
         case TASK_RUNNING:
             if( !first_time ){
 
-                save_context(r, current_process);
+                save_context(r, _current_process);
             }
             break;
         
@@ -119,18 +117,18 @@ void schedule(struct regs * r){
             break;
         
         case TASK_INTERRUPTIBLE: 
-            save_context(r, current_process);
+            save_context(r, _current_process);
             break;
 
     }
 
-    // current_process = next_process(current_process);
+    // _current_process = next_process(_current_process);
 
     pcb_t* candinate = NULL;
     for(unsigned int i = 0; i < process_list->size; ++i){
-        current_process = next_process(current_process);
-        if(current_process->state == TASK_RUNNING){
-            candinate = current_process;
+        _current_process = next_process(_current_process);
+        if(_current_process->state == TASK_RUNNING){
+            candinate = _current_process;
             break;
         }
     
@@ -138,11 +136,11 @@ void schedule(struct regs * r){
 
     if(!candinate){
 
-        // if(current_process == task0) return;
-        current_process = task0;
+        // if(_current_process == task0) return;
+        _current_process = task0;
     }
 
-    context_switch_into_process(r, current_process);
+    context_switch_into_process(r, _current_process);
 
     __builtin_unreachable();
     return;
@@ -183,7 +181,7 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     // 4kb initial stack
     p1->stack_top = (void*)0xC0000000;
-    p1->stack_bottom = p1->stack_top - (4096 * 4);
+    p1->stack_bottom = p1->stack_top - (4096 * 8);
     p1->regs.esp = (0xC0000000);
     p1->regs.ebp = 0; //for stack trace
 
@@ -194,7 +192,8 @@ pcb_t * create_process(char * filename, char **_argv) {
     p1->regs.gs = (4 * 8) | 3;
     p1->regs.ss = (4 * 8) | 3;;
 
-    p1->mem_mapping = kcalloc(1, sizeof(list_t));
+    p1->mm = kcalloc(1, sizeof(struct mm_struct));
+    p1->mm->mmap = NULL;
     p1->childs = kcalloc(1, sizeof(list_t));
 
  
@@ -219,16 +218,6 @@ pcb_t * create_process(char * filename, char **_argv) {
     p1->kstack = page;
     memset(page, 0, 4096);
     
-
-    
-    vmem_map_t* empty_pages = kcalloc(1, sizeof(vmem_map_t));
-    empty_pages->vmem = 0x10000;
-    empty_pages->phymem = 0xc0000000;
-    empty_pages->attributes = (VMM_ATTR_EMPTY_SECTION << 20) | (786432); //3G -> 786432 pages
-    list_insert_end(p1->mem_mapping, empty_pages);
-
-
-    
     p1->cwd = kmalloc(2);
     if(!p1->cwd)
         error("failed to allocate for cwd");
@@ -242,6 +231,9 @@ pcb_t * create_process(char * filename, char **_argv) {
 
     //initialize the fpu as well
     initialize_fpu_user(p1);
+
+    //register the proc as well
+    process_create_proc_entry(p1);
     return p1;
 
 }
@@ -257,6 +249,14 @@ pcb_t * load_process(pcb_t * proc){
         return NULL;
     }
 
+    if(exec_file->flags != FS_FILE){
+        
+        close_fs(exec_file);
+        kfree(exec_file);
+        proc->state = TASK_ZOMBIE;
+        return NULL;
+    }
+    
     //Check whether executable is a suitable elf file
     Elf32_Ehdr elf_header;
     read_fs(exec_file, 0, sizeof(Elf32_Ehdr), (uint8_t*)&elf_header);
@@ -298,18 +298,13 @@ pcb_t * load_process(pcb_t * proc){
     read_fs(exec_file, elf_header.e_phoff, sizeof(Elf32_Phdr) * phdr_count, (uint8_t*)phdr);
 
     // (Elf32_Phdr*)((unsigned int)elf_header + elf_header.e_phoff);
-    vmem_map_t mp;
-
     for(int i = 0; i < phdr_count; ++i){
         
         if(phdr[i].type == ELF_PT_LOAD){
 
             //create memory mapping and loading
-            
             //for page alloc memsize!!!! for reading from file file size!!!
             int npages = (phdr[i].memsz /4096) + (phdr[i].memsz % 4096 != 0); //likeceil 
-            // fb_console_printf("number of pages allocated for process %s:  %u : %x\n", proc->filename, i,  npages);
-            
             
             for(int j = 0 ; j < npages; ++j){
 
@@ -318,21 +313,21 @@ pcb_t * load_process(pcb_t * proc){
                                 (void *)((phdr[i].vaddr & ~0xffful) + j*0x1000),
                                 physical_page,
                                 ( (phdr[i].flags & PF_W) ? PAGE_READ_WRITE : 0 ) | PAGE_USER_SUPERVISOR
-                                );
-
-
-                mp.vmem = (phdr[i].vaddr & ~0xffful) + j*0x1000;
-                mp.phymem = (u32)physical_page;
-                mp.attributes = (1 << 20);
-                vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
-
+                                );                    
+                
             }
 
-            // vaddr might not be aligned
             memset( (void *)(phdr[i].vaddr & ~0xffful), 0, 0x1000 * npages);
             read_fs(exec_file, phdr[i].offset, phdr[i].filesz, (void *)(phdr[i].vaddr));
 
+            struct vma* v = kcalloc(1,sizeof(struct vma));
+            v->start = phdr[i].vaddr & ~0xffful;
+            v->end = (phdr[i].vaddr & ~0xffful) + (npages * 4096); 
+            v->flags = (VM_PRIVATE) | (VM_READ | ((phdr[i].flags & PF_W) ? VM_WRITE : 0));
+            v->file_offset = 0;
+            v->file = NULL; // only anonymouse pages get freed
 
+            vmm_insert_vma(proc->mm, v);
         }
     }
 
@@ -341,20 +336,14 @@ pcb_t * load_process(pcb_t * proc){
 
     proc->regs.eip = (uint32_t)elf_header.e_entry;
 
-    //allocating user stack 16kB
-    for(int i = 0; i < 4; ++i){
-
-        void * stack_page = allocate_physical_page();//kpalloc(1);//allocate_physical_page();
-        map_virtaddr( (void *)proc->regs.esp - (i * 0x1000), stack_page, PAGE_PRESENT | PAGE_READ_WRITE | PAGE_USER_SUPERVISOR);
-        
-        mp.vmem = proc->regs.esp - (i * 0x1000);
-        mp.phymem = (u32)stack_page;
-        mp.attributes = (1 << 20);
-        vmm_mark_allocated(proc->mem_mapping, mp.vmem, mp.phymem, VMM_ATTR_PHYSICAL_PAGE);
-        
-    }
     
-
+    struct vma* vma = kcalloc(1,sizeof(struct vma));
+    vma->end = VMM_USERMEM_END;
+    vma->start = vma->end - (8 * 0x1000);
+    vma->flags = (VM_GROWSDOWN) | (VM_READ | VM_WRITE);
+    vma->file = NULL;
+    vmm_insert_vma(proc->mm, vma);
+    
 
     //since we are on 32 bit, right? oh wait doesn't matte
     uint32_t * esp = (void *)proc->regs.esp;
@@ -394,7 +383,7 @@ pcb_t * load_process(pcb_t * proc){
     
     set_cr3(oldcr3);
     flush_tlb();
-    current_process->state = TASK_RUNNING;
+    _current_process->state = TASK_RUNNING;
     return proc;
 }
 
@@ -498,17 +487,18 @@ int context_switch_into_process(struct regs  *r, pcb_t * process){
     
 
 
-    r->cs = process->regs.cs;
-    r->ds = process->regs.ds;
-    r->es = process->regs.es;
-    r->fs = process->regs.fs;
-    r->gs = process->regs.gs;
+    r->cs = process->regs.cs & 0xffff;
+    r->ds = process->regs.ds & 0xffff;
+    r->es = process->regs.es & 0xffff;
+    r->fs = process->regs.fs & 0xffff;
+    r->gs = process->regs.gs & 0xffff;
     
     
     //well well well otherwise only works for ring3 tasks
     if( (process->regs.cs & 0x3) == 3){ //ring3 task
-        r->ss = process->regs.ss;
+        r->ss = process->regs.ss & 0xffff;
         r->useresp = process->regs.esp;
+        
     }
     else{
         
@@ -517,44 +507,42 @@ int context_switch_into_process(struct regs  *r, pcb_t * process){
     
 
     
-    if( current_process->recv_signals){
+    if( _current_process->recv_signals){
         
         //well i should only one bit set so...
         unsigned int sig_num = 0;
         
-        for(unsigned int i = current_process->recv_signals; i > 1 ; i >>= 1){
+        for(unsigned int i = _current_process->recv_signals; i > 1 ; i >>= 1){
             sig_num++;
         }
         
-        current_process->recv_signals = 0;
+        _current_process->recv_signals = 0;
 
 
-        uart_print(COM1, "signal number that is : %u\n", sig_num);
+        // uart_print(COM1, "signal number that is : %u\n", sig_num);
         //run the signal handler somehow
 
-        if(current_process->syscall_state == SYSCALL_STATE_PENDING) {
-            current_process->syscall_state = SYSCALL_STATE_NONE;
+        if(_current_process->syscall_state == SYSCALL_STATE_PENDING) {
+            _current_process->syscall_state = SYSCALL_STATE_NONE;
             r->eax = -EINTR;
         }
     }
 
     //now if syscall_state is pending then
-    if(current_process->syscall_state == SYSCALL_STATE_PENDING){
+    if(_current_process->syscall_state == SYSCALL_STATE_PENDING){
 
-        current_process->syscall_state = SYSCALL_STATE_NONE;
-        syscall_handlers[current_process->syscall_number](r);
+        _current_process->syscall_state = SYSCALL_STATE_NONE;
+        syscall_handlers[_current_process->syscall_number](r);
         
         
         //if it still pending then, i hope this won't come around and bite me in the ass :/
-        if(current_process->syscall_state == SYSCALL_STATE_PENDING)
+        if(_current_process->syscall_state == SYSCALL_STATE_PENDING)
             schedule(r); //schedule again
     }
 
     
     extern int resume_kthread(struct regs* r);
     return resume_kthread(r);
-    __builtin_unreachable();
-
 }
 
 void print_processes(){
@@ -584,7 +572,7 @@ void print_processes(){
 void print_current_process(){
     
     
-        pcb_t * p = current_process;
+        pcb_t * p = _current_process;
         fb_console_printf("pid:%u pathname:%s \n", p->pid, p->filename);
         fb_console_printf("\teax:%x \n", p->regs.eax);
         fb_console_printf("\tebx:%x \n", p->regs.ebx);
@@ -630,36 +618,15 @@ void save_context(struct regs * r, pcb_t * process){
 
 
     process->regs.eip = r->eip;
-    process->regs.cs = r->cs;
-    process->regs.ds = r->ds;
-    process->regs.es = r->es;
-    process->regs.fs = r->fs;
-    process->regs.gs = r->gs;
+    process->regs.cs = r->cs & 0xffff;
+    process->regs.ds = r->ds & 0xffff;
+    process->regs.es = r->es & 0xffff;
+    process->regs.fs = r->fs & 0xffff;
+    process->regs.gs = r->gs & 0xffff;
 
     //save fpu state as well
     fpu_save_to_buffer(process->fpu);
 }
-
-
-void list_vmem_mapping(pcb_t * process){
-    
-    listnode_t * node = process->mem_mapping->head;
-    for(unsigned int i = 0 ; i < process->mem_mapping->size; ++i){
-        vmem_map_t * mmap = node->val;
-        u16 vpage_attribute = mmap->attributes >> 20; //upper 12bits
-
-        
-        // fb_console_printf("%s -> vmem :%x pmem :%x\n", vpage_attribute ? "ALLOCATED" : "FREE", mmap->vmem, mmap->phymem);
-        uart_print(COM1, "%s -> vmem :%x pmem :%x\r\n", vpage_attribute ? "ALLOCATED" : "FREE", mmap->vmem, mmap->phymem);
-        
-        
-        
-        node = node->next;
-    }
-    uart_print(COM1, "-----------------------------------------------------------\r\n\n");     
-}
-
-
 
 
 pcb_t * process_get_by_pid(pid_t pid){
@@ -697,7 +664,7 @@ pcb_t * process_get_runnable_process(){
 
 void process_release_sources(pcb_t * proc){
 
-     //free the resources and allocate new ones
+    //free the resources
     
     for(int i = 0; i < proc->argc  ; ++i){
         if(proc->argv[i]){
@@ -707,39 +674,48 @@ void process_release_sources(pcb_t * proc){
     }
     kfree(proc->argv);
 
+    //switch address spaces temporarily
+    uint32_t old_cr3 = get_cr3();
+    set_cr3((uint32_t)get_physaddr(proc->page_dir));
+    flush_tlb();
 
-    
+    struct mm_struct* mm = proc->mm;
     for(;;){
-        listnode_t* node = list_remove(proc->mem_mapping, proc->mem_mapping->head);
-        if(!node) break;
-
-
-        vmem_map_t * vmap = node->val;
-
-        if(vmap->attributes >> 20){ //allocated ones
-            if(vmap->attributes & ~(1 << 20) == VMM_ATTR_PHYSICAL_PAGE){
-
-            //gotta free the allocated physical pages
-            deallocate_physical_page((void*)vmap->phymem);
-            unmap_virtaddr_d(proc->page_dir, ((void*)vmap->vmem));
-            }
-            // uart_print(COM1, "vmem: %x->%x :: %x\r\n", vmap->vmem, vmap->phymem, vmap->attributes >> 20);
+        struct vma* v = mm->mmap;
+        if(!v){   
+            break;
         }
+        mm->mmap = v->next;
 
-        kfree(node->val);
-        kfree(node);        
+        for(uintptr_t addr = v->start; addr < v->end; addr += 4096){
+            
+            if(!v->file ){ //ram backed
+
+                if(v->flags & VM_GROWSDOWN){
+                    if(!is_virtaddr_mapped((void*)addr)){
+                        continue;
+                    }
+                }
+                
+                deallocate_physical_page(get_physaddr((void*)addr));
+                unmap_virtaddr(((void*)addr));
+            }
+            else{
+                break;
+            }
+        }
+        
+        kfree(v);
     }
+
+    kfree(mm);
+
     
-
-
-
-    kfree(proc->mem_mapping);
-
 
     uint32_t* p_pt_entry = (uint32_t*)proc->page_dir;
     for(int i = 0; i < 768; ++i){
         if(proc->page_dir[i] & 1){ //if present
-
+            //faulty for some cases?
             deallocate_physical_page( (void*) (proc->page_dir[i] & ~0xffful) );
         }
     }
@@ -747,8 +723,14 @@ void process_release_sources(pcb_t * proc){
     deallocate_physical_page( get_physaddr(proc->page_dir) );
 
     deallocate_physical_page( get_physaddr(proc->kstack) );
-    
     kfree(proc->cwd);
+
+    //switch back
+    set_cr3(old_cr3);
+    flush_tlb();
+
+
+    process_delete_proc_entry(proc);
 }
 
 
@@ -917,29 +899,29 @@ static int _save_current_context_helper (int edi ,int esi,  int ebp,  int old_es
              int eip ,pcb_t * proc
             )
 {
-    current_process->regs.eax = eax;
-    current_process->regs.ebx = ebx;
-    current_process->regs.ecx = ecx;
-    current_process->regs.edx = edx;
+    _current_process->regs.eax = eax;
+    _current_process->regs.ebx = ebx;
+    _current_process->regs.ecx = ecx;
+    _current_process->regs.edx = edx;
 
-    current_process->regs.esi = esi;
-    current_process->regs.edi = edi;
+    _current_process->regs.esi = esi;
+    _current_process->regs.edi = edi;
 
-    current_process->regs.eip = eip;
-    current_process->regs.ebp = old_ebp;
-    current_process->regs.esp = old_esp;
-    current_process->regs.cs = (1 * 8) | 0;
-    current_process->regs.ds = (2 * 8) | 0;
-    current_process->regs.ss = (2 * 8) | 0;
-    current_process->regs.es = (2 * 8) | 0;
-    current_process->regs.fs = (2 * 8) | 0;
-    current_process->regs.gs = (2 * 8) | 0;
+    _current_process->regs.eip = eip;
+    _current_process->regs.ebp = old_ebp;
+    _current_process->regs.esp = old_esp;
+    _current_process->regs.cs = (1 * 8) | 0;
+    _current_process->regs.ds = (2 * 8) | 0;
+    _current_process->regs.ss = (2 * 8) | 0;
+    _current_process->regs.es = (2 * 8) | 0;
+    _current_process->regs.fs = (2 * 8) | 0;
+    _current_process->regs.gs = (2 * 8) | 0;
 
 }
 
 void save_current_context(pcb_t * proc){
     
-    proc = current_process;
+    proc = _current_process;
     asm volatile(
     "pusha\n\t"
     "call _save_current_context_helper\n\t"
@@ -951,26 +933,6 @@ void save_current_context(pcb_t * proc){
 save_label:
     return;
 }
-
-// void restore_cpu_context(struct context *ctx) {
-//     asm volatile(
-//         "mov %0, %%eax\n\t"
-//         "mov %1, %%ebx\n\t"
-//         "mov %2, %%ecx\n\t"
-//         "mov %3, %%edx\n\t"
-//         "mov %4, %%esi\n\t"
-//         "mov %5, %%edi\n\t"
-//         "mov %6, %%ebp\n\t"
-//         "mov %7, %%esp\n\t"
-//         "push %8\n\t"
-//         "popf\n\t"
-//         "jmp *%9\n\t"
-//         :
-//         : "m"(ctx->eax), "m"(ctx->ebx), "m"(ctx->ecx), "m"(ctx->edx),
-//           "m"(ctx->esi), "m"(ctx->edi), "m"(ctx->ebp), "m"(ctx->esp),
-//           "m"(ctx->eflags), "m"(ctx->eip)
-//     );
-// }
 
 
 typedef struct stackframe {
@@ -1006,6 +968,7 @@ void process_wakeup_list(list_t* wakeuplist){
 
 
 }
+EXPORT_SYMBOL(process_wakeup_list);
 
 int process_get_empty_fd(pcb_t* proc){
 
@@ -1047,7 +1010,7 @@ int process_send_signal(pid_t pid, unsigned int signum){
         case SIGINT:    __attribute__ ((fallthrough));
         case SIGILL:         
 
-        proc->regs.eax = signum; //killed by signal
+        proc->exit_code = signum; //killed by signal
         terminate_process(proc);
         break;
         
@@ -1056,13 +1019,13 @@ int process_send_signal(pid_t pid, unsigned int signum){
 
             proc->state = TASK_STOPPED;
             proc->recv_signals = 1 << signum;
+            proc->exit_code = signum;
             //notify the parent as well
             pcb_t *p = proc->parent->val;
             if(!p){
                 return -1;
             }
-
-            process_send_signal(p->pid, SIGCHLD);
+            process_wakeup_list(&p->waitqueue);
                 
         break;
 
@@ -1124,6 +1087,7 @@ void copy_context_to_trap_frame(struct regs* r, struct context* ctx){
 int _schedule(){
     return kernl_schedule_shim();
 }
+EXPORT_SYMBOL(_schedule);
 
 file_t* process_get_file(pcb_t* proc, int fd){
 
@@ -1136,4 +1100,199 @@ file_t* process_get_file(pcb_t* proc, int fd){
     }
 
     return NULL;
+}
+EXPORT_SYMBOL(process_get_file);
+
+pcb_t* process_get_current_process(){
+    return _current_process;
+}
+EXPORT_SYMBOL(process_get_current_process);
+    
+    
+
+
+uint32_t process_proc_cmdline_read(fs_node_t* nnode, uint32_t offset, uint32_t size, uint8_t* buffer){
+    struct proc_entry* e = nnode->device;
+    pcb_t* proc = e->data;
+
+    size_t totalsize = 0;
+    for(int i = 0; i < proc->argc; ++i){
+        totalsize += strlen(proc->argv[i]) + 1; //extra null pointer
+    }
+
+    if(offset > totalsize){
+        return 0;
+    }
+
+    size_t tindex = 0;
+    char * table = kcalloc(1, totalsize + 8); //extra guard
+    for(int i = 0; i < proc->argc; ++i){
+        memcpy(&table[tindex], proc->argv[i], strlen(proc->argv[i]) + 1); //copy the null-byte as well
+        tindex += strlen(proc->argv[i]) + 1;
+    }
+
+    size_t remaining = totalsize - offset;
+    if(size > remaining){
+        size = remaining;
+    }
+
+    memcpy(buffer, &table[offset], size);
+    kfree(table);
+    return size;
+};
+
+uint32_t process_proc_maps_read(fs_node_t* nnode, uint32_t offset, uint32_t size, uint8_t* buffer){
+    struct proc_entry* e = nnode->device;
+    pcb_t* proc = e->data;
+
+    if(!proc->mm)
+        return 0;
+
+    size_t total_s = 0;
+    char lbuff[64];
+    for(struct vma* v = proc->mm->mmap; v ; v = v->next){
+        char* filepath = "";
+        if(!v->file){
+            if(v->flags & VM_GROWSDOWN){
+                filepath = "[stack]";
+            }
+        }
+        else{
+            filepath = v->file->name;
+        }
+        total_s += sprintf(
+                            lbuff, "%x-%x r%cx%c %u     %s\n", 
+                            v->start,  v->end, 
+                            v->flags & VM_WRITE ? 'w' : '-' ,
+                            v->flags & VM_SHARED ? 's' : 'p',
+                            v->file_offset,
+                            filepath
+                            );
+    }
+
+    if(offset > total_s){
+        return 0;
+    }
+
+    size_t remain= total_s - offset;
+    if(size > remain){
+        size = remain;
+    }
+
+    char* table = kcalloc(total_s + 16, 1);
+    for(struct vma* v = proc->mm->mmap; v ; v = v->next){
+        char* filepath = "";
+        if(!v->file){
+            if(v->flags & VM_GROWSDOWN){
+                filepath = "[stack]";
+            }
+        }
+        else{
+            filepath = v->file->name;
+        }
+        sprintf(
+                lbuff, "%x-%x r%cx%c %u     %s\n", 
+                v->start,  v->end, 
+                v->flags & VM_WRITE ? 'w' : '-' ,
+                v->flags & VM_SHARED ? 's' : 'p',
+                v->file_offset,
+                filepath
+                );
+        strcat(table, lbuff);
+    }
+
+    memcpy(buffer, &table[offset], size);
+    kfree(table);
+    return size;
+};
+uint32_t process_proc_stat_read(fs_node_t* nnode, uint32_t offset, uint32_t size, uint8_t* buffer){
+    struct proc_entry* e = nnode->device;
+    pcb_t* proc = e->data;
+
+    int tty_nr;
+    tty_t* tty = ((tty_t*)proc->ctty);
+    if(!tty){
+        tty_nr = 0;
+    }
+    else{
+        int major =  0, minor = 0;
+        switch(tty->driver->num){
+            case 1: //serial
+                major = 4;
+                minor = 64; 
+                minor += tty->index;
+                break;
+            case 2: //vt
+                major = 4;
+                minor += tty->index;
+            break;
+            case 3: //pts
+                major = 136;
+                minor = tty->index;
+                break;
+            default: 
+            break;
+        }    
+        tty_nr = (major << 8) | minor;
+    }   
+    
+    char localbuffer[128];
+    char task_state_ch;
+    if(proc->state == TASK_RUNNING) task_state_ch = 'R';
+    else if(proc->state == TASK_INTERRUPTIBLE) task_state_ch = 'S';
+    else if(proc->state == TASK_UNINTERRUPTIBLE) task_state_ch = 'D';
+    else if(proc->state == TASK_ZOMBIE) task_state_ch = 'Z';
+    else if(proc->state == TASK_STOPPED) task_state_ch = 'T';
+        
+    size_t len = sprintf(
+                            localbuffer, 
+                            "%u (%s) %c %u %u %u %u", 
+                            proc->pid, proc->filename, 
+                            task_state_ch,
+                            proc->parent ? ((pcb_t*)(proc->parent->val))->pid : 0,
+                            proc->pgid,
+                            proc->sid,
+                            tty_nr
+                        );
+    if(offset > len){
+        return 0;
+    }
+
+    size_t remain = len - offset;
+    if(size > remain){
+        size = remain;
+    }
+
+    memcpy(buffer, &localbuffer[offset], size);
+    return size;
+};
+
+
+int process_create_proc_entry(pcb_t* proc){
+    char pidname[3] = "000";
+    sprintf(pidname, "%u", proc->pid);
+
+    struct proc_entry* pidroot = proc_create_entry(pidname, _IFDIR | 0644, NULL);
+    struct proc_entry* cmdline = proc_create_entry("cmdline", _IFREG | 0644, pidroot);
+    struct proc_entry* maps = proc_create_entry("maps", _IFREG | 0644, pidroot);
+    struct proc_entry* stat = proc_create_entry("stat", _IFREG | 0644, pidroot);
+
+    cmdline->proc_ops.read = &process_proc_cmdline_read;
+    maps->proc_ops.read = &process_proc_maps_read;
+    stat->proc_ops.read = &process_proc_stat_read;
+
+    pidroot->data = proc;
+    cmdline->data = proc;
+    maps->data = proc;
+    stat->data = proc;
+
+    return 0;
+}
+int process_delete_proc_entry(pcb_t* proc){
+    char entryname[16];
+
+    sprintf(entryname, "%u", proc->pid);
+    remove_proc_entry(entryname, NULL);
+    //todo remove other entries!!!
+    return 0;
 }
